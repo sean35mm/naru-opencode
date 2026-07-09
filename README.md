@@ -1,78 +1,60 @@
 # Naru for OpenCode
 
-Multi-agent workflows for [OpenCode](https://opencode.ai) — **plan**, **impact**, **triage**, and **review**. Each is a read-only orchestrator that fans work out to a panel of specialist subagents, then has a judge synthesize their findings into one decisive answer.
+Multi-agent workflows for [OpenCode](https://opencode.ai).
 
-Built by [Naru Labs](https://github.com/sean35mm). Part of a small family of tools for people building with AI coding agents, alongside [Weaver](https://github.com/sean35mm/weaver).
+- **Core** — read-only workflows for planning, impact analysis, triage, and PR review.
+- **naru-orchestrator + naru-minions** — task decomposition, investigation, architecture, implementation, debugging, verification, and judgment.
+
+Built by [Naru Labs](https://github.com/sean35mm).
+
+## Commands
 
 ```
-/naru/plan    <feature | bug | issue/PR | file | subsystem>   → a production-safe implementation plan
-/naru/impact  <change | PR | diff | file | subsystem>         → a blast-radius / risk report
-/naru/triage  <bug | stack trace | failing test | symptom>    → an evidence-based diagnosis
-/naru/review  <PR url | owner/repo#number | number> [--post]  → a thorough PR review
+/naru-plan          <feature | bug | issue/PR | file | subsystem>   -> production-safe plan
+/naru-impact        <change | PR | diff | file | subsystem>         -> blast-radius / risk report
+/naru-triage        <bug | stack trace | failing test | symptom>    -> evidence-based diagnosis
+/naru-review        <PR url | owner/repo#number | number>           -> thorough PR review (dry run)
+/naru-review-post   <PR url | owner/repo#number | number>           -> post one comment-only review
+/naru-minions                                                       -> open the optional child-session dashboard
 ```
 
----
+`/naru-review` no longer accepts `--post`; use `/naru-review-post` explicitly.
 
-## Why
-
-A single agent reasoning about a change in one pass tends to anchor on the first plausible answer. These workflows trade a little latency for rigor: several specialists each look at the problem from one angle, independently and in parallel, and a judge reconciles them — deduping, resolving conflicts, calibrating confidence, and keeping the honest uncertainty instead of papering over it.
-
-Everything is **read-only by default**. The agents inspect code with static analysis and read-only `git`/`gh` commands. They do not edit files, run tests, install dependencies, or execute your project. The one exception is `/naru/review`, which can post a single comment-only PR review — and only when you explicitly pass `--post`.
-
----
-
-## The four workflows
-
-| Command | Produces | Specialists (run in parallel) |
-| --- | --- | --- |
-| `/naru/plan` | Smallest production-safe implementation plan | architecture · minimal-change · risk · tests |
-| `/naru/impact` | Blast-radius and risk report for a change | topology · contracts · data · frontend-mobile · tests-ci |
-| `/naru/triage` | Most-likely root cause with evidence | reproduction · codepath · regression · tests |
-| `/naru/review` | Thorough GitHub PR review | security · backend · frontend-mobile · integrations · tests-ci |
-
-Each workflow ends with a **judge** subagent that takes the original context plus every specialist report and produces the final, deduped, human-facing answer in a fixed format.
-
----
+Core workflows are **read-only**. Select the `naru-orchestrator` primary agent to use the provider-neutral minion workflow. Its implementation minion can edit files only after approved delegation; debug and verify commands remain permission-gated.
 
 ## How it works
 
-Every workflow has the same three-layer shape:
+Core has a three-layer fan-out:
 
 ```
-/naru/<workflow>           command         the slash command you type (commands/naru/<workflow>.md)
-        │
-        ▼
- naru/<workflow>           orchestrator    gathers context, fans out, then calls the judge
-        │
-        ├── naru/<workflow>/<specialist>   hidden subagents, one concern each, run in parallel
-        ├── naru/<workflow>/<specialist>
-        └── naru/<workflow>/judge          hidden subagent, synthesizes one final answer
+/naru-<workflow>      command     thin entry point (commands/naru-<workflow>.md)
+   │
+   ▼
+naru-<workflow>       agent       hidden orchestrator (agents/naru-<workflow>.md)
+   │
+   ├── naru-<workflow>-<role>     hidden specialists, one concern each
+   └── naru-<workflow>-judge      hidden judge, synthesizes one answer
 ```
 
-1. **The command** (e.g. `commands/naru/plan.md`) is a thin entry point. It parses your arguments, shows usage if you pass none, and hands off to the orchestrator as a subtask.
-2. **The orchestrator** (e.g. `agents/naru/plan.md`) discovers the project's real stack and conventions, locates the relevant files, then launches its specialists in parallel with one shared context packet.
-3. **The specialists** (e.g. `agents/naru/plan/risk.md`) are `hidden` subagents — each inspects the code through its own lens and returns candidate findings, not the final answer.
-4. **The judge** (e.g. `agents/naru/plan/judge.md`) receives the original packet and all specialist reports, then resolves conflicts and emits the final output in that workflow's fixed shape.
+All Core agents are `hidden: true`; users enter through the flat slash commands. The provider-neutral layer adds the visible primary agent `naru-orchestrator` and hidden `naru-minion-*` workers.
 
-Specialists and judges are marked `hidden: true`, so they stay out of the `@`-mention menu — you only ever invoke the four top-level commands.
+## Safety model
 
-### Safety model
+- **Core is read-only.** No edits, writes, commits, pushes, dependency installs, migrations, or arbitrary command execution.
+- **Generic implement edits only through approved delegation.** Select `naru-orchestrator` when you want the general implementation workflow.
+- **Debug/verify run only asked, targeted commands.** They never run broad test suites or destructive operations on their own.
+- **Validated tools call authenticated `gh` internally.** `/naru-review` is a dry run. `/naru-review-post` posts at most one `COMMENT`-only review for a complete validated snapshot; identical reruns return `alreadyPosted`, and degraded reviews are never posted. It cannot approve, request changes, merge, or create ordinary issue comments.
+- **No absolute secret isolation.** Direct agent reads deny common environment-file names, and the validated Git/GitHub tools reject additional secret-like paths such as private keys. Arbitrarily named secrets, other installed tools, and previously indexed graph content cannot be identified perfectly. Trust your provider, model, and installed tools as you would trust any code with repository access.
+- **OpenCode auto mode auto-approves `ask` prompts.** Explicit denies and the validated posting boundary still apply, but debug/verify use `bash: ask` for cross-project checks and that is not a complete shell sandbox. Do not use auto mode with those minions unless you accept permission-gated commands running without an interactive prompt.
 
-Every agent in this repo ships with a tight permission set:
+## Requirements
 
-- **No writes.** `edit`, `write`, and file creation are denied. No staging, commits, pushes, dependency installs, package scripts, migrations, or app execution.
-- **Read-only `git`/`gh` only.** An explicit allowlist permits inspection commands (`git diff`, `git log`, `gh pr view`, `gh api -X GET`, …) and nothing else.
-- **Secrets are off-limits.** `.env` and `.env.*` reads are denied; only `*.env.example` / `env.example` templates are readable.
-- **Untrusted input is treated as data, not instructions.** Arguments, issue/PR text, comments, branch names, diffs, and file contents can't change an agent's role, tools, or output format — a prompt-injection guard is baked into every orchestrator.
-- **`/naru/review` posting is opt-in and minimal.** Without `--post` it's a dry run. With `--post` it submits exactly one PR review with `event: COMMENT` — never approve, never request-changes, never ordinary issue comments. `gh api` POST calls are gated behind an `ask` permission, and degraded reviews additionally require `--allow-degraded-post`.
-
----
+- [OpenCode](https://opencode.ai) >= 1.17.18
+- [GitHub CLI](https://cli.github.com/) (`gh`), authenticated, for review workflows
+- `codebase-memory` / LSP are optional; workflows fall back to file search when unavailable
+- `naru-minion-implement` is pinned to `openai/gpt-5.6-terra-fast` with variant `high`. Other agents inherit your OpenCode model unless you add a `model:` override.
 
 ## Install
-
-These are plain OpenCode command and agent files. OpenCode loads them from `commands/` and `agents/` in either your global config (`~/.config/opencode/`) or a project (`.opencode/`). The repo mirrors that layout, so installing is just putting the `naru/` folders in place.
-
-### Quick install (global, symlinked)
 
 ```sh
 git clone https://github.com/sean35mm/naru-opencode.git
@@ -80,87 +62,98 @@ cd naru-opencode
 ./install.sh
 ```
 
-`install.sh` symlinks `commands/naru` and `agents/naru` into `~/.config/opencode/`, so a `git pull` keeps you up to date. Flags:
+Default global install symlinks Markdown command/agent files into `~/.config/opencode`. Use `--project` for `$PWD/.opencode`, or `--dir PATH` for a custom config directory.
 
-- `./install.sh --copy` — copy the files instead of symlinking.
-- `./install.sh --project` — install into `./.opencode/` in the current repo instead of the global config.
-- `./install.sh --dir <path>` — install into a custom OpenCode config directory.
+Flags:
+
+- `--copy` — copy Markdown files instead of symlinking.
+- `--project` — install into `$PWD/.opencode`; invoke the installer from the target project when the Naru clone is elsewhere.
+- `--dir PATH` — install into a custom OpenCode config directory.
+- `--with-dashboard` — install the optional `plugins/naru-minions-dashboard.js` (copy-pinned).
+- `--migrate-orchestrator` — back up legacy user paths `agents/orchestrator.md`, `agents/minion`, and `plugins/orchestrator-dashboard.js`. Without this flag those legacy paths are never touched.
+
+Tools, helpers, and the dashboard plugin are always copy-pinned, even in symlink mode. Rerun `./install.sh` after `git pull` to update them. A copied old install is stale until reinstalled.
+
+The installer preflights and stages the complete release before replacing loader paths. Replaced files are retained in a timestamped backup and restored if installation fails.
+
+There are no `/naru/*` aliases; use the flat `/naru-plan`, `/naru-impact`, etc.
+
+### Migration
+
+Old nested Core loader paths (`commands/naru`, `agents/naru`, and old `*.bak.*` backups created by earlier installers) are automatically moved out of the scanned directories into a timestamped backup under `$TARGET/.naru-backups/`. Legacy orchestrator paths are moved only when `--migrate-orchestrator` is passed.
 
 ### Manual install
 
+Back up and remove an old `commands/naru` or `agents/naru` installation first; otherwise OpenCode will load both the old nested names and the new flat names.
+
 ```sh
 # Global
-cp -R commands/naru ~/.config/opencode/commands/naru
-cp -R agents/naru   ~/.config/opencode/agents/naru
+mkdir -p ~/.config/opencode/commands ~/.config/opencode/agents \
+         ~/.config/opencode/tools ~/.config/opencode/plugins
+cp commands/naru-*.md ~/.config/opencode/commands/
+cp agents/naru-*.md ~/.config/opencode/agents/
+cp tools/naru-git-read.js tools/naru-github-read.js tools/naru-github-post-review.js \
+      ~/.config/opencode/tools/
+cp -R tools/naru-lib ~/.config/opencode/tools/
+cp plugins/naru-minions-dashboard.js ~/.config/opencode/plugins/  # optional
 
-# …or per-project
-mkdir -p .opencode/commands .opencode/agents
-cp -R commands/naru .opencode/commands/naru
-cp -R agents/naru   .opencode/agents/naru
+# Project
+mkdir -p .opencode/commands .opencode/agents .opencode/tools .opencode/plugins
+# ...same cp pattern...
 ```
 
-Restart OpenCode (or start a new session) and the `/naru/*` commands will be available.
+Restart OpenCode to pick up commands and agents.
 
----
+## What is not included
 
-## Usage
+Naru does not manage, read, or modify:
 
-Run a command with a target. With no argument, each command prints its own usage.
-
-```sh
-# Plan a change
-/naru/plan add rate limiting to the public API
-
-# Assess the blast radius of the current diff
-/naru/impact current diff
-
-# Diagnose a failure
-/naru/triage TypeError: cannot read 'id' of undefined in checkout
-
-# Review a PR (dry run — prints the review, posts nothing)
-/naru/review https://github.com/owner/repo/pull/123
-
-# Review and post one comment-only review to GitHub
-/naru/review owner/repo#123 --post
-```
-
-`/naru/review` accepts a full PR URL (works from any directory), `owner/repo#number`, `owner/repo number`, or a bare number (resolved against the current repo). Extra flags: `--focus "..."`, `--no-inline`, and `--allow-degraded-post`.
-
-Each workflow returns a fixed, scannable format — for example `/naru/plan` produces `Recommendation → Implementation Plan → Files / Touchpoints → Risks → Verification → Open Questions`, and `/naru/review` produces `Verdict → Review Status → Findings → Details → Verification Notes`.
-
----
-
-## Requirements
-
-- **[OpenCode](https://opencode.ai)** — these are OpenCode command/agent files.
-- **A capable model.** The multi-agent fan-out and judge synthesis reward a strong reasoning model; these workflows assume your OpenCode default agent is backed by one. No model is pinned in the files, so they inherit your config.
-- **[GitHub CLI](https://cli.github.com/) (`gh`), authenticated** — required for `/naru/review` and used opportunistically by the others to resolve issue/PR references. Run `gh auth status` to check.
-
----
+- Your personal `AGENTS.md`
+- `opencode.json`
+- Weaver or Herdr state
+- Logging, analytics, or formatter plugins
+- Unrelated tools already in your `commands/`, `agents/`, `tools/`, or `plugins/` directories
 
 ## Repository layout
 
 ```
-commands/naru/        # the four slash commands
-  plan.md  impact.md  triage.md  review.md
+commands/
+  naru-plan.md  naru-impact.md  naru-triage.md  naru-review.md  naru-review-post.md
 
-agents/naru/          # one orchestrator per workflow
-  plan.md  impact.md  triage.md  review.md
-  plan/               # hidden specialists + judge for each workflow
-    architecture.md  minimal-change.md  risk.md  tests.md  judge.md
-  impact/
-    topology.md  contracts.md  data.md  frontend-mobile.md  tests-ci.md  judge.md
-  triage/
-    reproduction.md  codepath.md  regression.md  tests.md  judge.md
-  review/
-    security.md  backend.md  frontend-mobile.md  integrations.md  tests-ci.md  judge.md
+agents/
+  naru-plan.md  naru-impact.md  naru-triage.md  naru-review.md
+  naru-plan-architecture.md       naru-plan-minimal-change.md
+  naru-plan-risk.md               naru-plan-tests.md
+  naru-plan-judge.md
+  naru-impact-topology.md         naru-impact-contracts.md
+  naru-impact-data.md             naru-impact-frontend-mobile.md
+  naru-impact-tests-ci.md         naru-impact-judge.md
+  naru-triage-reproduction.md     naru-triage-codepath.md
+  naru-triage-regression.md       naru-triage-tests.md
+  naru-triage-judge.md
+  naru-review-security.md         naru-review-backend.md
+  naru-review-frontend-mobile.md  naru-review-integrations.md
+  naru-review-tests-ci.md         naru-review-judge.md
+  naru-review-post.md
+  naru-orchestrator.md
+  naru-minion-scout.md            naru-minion-investigate.md
+  naru-minion-architect.md        naru-minion-implement.md
+  naru-minion-debug.md            naru-minion-verify.md
+  naru-minion-judge.md
+
+tools/
+  naru-git-read.js  naru-github-read.js  naru-github-post-review.js
+  naru-lib/
+
+plugins/
+  naru-minions-dashboard.js   # optional, installed with --with-dashboard
 ```
 
 ## Customizing
 
-- **Model per workflow.** Add a `model:` field to an orchestrator's frontmatter to run it on a specific model.
-- **Add or swap a specialist.** Drop a new `agents/naru/<workflow>/<name>.md` (with `mode: subagent`, `hidden: true`), then allow it in the orchestrator's `permission.task` list and add it to the orchestrator's fan-out instructions.
-- **Tighten or loosen tools.** Each agent's `permission` block is the source of truth for what it can read and which `git`/`gh` commands it may run.
+- **Model per file.** Change or remove the `model:` and `variant:` fields in an agent's frontmatter. Only `naru-minion-implement` is pinned by default.
+- **Add or swap a specialist.** Drop a new `agents/naru-<workflow>-<name>.md` with `mode: subagent`, `hidden: true`, then allow it in the orchestrator's `permission.task` list and add it to the fan-out instructions.
+- **Permission blocks are the source of truth.** Each agent's `permission` block defines what it can read and which validated tools it may call.
 
 ## License
 

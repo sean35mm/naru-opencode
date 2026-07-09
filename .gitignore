@@ -1,3 +1,6 @@
 .DS_Store
 *.bak
 *.bak.*
+.naru-backups/
+node_modules/
+coverage/
