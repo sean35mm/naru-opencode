@@ -2,6 +2,13 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  DEEP_FLOOR_ROLES,
+  DEFAULT_MODEL_PROFILES,
+  NARU_AGENT_IDS,
+  NARU_DISPATCH_GRAPH,
+} from '../tools/naru-lib/model-routing.mjs';
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const here = p => join(root, p);
 
@@ -156,6 +163,16 @@ async function main() {
       `agent inventory mismatch: got ${JSON.stringify(actualAgents)} expected ${JSON.stringify(expectedAgentsSorted)}`
     );
   }
+  const expectedAgentIDs = expectedAgents.map(p => p.slice('agents/'.length, -'.md'.length)).sort();
+  if (JSON.stringify([...NARU_AGENT_IDS].sort()) !== JSON.stringify(expectedAgentIDs)) {
+    fail('central model-routing inventory does not match the 35 agent files');
+  }
+  if (DEEP_FLOOR_ROLES.length !== 13) fail(`unexpected Deep-floor role count: ${DEEP_FLOOR_ROLES.length}`);
+  if (DEFAULT_MODEL_PROFILES.fast.model !== 'openai/gpt-5.6-terra-fast') fail('Fast profile is not Terra Fast');
+  if (DEFAULT_MODEL_PROFILES.deep.model !== 'openai/gpt-5.6-sol-fast') fail('Deep profile is not Sol Fast');
+  if (DEFAULT_MODEL_PROFILES.fast.variant !== 'high' || DEFAULT_MODEL_PROFILES.deep.variant !== 'high') {
+    fail('Fast and Deep profiles must use variant high');
+  }
 
   // No old nested Markdown under commands/naru or agents/naru.
   if (await exists('commands/naru')) {
@@ -234,6 +251,16 @@ async function main() {
         expectedAgents.some(a => a.startsWith(`${asDir}/`));
       if (!known) fail(`${p} references unresolved agent ${ref}`);
     }
+    const agentID = p.slice('agents/'.length, -'.md'.length);
+    if (NARU_DISPATCH_GRAPH[agentID]) {
+      const actual = refs.sort();
+      const expected = [...NARU_DISPATCH_GRAPH[agentID]].sort();
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        fail(`${p} Task allowlist differs from central dispatch graph`);
+      }
+    } else if (refs.length) {
+      fail(`${p} has Task routes missing from the central dispatch graph`);
+    }
   }
 
   // Only review-post mentions the post tool permission.
@@ -288,6 +315,13 @@ async function main() {
   const dashboard = await readFile(here('plugins/naru-minions-dashboard.js'), 'utf8');
   if (!dashboard.includes('slashName: "naru-minions"')) fail('dashboard does not register /naru-minions');
   if (!dashboard.includes('export default plugin')) fail('dashboard is not an OpenCode ESM plugin');
+
+  const delegate = await readFile(here('plugins/naru-delegate.js'), 'utf8');
+  if (!delegate.includes('export const NaruDelegatePlugin')) fail('Naru Delegate is not a server plugin');
+  if (!delegate.includes("'tool.execute.before'")) fail('Naru Delegate does not guard routed Task resume');
+  if (delegate.includes('session.create') || delegate.includes('session.prompt')) {
+    fail('Naru Delegate bypasses native Task child-session handling');
+  }
 
   for (const tool of ['naru-git-read.js', 'naru-github-read.js', 'naru-github-post-review.js']) {
     const text = await readFile(here(`tools/${tool}`), 'utf8');

@@ -36,6 +36,8 @@ async function main() {
     'agents/naru-minion-judge.md',
     'agents/naru-minion-implement.md',
     'agents/naru-orchestrator.md',
+    'plugins/naru-delegate.js',
+    'tools/naru-lib/model-routing.mjs',
   ];
   const missing = [];
   for (const p of required) {
@@ -105,6 +107,15 @@ async function main() {
     if (!text.includes(`"agent": "naru-minion-${role}"`)) {
       fail(`naru-minion-${role} missing structured report identity`);
     }
+  }
+
+  const routing = await readFile(here('tools/naru-lib/model-routing.mjs'), 'utf8');
+  for (const requiredText of [
+    'Never downgrade a Deep-floor role',
+    'Do not use `task_id` for Naru-routed roles',
+    'Naru Delegate adds no fallback or retry layer',
+  ]) {
+    if (!routing.includes(requiredText)) fail(`Naru Delegate routing prompt missing: ${requiredText}`);
   }
 
   if (failures) {

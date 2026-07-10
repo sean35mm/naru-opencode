@@ -7,7 +7,7 @@
 # Defaults to a global symlinked install into ~/.config/opencode. Markdown
 # command/agent files are symlinked individually so a git pull keeps them
 # current. Executable custom tools, helper directories, and the optional
-# dashboard plugin are always copy-pinned; rerun ./install.sh after git pull
+# model-routing and dashboard plugins are always copy-pinned; rerun ./install.sh after git pull
 # to update those executables.
 set -eu
 
@@ -201,6 +201,9 @@ add_copy "${SRC_DIR}/tools/naru-github-read.js"       "tools/naru-github-read.js
 add_copy "${SRC_DIR}/tools/naru-github-post-review.js" "tools/naru-github-post-review.js"
 add_copy "${SRC_DIR}/tools/naru-lib"                  "tools/naru-lib"
 
+# Model-routing plugin (always copy-pinned and installed by default).
+add_copy "${SRC_DIR}/plugins/naru-delegate.js" "plugins/naru-delegate.js"
+
 # Optional dashboard plugin (always copy-pinned).
 if [ "$WITH_DASHBOARD" = true ]; then
   add_copy "${SRC_DIR}/plugins/naru-minions-dashboard.js" "plugins/naru-minions-dashboard.js"
@@ -337,5 +340,5 @@ done < "$PLAN"
 echo "Installed Naru into ${TARGET} (${MODE})"
 echo "Backups kept at ${BACKUP_DIR}"
 if [ "$MODE" = symlink ]; then
-  echo "Markdown files are symlinked; rerun ./install.sh after git pull to update copy-pinned tools/helpers."
+  echo "Markdown files are symlinked; rerun ./install.sh after git pull to update copy-pinned tools, helpers, and plugins."
 fi

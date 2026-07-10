@@ -20,7 +20,7 @@ Built by [Naru Labs](https://github.com/sean35mm).
 
 `/naru-review` no longer accepts `--post`; use `/naru-review-post` explicitly.
 
-Core workflows are **read-only**. Select the `naru-orchestrator` primary agent to use the provider-neutral minion workflow. Its implementation minion can edit files only after approved delegation; debug and verify commands remain permission-gated.
+Core workflows are **read-only**. Select the `naru-orchestrator` primary agent to use the model-routed minion workflow. Its implementation minion can edit files only after approved delegation; debug and verify commands remain permission-gated.
 
 ## How it works
 
@@ -36,7 +36,37 @@ naru-<workflow>       agent       hidden orchestrator (agents/naru-<workflow>.md
    └── naru-<workflow>-judge      hidden judge, synthesizes one answer
 ```
 
-All Core agents are `hidden: true`; users enter through the flat slash commands. The provider-neutral layer adds the visible primary agent `naru-orchestrator` and hidden `naru-minion-*` workers.
+All Core agents are `hidden: true`; users enter through the flat slash commands. The general layer adds the visible primary agent `naru-orchestrator` and hidden `naru-minion-*` workers.
+
+### Model routing
+
+`plugins/naru-delegate.js` centrally routes all 35 Naru agents while preserving OpenCode's native Task permission, cancellation, retry, background-job, and child-session behavior.
+
+- **Fast:** `openai/gpt-5.6-terra-fast`, variant `high`.
+- **Deep:** `openai/gpt-5.6-sol-fast`, variant `high`.
+- Architecture, risk, data, security, integration, and judge roles have a Deep floor.
+- Other roles use Fast by default. Authorized orchestrators may invoke a hidden Deep route for high-risk, ambiguous, conflicting, or context-limited work; Deep roles cannot be downgraded.
+
+Generated Deep routes exist only in OpenCode's runtime configuration. They do not add more agent files or bypass the exact Task allowlists in the Naru orchestrators.
+
+To replace the two central profiles, create `naru-models.json` beside your installed `commands/`, `agents/`, `tools/`, and `plugins/` directories:
+
+```json
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "fast": { "model": "provider/fast-model", "variant": "high" },
+    "deep": { "model": "provider/deep-model", "variant": "high" }
+  },
+  "agents": {
+    "naru-minion-implement": "deep"
+  }
+}
+```
+
+The optional file also accepts sparse exact-agent overrides through an `agents` object with values `fast` or `deep`. Deep-floor roles cannot be downgraded. The file must be a regular, non-symlinked file no larger than 64 KiB. Naru never creates, overwrites, or migrates it.
+
+When both global and project Naru Delegate plugins are installed, profiles and agent overrides merge in OpenCode load order; sparse project values replace matching global values without resetting the rest. An invalid later configuration disables dynamic routing for that startup, removes generated routes, and restores the original agent definitions.
 
 ## Safety model
 
@@ -52,7 +82,8 @@ All Core agents are `hidden: true`; users enter through the flat slash commands.
 - [OpenCode](https://opencode.ai) >= 1.17.18
 - [GitHub CLI](https://cli.github.com/) (`gh`), authenticated, for review workflows
 - `codebase-memory` / LSP are optional; workflows fall back to file search when unavailable
-- `naru-minion-implement` is pinned to `openai/gpt-5.6-terra-fast` with variant `high`. Other agents inherit your OpenCode model unless you add a `model:` override.
+- Naru Delegate defaults to `openai/gpt-5.6-terra-fast` for Fast and `openai/gpt-5.6-sol-fast` for Deep, both with variant `high`.
+- `naru-minion-implement` retains a matching Terra Fast High frontmatter pin as an upgrade fallback for installations that have not refreshed the copy-pinned plugin yet.
 
 ## Install
 
@@ -72,7 +103,7 @@ Flags:
 - `--with-dashboard` — install the optional `plugins/naru-minions-dashboard.js` (copy-pinned).
 - `--migrate-orchestrator` — back up legacy user paths `agents/orchestrator.md`, `agents/minion`, and `plugins/orchestrator-dashboard.js`. Without this flag those legacy paths are never touched.
 
-Tools, helpers, and the dashboard plugin are always copy-pinned, even in symlink mode. Rerun `./install.sh` after `git pull` to update them. A copied old install is stale until reinstalled.
+Tools, helpers, Naru Delegate, and the dashboard plugin are always copy-pinned, even in symlink mode. Rerun `./install.sh` after `git pull` to update them. A copied old install is stale until reinstalled.
 
 The installer preflights and stages the complete release before replacing loader paths. Replaced files are retained in a timestamped backup and restored if installation fails.
 
@@ -95,6 +126,7 @@ cp agents/naru-*.md ~/.config/opencode/agents/
 cp tools/naru-git-read.js tools/naru-github-read.js tools/naru-github-post-review.js \
       ~/.config/opencode/tools/
 cp -R tools/naru-lib ~/.config/opencode/tools/
+cp plugins/naru-delegate.js ~/.config/opencode/plugins/
 cp plugins/naru-minions-dashboard.js ~/.config/opencode/plugins/  # optional
 
 # Project
@@ -106,10 +138,11 @@ Restart OpenCode to pick up commands and agents.
 
 ## What is not included
 
-Naru does not manage, read, or modify:
+Naru does not manage or modify:
 
 - Your personal `AGENTS.md`
 - `opencode.json`
+- Your optional `naru-models.json` routing override
 - Weaver or Herdr state
 - Logging, analytics, or formatter plugins
 - Unrelated tools already in your `commands/`, `agents/`, `tools/`, or `plugins/` directories
@@ -146,12 +179,13 @@ tools/
   naru-lib/
 
 plugins/
+  naru-delegate.js             # central model routing, installed by default
   naru-minions-dashboard.js   # optional, installed with --with-dashboard
 ```
 
 ## Customizing
 
-- **Model per file.** Change or remove the `model:` and `variant:` fields in an agent's frontmatter. Only `naru-minion-implement` is pinned by default.
+- **Models.** Use one optional `naru-models.json` file to replace Fast/Deep profiles or sparsely upgrade exact roles. Per-file frontmatter is no longer the primary routing mechanism.
 - **Add or swap a specialist.** Drop a new `agents/naru-<workflow>-<name>.md` with `mode: subagent`, `hidden: true`, then allow it in the orchestrator's `permission.task` list and add it to the fan-out instructions.
 - **Permission blocks are the source of truth.** Each agent's `permission` block defines what it can read and which validated tools it may call.
 

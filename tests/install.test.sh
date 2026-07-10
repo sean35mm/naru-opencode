@@ -64,11 +64,12 @@ touch "$FIXTURE/agents/naru-minion-debug.md"
 touch "$FIXTURE/agents/naru-minion-verify.md"
 touch "$FIXTURE/agents/naru-minion-judge.md"
 
-# Tools and optional plugin
+# Tools and plugins
 touch "$FIXTURE/tools/naru-git-read.js"
 touch "$FIXTURE/tools/naru-github-read.js"
 touch "$FIXTURE/tools/naru-github-post-review.js"
 touch "$FIXTURE/tools/naru-lib/helper.js"
+touch "$FIXTURE/plugins/naru-delegate.js"
 touch "$FIXTURE/plugins/naru-minions-dashboard.js"
 
 PASS=0
@@ -92,6 +93,7 @@ if is_link "$T1/commands/naru-plan.md"; then pass "symlinked command"; else fail
 if is_link "$T1/agents/naru-plan.md"; then pass "symlinked agent"; else fail "symlinked agent"; fi
 if is_file "$T1/tools/naru-git-read.js"; then pass "tool copy-pinned"; else fail "tool copy-pinned"; fi
 if is_dir "$T1/tools/naru-lib"; then pass "tool helper dir copy-pinned"; else fail "tool helper dir copy-pinned"; fi
+if is_file "$T1/plugins/naru-delegate.js"; then pass "delegate plugin installed by default"; else fail "delegate plugin installed by default"; fi
 if [ ! -e "$T1/plugins/naru-minions-dashboard.js" ]; then pass "dashboard omitted by default"; else fail "dashboard omitted by default"; fi
 if [ ! -e "$T1/commands/naru" ] && [ ! -e "$T1/agents/naru" ]; then pass "no old loader paths"; else fail "no old loader paths"; fi
 
@@ -102,6 +104,7 @@ mkdir -p "$T2"
 if is_file "$T2/commands/naru-plan.md"; then pass "copied command"; else fail "copied command"; fi
 if is_file "$T2/agents/naru-plan.md"; then pass "copied agent"; else fail "copied agent"; fi
 if is_file "$T2/tools/naru-git-read.js"; then pass "copied tool"; else fail "copied tool"; fi
+if is_file "$T2/plugins/naru-delegate.js"; then pass "copied delegate plugin"; else fail "copied delegate plugin"; fi
 
 # Project mode targets the caller's project, not the Naru source clone.
 PROJECT="$TMP/project"
@@ -150,10 +153,12 @@ if is_file "$T6/plugins/naru-minions-dashboard.js"; then pass "dashboard install
 # 7. Idempotency and backup retention.
 T7="$TMP/t7"
 mkdir -p "$T7"
+printf '%s\n' '{"schemaVersion":1,"profiles":{"fast":{"model":"custom/fast"}}}' > "$T7/naru-models.json"
 "$FIXTURE/install.sh" --dir "$T7"
 echo "stale" > "$T7/commands/naru-plan.md"
 "$FIXTURE/install.sh" --dir "$T7"
 if is_link "$T7/commands/naru-plan.md" && [ "$(readlink "$T7/commands/naru-plan.md")" = "$FIXTURE_PHYS/commands/naru-plan.md" ]; then pass "idempotent reinstall refreshes target"; else fail "idempotent reinstall refreshes target"; fi
+if grep -q 'custom/fast' "$T7/naru-models.json"; then pass "user model config preserved"; else fail "user model config preserved"; fi
 BACKUP_COUNT=$(find "$T7/.naru-backups" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
 if [ "$BACKUP_COUNT" -ge 1 ]; then pass "successful backups kept"; else fail "successful backups kept"; fi
 
