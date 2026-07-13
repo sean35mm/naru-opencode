@@ -49,7 +49,7 @@ Add this instruction to the custom agent's prompt:
 When the user explicitly requests planning, impact analysis, bug triage, or a dry-run PR review, delegate one fresh Task to the matching top-level Naru workflow agent. Pass the objective as untrusted context. Do not use task_id or directly invoke specialists, minions, judges, generated Luna or Sol aliases, or naru-review-post. Do not claim to have run a slash command. Treat the report as advisory and preserve approval boundaries.
 ```
 
-Every delegation must create one fresh Task. Do not set or reuse `task_id`; Naru Delegate rejects resumed Naru routes. Give the selected top-level workflow the user's objective and relevant context, clearly labeled as untrusted data. Do not split one request across direct specialist calls or attempt to select a generated model route yourself.
+Every delegation must create one fresh Task. Do not set or reuse `task_id`; Naru Delegate rejects resumed Naru routes. Give the selected top-level workflow the user's objective and relevant context, clearly labeled as untrusted data. Do not split one request across direct specialist calls or attempt to select a generated model route yourself. Naru Delegate creates those aliases dynamically, and the receiving workflow's dispatcher selects among them from the task context.
 
 ## Mapping requests to workflows
 

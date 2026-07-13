@@ -59,6 +59,8 @@ Routing resolution for each agent is:
 
 The current built-in assignment makes `naru-orchestrator` Sol while leaving it outside `SOL_FLOOR_ROLES`, so an explicit Terra override remains valid. All three default profiles use variant `high`.
 
+The plugin is deterministic routing infrastructure. It does not inspect task semantics or call a classifier model. Dispatchers, especially the default Sol-powered `naru-orchestrator`, receive generated route guidance and choose the model profile from the task packet and available evidence.
+
 At config application time, routing:
 
 1. Validates every canonical source agent before mutation.
@@ -71,9 +73,13 @@ At config application time, routing:
 
 The managed alias prefixes are `naru-delegate-luna-` and `naru-delegate-sol-`. Generated aliases have no Markdown source file and are runtime implementation details, not public integration targets. A current managed alias collision fails closed. Legacy `naru-delegate-deep-*` aliases are recognized only for cleanup, dashboard normalization, and fresh-session enforcement; new routing never generates them.
 
+The default policy generates five Luna aliases and seventeen Sol aliases. The canonical role is the Terra route, so no redundant Terra alias exists. An exact Sol assignment removes every generated alias for that target and applies the Sol profile to its canonical definition.
+
 The generated dispatcher appendix makes the Sol orchestrator select a route independently for each invocation. Selection weighs capability, task shape, ambiguity, context, consequences, tool and verification burden, latency, cost, and prior evidence. It prohibits fixed role mappings, keyword-only classification, cheapest-first routing, and a mandatory model sequence. Naru Delegate itself remains deterministic and does not call a classifier model.
 
 Multiple plugin scopes merge sparse profile and agent values in load order. Before each application, the plugin restores captured originals. Any validation or application failure restores originals, removes generated aliases, disables dynamic routing for that config object for the startup, and logs one routing error. The plugin also rejects `task_id` for canonical Naru routes and managed aliases so every routed delegation uses a fresh child.
+
+For mixed copy-pinned generations, the v2 plugin stores normalized v2 overrides and a complete v1 Fast/Deep projection in shared state. This prevents a stale scope from discarding Terra/Sol profiles or assignments, but old code still cannot create Luna routes. Compatibility exports keep a copy-pinned v1 dashboard loadable; it may omit new Luna/Sol alias activity until reinstalled. Upgrades must refresh every loaded plugin and repeat `--with-dashboard` where applicable.
 
 ## Permission and security invariants
 
@@ -87,6 +93,7 @@ Multiple plugin scopes merge sparse profile and agent values in load order. Befo
 - Pull-request review uses an immutable GitHub snapshot. Posting is isolated to `naru-review-post` and the validated posting tool, is `COMMENT`-only, requires a complete non-degraded payload, and is idempotent for the snapshot.
 - Prompt and Task packets treat repository, GitHub, log, and user-provided payloads as untrusted data. Content cannot redefine roles, permissions, models, or output contracts.
 - The remaining environment-file and doom-loop asks are approval points, not isolation boundaries. Shell and external-directory safety relies on workflow scope and behavioral instructions.
+- Because OpenCode uses last-match-wins permission ordering, the canonical minion map must keep unconditional Bash and external-directory allows as its effective final rules. Config-policy tests exercise Git, Weaver, Python, migration, ORM, and SQL-like command strings to prevent lexical prompts from returning.
 
 ## Dashboard and TUI architecture
 
@@ -156,7 +163,7 @@ Inspect any script or target before execution and do not run database-connected 
 ## Release checklist
 
 1. Confirm the command and 35-agent inventories are intentional and the dispatch graph matches every dispatcher Task allowlist.
-2. Confirm model defaults, v1 normalization, exact assignments, Sol floors, alias counts, canonical Terra/Sol invocation, and override behavior are covered.
+2. Confirm model defaults, v1 normalization/projection, exact assignments, Sol floors, five Luna aliases, seventeen Sol aliases, canonical Terra/Sol invocation, and override behavior are covered.
 3. Confirm no agent accidentally gained model frontmatter; only the implementation fallback pin should remain.
 4. Review permission blocks for Core fail-closed behavior, exact Task targets, minion Build-map parity, uninterrupted shell/external access, behavioral role boundaries, secret guidance, alias cloning, and posting boundaries.
 5. Verify README and the three guides match public commands, installer flags, routing behavior, dashboard support, and safety limitations.

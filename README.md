@@ -33,7 +33,7 @@ cd naru-opencode
 ./install.sh
 ```
 
-The default install targets `~/.config/opencode` and symlinks Markdown files. Use `./install.sh --project` from the target project for `.opencode`, `--dir PATH` for another config directory, `--copy` to copy Markdown, and `--with-dashboard` to install the optional TUI activity view. Rerun the installer after updating Naru because tools and plugins are always copy-pinned.
+The default install targets `~/.config/opencode` and symlinks Markdown files. Use `./install.sh --project` from the target project for `.opencode`, `--dir PATH` for another config directory, `--copy` to copy Markdown, and `--with-dashboard` to install the optional TUI activity view. Rerun the installer with the same flags after updating Naru because tools and plugins are always copy-pinned, then restart OpenCode so active sessions reload routing and permissions.
 
 See the [User guide](docs/user-guide.md) for installation, migration, configuration, dashboard, and troubleshooting details.
 
@@ -47,6 +47,8 @@ See the [User guide](docs/user-guide.md) for installation, migration, configurat
 
 An optional schema-v2 `naru-models.json` can replace the three profiles or set sparse exact-agent `terra|sol` assignments. Schema-v1 Fast/Deep files remain supported and normalize to Terra/Sol. Luna is intentionally a per-invocation route rather than a static agent assignment.
 
+Naru Delegate is deterministic: it configures canonical Terra roles plus hidden `naru-delegate-luna-*` and `naru-delegate-sol-*` routes. The Sol orchestrator performs the task-specific reasoning and selects among available routes; the plugin does not classify prompts or call another model. An explicit Sol assignment invokes the canonical role on Sol and removes that role's generated alternatives.
+
 ## Activity dashboard
 
 `./install.sh --with-dashboard` adds a **Naru Activity** sidebar section and `/naru-minions` detail view to OpenCode's full terminal TUI. It reports recognized child-session status, canonical agent, Luna/Terra/Sol route class, actual Task/message model metadata, and task description. It is unavailable under `opencode --mini`.
@@ -55,7 +57,7 @@ An optional schema-v2 `naru-models.json` can replace the three profiles or set s
 
 Core workflows are read-only and unchanged. All seven canonical `naru-minion-*` roles have the same Build-like runtime capabilities: broad tool, edit, Task, read, shell, and external-directory access; an `ask` gate for doom loops and environment-file reads; and template environment files allowed. Shell and external-directory operations do not prompt. Workflow responsibility is narrower than capability: `naru-orchestrator` does not edit, only `naru-minion-implement` is authorized to edit, and every other minion remains behaviorally read-only. Generated Luna and Sol aliases clone their canonical role's complete permission map.
 
-There is no runtime shell or external-directory approval gate. Minion prompts still prohibit unauthorized dependency changes, Git mutations, database writes or migrations, destructive commands, and work outside the approved scope, but those are behavioral controls rather than technical isolation. The read policy is not a secret sandbox: minion prompts forbid reading or revealing secrets, but arbitrary secret paths are not technically denied. Treat provider access and installed tools as repository access.
+There is no runtime shell or external-directory approval gate, so Git, Weaver, Python, and other shell commands do not pause based on their command text or paths. Minion prompts still prohibit unauthorized dependency changes, Git mutations, database writes or migrations, destructive commands, and work outside the approved scope, but those are behavioral controls rather than technical isolation. Environment-file reads and repeated identical tool calls can still prompt through the read and `doom_loop` rules. The read policy is not a secret sandbox: minion prompts forbid reading or revealing secrets, but arbitrary secret paths are not technically denied. Treat provider access and installed tools as repository access.
 
 Read the complete safety model and auto-mode limitations in the [User guide](docs/user-guide.md).
 

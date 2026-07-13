@@ -151,6 +151,22 @@ Routing precedence for each canonical agent is:
 
 For each invocation of scout, investigate, implement, debug, or verify that resolves to Terra, the orchestrator can choose a generated `naru-delegate-luna-*` route, the canonical Terra role, or a generated `naru-delegate-sol-*` route. It selects the model whose strengths best fit the specific assignment by considering capability, task shape, ambiguity, context volume, consequences, tool and verification burden, latency, cost, and prior evidence together. It must not use fixed role mappings, keyword-only classification, cheapest-first routing, or a mandatory model sequence.
 
+### How model selection works
+
+Naru Delegate does not reason about task content. It applies model profiles to runtime agent definitions, creates exact hidden aliases, and appends the available routes and selection policy to dispatcher prompts. The default Sol-powered orchestrator reasons over the complete task packet and chooses a route independently for each invocation.
+
+For example, an implementation minion assigned Terra exposes:
+
+| Route | Model profile |
+| --- | --- |
+| `naru-delegate-luna-minion-implement` | Luna |
+| `naru-minion-implement` | Terra |
+| `naru-delegate-sol-minion-implement` | Sol |
+
+The five Luna-eligible minions produce five Luna aliases. All delegable non-floor roles assigned Terra produce Sol alternatives, currently seventeen aliases. Sol-floor roles and explicit Sol assignments are invoked canonically and receive no generated alternatives. The aliases are internal runtime details: do not invoke them from custom agents or persist them in integrations.
+
+Model choice is not a one-way escalation ladder. The orchestrator may start with Sol, choose Luna when speed and capability fit the assignment, retain Terra for balanced work, or reassess to any available profile after incomplete, conflicting, context-limited, or low-confidence evidence.
+
 ### Configure `naru-models.json`
 
 Create `naru-models.json` beside the installed `commands/`, `agents/`, `tools/`, and `plugins/` directories. Naru never creates, overwrites, or migrates this file.
@@ -194,6 +210,15 @@ To replace profiles and sparsely assign another non-floor role to Sol:
 Schema-v2 profile names are exactly `luna`, `terra`, and `sol`; static agent values are exactly `terra` or `sol`; agent keys must be canonical Naru IDs. Luna cannot be assigned statically because it is a per-invocation orchestrator choice. Profile models use `provider/model` format, and `variant` is optional. The file must be a regular, non-symlinked file no larger than 64 KiB.
 
 Schema-v1 files remain valid. Naru normalizes `profiles.fast` to Terra, `profiles.deep` to Sol, and matching `fast|deep` agent values to `terra|sol` before scopes merge. The v2 plugin also maintains a v1 projection so a stale scope preserves Terra/Sol policy, but a stale plugin cannot generate Luna routes. Reinstall every global and project Naru copy, repeat `--with-dashboard` where previously used, and restart OpenCode before adopting schema v2.
+
+| Schema v1 | Schema v2 |
+| --- | --- |
+| `profiles.fast` | `profiles.terra` |
+| `profiles.deep` | `profiles.sol` |
+| Agent value `fast` | Agent value `terra` |
+| Agent value `deep` | Agent value `sol` |
+
+There is no v1 equivalent for `profiles.luna`. Luna routes appear only when a v2 plugin is active.
 
 When both global and project Naru Delegate plugins load, sparse profiles and exact-agent assignments merge in OpenCode load order. Later values replace matching earlier values without resetting unrelated values. An invalid later configuration disables dynamic routing for that startup, removes generated routes, and restores original agent definitions.
 
@@ -241,6 +266,7 @@ For a manual dashboard install, also copy both dashboard files and add `"./plugi
 - Shell commands and external-directory access are unconditionally allowed at runtime so Git, Weaver, Python, and other routine tools do not pause for approval.
 - Checks execute repository code and can have hidden side effects. Package scripts and Make targets are opaque indirection, so inspection of the relevant manifest or Makefile target before every invocation is mandatory.
 - OpenCode evaluates commands extracted from compound commands and pipelines independently. Minion prompts require one routine command per shell call and discourage composition, but that is an instruction-level safeguard.
+- Environment-file reads remain `ask`. `doom_loop` also remains `ask` and can prompt after the same tool call repeats three times with identical input; neither prompt is a shell-command classification.
 
 ### Permission limitations
 
@@ -278,6 +304,14 @@ Inspect the `naru-delegate` startup error. Confirm `naru-models.json` is valid s
 ### The orchestrator uses an unexpected model
 
 Check every loaded global and project `naru-models.json` in plugin load order. An explicit `agents.naru-orchestrator` value wins over its built-in Sol assignment. Also rerun the installer so the copy-pinned Naru Delegate plugin and routing helper match the Markdown agents.
+
+### A Luna route is missing
+
+Luna routes exist only for scout, investigate, implement, debug, and verify while the canonical role resolves to Terra. An explicit Sol assignment removes both generated alternatives. If an eligible Terra role still has no Luna route, update OpenCode to at least 1.17.19, reinstall every loaded Naru copy, and restart OpenCode. A stale schema-v1 plugin can preserve Terra/Sol policy but cannot generate Luna aliases.
+
+### A minion still asks before Git, Weaver, Python, or another shell command
+
+Current minion definitions end with unconditional Bash and external-directory allows. Rerun the installer with the same location and `--with-dashboard` flags, restart OpenCode, and inspect `opencode debug agent naru-minion-implement`. The final matching `bash` and `external_directory` entries should both be `allow`. Environment-file and repeated-identical-call prompts are expected and come from `read` or `doom_loop`, not Bash.
 
 ### Review commands cannot resolve a pull request
 
