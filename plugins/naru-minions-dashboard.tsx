@@ -1,7 +1,11 @@
 /** @jsxImportSource @opentui/solid */
 import { createEffect, createSignal, For, onCleanup } from "solid-js"
 
-import { isDeepAlias, NARU_AGENT_IDS } from "../tools/naru-lib/model-routing.mjs"
+import {
+  canonicalAgentForRoute,
+  isManagedRoutingAlias,
+  NARU_AGENT_IDS,
+} from "../tools/naru-lib/model-routing.mjs"
 import { parentTasks, routeText, statusText } from "./naru-minions-dashboard-state.mjs"
 
 const COMMAND = "naru.minions"
@@ -63,7 +67,7 @@ function age(timestamp) {
 
 function canonicalAgent(value) {
   if (typeof value !== "string" || !value.startsWith("naru-")) return undefined
-  if (isDeepAlias(value)) return `naru-${value.slice("naru-delegate-deep-".length)}`
+  if (isManagedRoutingAlias(value)) return canonicalAgentForRoute(value)
   return NARU_AGENTS.has(value) ? value : undefined
 }
 

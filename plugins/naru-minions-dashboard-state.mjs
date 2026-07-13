@@ -1,10 +1,16 @@
-import { DEEP_FLOOR_ROLES, isDeepAlias } from '../tools/naru-lib/model-routing.mjs'
+import {
+  canonicalAgentForRoute,
+  isLunaAlias,
+  isManagedRoutingAlias,
+  isSolAlias,
+  SOL_FLOOR_ROLES,
+} from '../tools/naru-lib/model-routing.mjs'
 
-const DEEP_FLOOR = new Set(DEEP_FLOOR_ROLES)
+const SOL_FLOOR = new Set(SOL_FLOOR_ROLES)
 
 function canonicalAgent(value) {
   if (typeof value !== 'string') return undefined
-  if (isDeepAlias(value)) return `naru-${value.slice('naru-delegate-deep-'.length)}`
+  if (isManagedRoutingAlias(value)) return canonicalAgentForRoute(value)
   return value
 }
 
@@ -15,16 +21,17 @@ function profile(agent) {
 
 export function routeText(rawAgent, agent, configuredAgents = {}) {
   if (!agent) return 'Unknown'
-  if (DEEP_FLOOR.has(agent)) return 'Deep floor'
-  if (isDeepAlias(rawAgent)) return 'Deep escalation'
+  if (SOL_FLOOR.has(agent)) return 'Sol floor'
+  if (isLunaAlias(rawAgent)) return 'Luna'
+  if (isManagedRoutingAlias(rawAgent)) return 'Sol'
 
   const current = profile(configuredAgents[rawAgent] ?? configuredAgents[agent])
-  const alias = Object.keys(configuredAgents).find(isDeepAlias)
-  const deep = profile(alias ? configuredAgents[alias] : configuredAgents[DEEP_FLOOR_ROLES[0]])
-  const fast = profile(alias ? configuredAgents[canonicalAgent(alias)] : undefined)
+  const alias = Object.keys(configuredAgents).find(isSolAlias)
+  const sol = profile(alias ? configuredAgents[alias] : configuredAgents[SOL_FLOOR_ROLES[0]])
+  const terra = profile(alias ? configuredAgents[canonicalAgent(alias)] : undefined)
   if (!current) return 'Routed'
-  if (deep && current === deep) return fast === deep ? 'Routed' : 'Deep override'
-  if (fast && current === fast) return 'Fast'
+  if (sol && current === sol) return terra === sol ? 'Routed' : 'Sol'
+  if (terra && current === terra) return 'Terra'
   return 'Routed'
 }
 

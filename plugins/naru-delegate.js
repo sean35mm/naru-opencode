@@ -4,10 +4,11 @@ import { fileURLToPath } from 'node:url'
 
 import {
   applyRoutingToConfig,
-  isDeepAlias,
+  isManagedRoutingAlias,
   mergeRoutingOverrides,
   NARU_AGENT_IDS,
   parseRoutingOverrides,
+  resolveRoutingPolicy,
 } from '../tools/naru-lib/model-routing.mjs'
 
 const CONFIG_PATH = fileURLToPath(new URL('../naru-models.json', import.meta.url))
@@ -68,6 +69,20 @@ function clone(value) {
   return structuredClone(value)
 }
 
+function legacyProjection(value) {
+  const policy = resolveRoutingPolicy(value)
+  const agents = {}
+  for (const agent of NARU_AGENT_IDS) agents[agent] = policy.agents[agent] === 'sol' ? 'deep' : 'fast'
+  return {
+    schemaVersion: 1,
+    profiles: {
+      fast: clone(policy.profiles.terra),
+      deep: clone(policy.profiles.sol),
+    },
+    agents,
+  }
+}
+
 function stateFor(config) {
   let state = shared.configs.get(config)
   if (state) return state
@@ -80,7 +95,9 @@ function stateFor(config) {
     disabled: false,
     originals,
     aliases: new Set(),
-    overrides: parseRoutingOverrides(),
+    // A stale v1 plugin may share this state key, so keep its overrides in v1 form.
+    overrides: { schemaVersion: 1, profiles: {}, agents: {} },
+    overridesV2: parseRoutingOverrides(),
   }
   shared.configs.set(config, state)
   return state
@@ -102,10 +119,13 @@ export const NaruDelegatePlugin = async ({ client }, options = {}) => ({
     const state = stateFor(config)
     if (state.disabled) return
     try {
-      const overrides = mergeRoutingOverrides(state.overrides, await readOverrides(options))
+      const legacyOverrides = parseRoutingOverrides(state.overrides)
+      const baseOverrides = mergeRoutingOverrides(state.overridesV2 ?? legacyOverrides, legacyOverrides)
+      const overrides = mergeRoutingOverrides(baseOverrides, await readOverrides(options))
       restoreOriginals(config, state)
       const summary = applyRoutingToConfig(config, overrides)
-      state.overrides = overrides
+      state.overrides = legacyProjection(overrides)
+      state.overridesV2 = overrides
       state.aliases = new Set(summary.aliases)
     } catch (error) {
       restoreOriginals(config, state)
@@ -116,7 +136,7 @@ export const NaruDelegatePlugin = async ({ client }, options = {}) => ({
   'tool.execute.before': async (input, output) => {
     if (input.tool !== 'task' || !output.args || typeof output.args !== 'object') return
     const target = output.args.subagent_type
-    if ((NARU_AGENTS.has(target) || isDeepAlias(target)) && output.args.task_id) {
+    if ((NARU_AGENTS.has(target) || isManagedRoutingAlias(target)) && output.args.task_id) {
       throw new Error('Naru Delegate requires a fresh child session; task_id resume is disabled')
     }
   },

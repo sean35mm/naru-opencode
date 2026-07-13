@@ -23,17 +23,20 @@ test('dashboard owns reactive resources in its mounted component', () => {
   assert.doesNotMatch(source, /route\.changed/);
 });
 
-test('dashboard distinguishes configured Deep overrides without guessing ambiguous profiles', () => {
+test('dashboard distinguishes Luna, Terra, Sol, and floors without guessing assignment provenance', () => {
   const configured = {
-    'naru-plan-risk': { model: 'provider/deep', variant: 'high' },
-    'naru-minion-scout': { model: 'provider/deep', variant: 'high' },
-    'naru-delegate-deep-minion-investigate': { model: 'provider/deep', variant: 'high' },
-    'naru-minion-investigate': { model: 'provider/fast', variant: 'high' },
+    'naru-plan-risk': { model: 'provider/sol', variant: 'high' },
+    'naru-minion-scout': { model: 'provider/sol', variant: 'high' },
+    'naru-delegate-sol-minion-investigate': { model: 'provider/sol', variant: 'high' },
+    'naru-delegate-luna-minion-investigate': { model: 'provider/luna', variant: 'high' },
+    'naru-minion-investigate': { model: 'provider/terra', variant: 'high' },
   };
-  assert.equal(routeText('naru-minion-scout', 'naru-minion-scout', configured), 'Deep override');
-  assert.equal(routeText('naru-minion-investigate', 'naru-minion-investigate', configured), 'Fast');
-  assert.equal(routeText('naru-delegate-deep-minion-investigate', 'naru-minion-investigate', configured), 'Deep escalation');
-  assert.equal(routeText('naru-plan-risk', 'naru-plan-risk', configured), 'Deep floor');
+  assert.equal(routeText('naru-minion-scout', 'naru-minion-scout', configured), 'Sol');
+  assert.equal(routeText('naru-minion-investigate', 'naru-minion-investigate', configured), 'Terra');
+  assert.equal(routeText('naru-delegate-luna-minion-investigate', 'naru-minion-investigate', configured), 'Luna');
+  assert.equal(routeText('naru-delegate-sol-minion-investigate', 'naru-minion-investigate', configured), 'Sol');
+  assert.equal(routeText('naru-delegate-deep-minion-investigate', 'naru-minion-investigate', configured), 'Sol');
+  assert.equal(routeText('naru-plan-risk', 'naru-plan-risk', configured), 'Sol floor');
   assert.equal(routeText('naru-minion-verify', 'naru-minion-verify', {}), 'Routed');
 });
 
