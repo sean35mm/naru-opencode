@@ -70,7 +70,10 @@ touch "$FIXTURE/tools/naru-github-read.js"
 touch "$FIXTURE/tools/naru-github-post-review.js"
 touch "$FIXTURE/tools/naru-lib/helper.js"
 touch "$FIXTURE/plugins/naru-delegate.js"
-touch "$FIXTURE/plugins/naru-minions-dashboard.js"
+touch "$FIXTURE/plugins/naru-minions-dashboard.tsx"
+cp "$ROOT/plugins/naru-minions-dashboard-state.mjs" "$FIXTURE/plugins/naru-minions-dashboard-state.mjs"
+mkdir -p "$FIXTURE/scripts"
+cp "$ROOT/scripts/merge-tui-config.mjs" "$FIXTURE/scripts/merge-tui-config.mjs"
 
 PASS=0
 FAIL=0
@@ -94,7 +97,7 @@ if is_link "$T1/agents/naru-plan.md"; then pass "symlinked agent"; else fail "sy
 if is_file "$T1/tools/naru-git-read.js"; then pass "tool copy-pinned"; else fail "tool copy-pinned"; fi
 if is_dir "$T1/tools/naru-lib"; then pass "tool helper dir copy-pinned"; else fail "tool helper dir copy-pinned"; fi
 if is_file "$T1/plugins/naru-delegate.js"; then pass "delegate plugin installed by default"; else fail "delegate plugin installed by default"; fi
-if [ ! -e "$T1/plugins/naru-minions-dashboard.js" ]; then pass "dashboard omitted by default"; else fail "dashboard omitted by default"; fi
+if [ ! -e "$T1/plugins/naru-minions-dashboard.tsx" ]; then pass "dashboard omitted by default"; else fail "dashboard omitted by default"; fi
 if [ ! -e "$T1/commands/naru" ] && [ ! -e "$T1/agents/naru" ]; then pass "no old loader paths"; else fail "no old loader paths"; fi
 
 # 2. Copy mode.
@@ -148,7 +151,43 @@ if [ -e "$T5B/agents/orchestrator.md" ] && [ -e "$T5B/agents/minion" ] && [ -e "
 T6="$TMP/t6"
 mkdir -p "$T6"
 "$FIXTURE/install.sh" --dir "$T6" --with-dashboard
-if is_file "$T6/plugins/naru-minions-dashboard.js"; then pass "dashboard installed with --with-dashboard"; else fail "dashboard installed with --with-dashboard"; fi
+if is_file "$T6/plugins/naru-minions-dashboard.tsx"; then pass "dashboard installed with --with-dashboard"; else fail "dashboard installed with --with-dashboard"; fi
+if is_file "$T6/plugins/naru-minions-dashboard-state.mjs"; then pass "dashboard state helper installed with --with-dashboard"; else fail "dashboard state helper installed with --with-dashboard"; fi
+if grep -q '"./plugins/naru-minions-dashboard.tsx"' "$T6/tui.json"; then pass "dashboard registered in new TUI config"; else fail "dashboard registered in new TUI config"; fi
+
+T6B="$TMP/t6b"
+mkdir -p "$T6B/plugins"
+touch "$T6B/plugins/naru-minions-dashboard.js"
+cat > "$T6B/tui.jsonc" <<'EOF'
+{
+  // Preserve this comment and unrelated setting.
+  "theme": "system",
+  "plugin": [
+    "./plugins/unrelated.tsx",
+    "./plugins/naru-minions-dashboard.js",
+  ],
+}
+EOF
+printf '%s\n' '{"plugin":["./plugins/ignored.tsx",["plugins/naru-minions-dashboard.js",{"legacy":true}]]}' > "$T6B/tui.json"
+"$FIXTURE/install.sh" --dir "$T6B" --with-dashboard >/dev/null
+if grep -q 'Preserve this comment' "$T6B/tui.jsonc" && grep -q 'unrelated.tsx' "$T6B/tui.jsonc"; then pass "JSONC merge preserves unrelated content"; else fail "JSONC merge preserves unrelated content"; fi
+if [ "$(grep -c 'naru-minions-dashboard.tsx' "$T6B/tui.jsonc")" -eq 1 ] && ! grep -q 'naru-minions-dashboard.js' "$T6B/tui.jsonc"; then pass "dashboard registration migrated idempotently"; else fail "dashboard registration migrated idempotently"; fi
+if [ ! -e "$T6B/plugins/naru-minions-dashboard.js" ]; then pass "legacy dashboard migrated"; else fail "legacy dashboard migrated"; fi
+if grep -q 'ignored.tsx' "$T6B/tui.json" && ! grep -q 'naru-minions-dashboard' "$T6B/tui.json"; then pass "lower precedence TUI config legacy registration cleaned"; else fail "lower precedence TUI config legacy registration cleaned"; fi
+"$FIXTURE/install.sh" --dir "$T6B" --with-dashboard >/dev/null
+if [ "$(grep -c 'naru-minions-dashboard.tsx' "$T6B/tui.jsonc")" -eq 1 ]; then pass "dashboard config reinstall idempotent"; else fail "dashboard config reinstall idempotent"; fi
+
+T6C="$TMP/t6c"
+mkdir -p "$T6C"
+printf '%s\n' '{ invalid' > "$T6C/tui.json"
+if "$FIXTURE/install.sh" --dir "$T6C" --with-dashboard >/dev/null 2>&1; then fail "reject malformed TUI config"; else pass "reject malformed TUI config"; fi
+if [ ! -e "$T6C/plugins/naru-minions-dashboard.tsx" ]; then pass "malformed config leaves dashboard uninstalled"; else fail "malformed config leaves dashboard uninstalled"; fi
+
+T6D="$TMP/t6d"
+mkdir -p "$T6D" "$TMP/outside-tui"
+printf '%s\n' '{"plugin":[]}' > "$T6D/tui.jsonc"
+ln -s "$TMP/outside-tui/config" "$T6D/tui.json"
+if "$FIXTURE/install.sh" --dir "$T6D" --with-dashboard >/dev/null 2>&1; then fail "reject either symlinked TUI config"; else pass "reject either symlinked TUI config"; fi
 
 # 7. Idempotency and backup retention.
 T7="$TMP/t7"
@@ -187,6 +226,7 @@ cat > "$FAKEBIN/mv" <<EOF
 #!/usr/bin/env sh
 case "\$1" in
   */.naru-staging/*/commands/naru-impact.md) exit 99 ;;
+  */.naru-staging/*/tui.jsonc) exit 99 ;;
 esac
 exec "$REAL_MV" "\$@"
 EOF
@@ -203,6 +243,45 @@ else
   fail "rollback restored replaced destinations"
 fi
 if [ ! -d "$T10/.naru-staging" ]; then pass "rollback removed staging tree"; else fail "rollback removed staging tree"; fi
+
+T10A="$TMP/t10a"
+mkdir -p "$T10A/.naru-backups/user-kept"
+printf '%s\n' 'keep' > "$T10A/.naru-backups/user-kept/content"
+FAKECP="$TMP/fakecp"
+mkdir -p "$FAKECP"
+cat > "$FAKECP/cp" <<'EOF'
+#!/usr/bin/env sh
+exit 98
+EOF
+chmod +x "$FAKECP/cp"
+if PATH="$FAKECP:$PATH" "$FIXTURE/install.sh" --dir "$T10A" >/dev/null 2>&1; then
+  fail "injected pre-replacement install failure"
+else
+  pass "injected pre-replacement install failure"
+fi
+if [ "$(find "$T10A/.naru-backups" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" -eq 1 ] &&
+   [ -f "$T10A/.naru-backups/user-kept/content" ]; then
+  pass "failed install removes only transaction-created empty backup directory"
+else
+  fail "failed install removes only transaction-created empty backup directory"
+fi
+
+T10B="$TMP/t10b"
+mkdir -p "$T10B"
+printf '%s\n' '{"plugin":["plugins/naru-minions-dashboard.js","lower"]}' > "$T10B/tui.json"
+printf '%s\n' '{"plugin":["./plugins/naru-minions-dashboard.js","higher"]}' > "$T10B/tui.jsonc"
+cp "$T10B/tui.json" "$TMP/t10b-tui.json"
+cp "$T10B/tui.jsonc" "$TMP/t10b-tui.jsonc"
+if PATH="$FAKEBIN:$PATH" "$FIXTURE/install.sh" --dir "$T10B" --with-dashboard >/dev/null 2>&1; then
+  fail "injected TUI config install failure"
+else
+  pass "injected TUI config install failure"
+fi
+if cmp -s "$T10B/tui.json" "$TMP/t10b-tui.json" && cmp -s "$T10B/tui.jsonc" "$TMP/t10b-tui.jsonc"; then
+  pass "rollback restored both TUI configs"
+else
+  fail "rollback restored both TUI configs"
+fi
 
 # 11. Managed backup/staging paths cannot redirect writes through symlinks.
 T11="$TMP/t11"

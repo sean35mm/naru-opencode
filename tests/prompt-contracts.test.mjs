@@ -102,6 +102,44 @@ async function main() {
     fail('naru-orchestrator missing delegation marker');
   }
 
+  for (const role of ['implement', 'debug', 'verify']) {
+    const text = await readFile(here(`agents/naru-minion-${role}.md`), 'utf8');
+    for (const requiredText of [
+      'package scripts are opaque',
+      'manifest or Makefile target',
+      'inspection is mandatory',
+      'execute repository code',
+      'hidden side effects',
+      'not a database sandbox',
+      'mixed-case',
+      'PATH',
+      'without a per-invocation prompt',
+      'commands extracted from a compound command or pipeline independently',
+      'one routine command per shell call',
+      'instruction-level',
+      'naru-git-read',
+    ]) {
+      if (!hasAny(text, [requiredText])) fail(`naru-minion-${role} missing shell-policy contract: ${requiredText}`);
+    }
+    if (!hasAny(text, ['do not need individual authorization', 'do not need individual approval'])) {
+      fail(`naru-minion-${role} does not make routine checks frictionless`);
+    }
+  }
+  for (const requiredText of ['exact command', 'purpose', 'working directory', 'impact']) {
+    if (!orchestrator.includes(requiredText)) fail(`naru-orchestrator missing gated-command packet field: ${requiredText}`);
+  }
+  if (!hasAny(orchestrator, ['routine test', 'may be delegated directly'])) {
+    fail('naru-orchestrator does not permit direct routine-check delegation');
+  }
+  for (const requiredText of ['execute repository code', 'hidden side effects', 'manifest or Makefile target', 'not a database sandbox', 'without a per-invocation prompt', 'evaluates extracted commands independently', 'one routine command per shell call', 'instruction-level']) {
+    if (!hasAny(orchestrator, [requiredText])) fail(`naru-orchestrator missing execution-risk contract: ${requiredText}`);
+  }
+
+  const readme = await readFile(here('README.md'), 'utf8');
+  for (const requiredText of ['execute repository code', 'hidden side effects', 'mandatory', 'mixed-case', 'PATH', 'not a database sandbox', 'without a per-invocation prompt', 'commands extracted from compound commands and pipelines independently', 'one routine command per shell call', 'instruction-level']) {
+    if (!hasAny(readme, [requiredText])) fail(`README missing shell-policy limitation: ${requiredText}`);
+  }
+
   for (const role of ['scout', 'investigate', 'architect', 'implement', 'debug', 'verify', 'judge']) {
     const text = await readFile(here(`agents/naru-minion-${role}.md`), 'utf8');
     if (!text.includes(`"agent": "naru-minion-${role}"`)) {

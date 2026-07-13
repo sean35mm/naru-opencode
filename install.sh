@@ -206,7 +206,13 @@ add_copy "${SRC_DIR}/plugins/naru-delegate.js" "plugins/naru-delegate.js"
 
 # Optional dashboard plugin (always copy-pinned).
 if [ "$WITH_DASHBOARD" = true ]; then
-  add_copy "${SRC_DIR}/plugins/naru-minions-dashboard.js" "plugins/naru-minions-dashboard.js"
+  add_copy "${SRC_DIR}/plugins/naru-minions-dashboard-state.mjs" "plugins/naru-minions-dashboard-state.mjs"
+  add_copy "${SRC_DIR}/plugins/naru-minions-dashboard.tsx" "plugins/naru-minions-dashboard.tsx"
+  if [ ! -f "${SRC_DIR}/scripts/merge-tui-config.mjs" ]; then
+    echo "install.sh: missing source: ${SRC_DIR}/scripts/merge-tui-config.mjs" >&2
+    rm -rf "$TX_DIR"
+    exit 1
+  fi
 fi
 
 # Preflight every source before touching the target.
@@ -219,8 +225,38 @@ while IFS="$(printf '\t')" read -r method src rel; do
   fi
 done < "$PLAN"
 
+TUI_CONFIG_RELS=""
+TUI_REGISTER_REL=""
+if [ "$WITH_DASHBOARD" = true ]; then
+  for rel in tui.json tui.jsonc; do
+    if [ -L "${TARGET}/${rel}" ]; then
+      echo "install.sh: refusing symlinked TUI config: ${TARGET}/${rel}" >&2
+      exit 1
+    fi
+    if [ -e "${TARGET}/${rel}" ] && [ ! -f "${TARGET}/${rel}" ]; then
+      echo "install.sh: TUI config is not a regular file: ${TARGET}/${rel}" >&2
+      exit 1
+    fi
+    if [ -f "${TARGET}/${rel}" ]; then
+      TUI_CONFIG_RELS="${TUI_CONFIG_RELS}${TUI_CONFIG_RELS:+ }${rel}"
+    fi
+  done
+  if [ -f "${TARGET}/tui.jsonc" ]; then
+    TUI_REGISTER_REL="tui.jsonc"
+  elif [ -f "${TARGET}/tui.json" ]; then
+    TUI_REGISTER_REL="tui.json"
+  else
+    TUI_REGISTER_REL="tui.json"
+    TUI_CONFIG_RELS="tui.json"
+  fi
+fi
+
 mkdir -p "$TARGET"
-mkdir -p "$BACKUP_DIR"
+BACKUP_DIR_CREATED=false
+if [ ! -e "$BACKUP_DIR" ] && [ ! -L "$BACKUP_DIR" ]; then
+  mkdir -p "$BACKUP_DIR"
+  BACKUP_DIR_CREATED=true
+fi
 
 LAST_BACKUP_REL=""
 
@@ -281,6 +317,9 @@ cleanup() {
   if [ -e "$STAGE_DIR" ] || [ -L "$STAGE_DIR" ]; then
     rm -rf "$STAGE_DIR"
   fi
+  if [ $rc -ne 0 ] && [ "$BACKUP_DIR_CREATED" = true ]; then
+    rmdir "$BACKUP_DIR" 2>/dev/null || true
+  fi
   rmdir "${TARGET}/.naru-staging" 2>/dev/null || true
   rm -rf "$TX_DIR"
   exit "$rc"
@@ -305,6 +344,26 @@ while IFS="$(printf '\t')" read -r method src rel; do
   fi
 done < "$PLAN"
 
+# Prepare the TUI config before any destination is changed. The dependency-free
+# helper validates JSON/JSONC and rewrites only the top-level plugin array.
+if [ "$WITH_DASHBOARD" = true ]; then
+  if command -v node >/dev/null 2>&1; then
+    tui_runtime=node
+  elif command -v bun >/dev/null 2>&1; then
+    tui_runtime=bun
+  else
+    echo "install.sh: --with-dashboard requires node or bun to merge TUI config safely" >&2
+    exit 1
+  fi
+  for rel in $TUI_CONFIG_RELS; do
+    tui_input="${TARGET}/${rel}"
+    [ -f "$tui_input" ] || tui_input="-"
+    operation=remove
+    [ "$rel" = "$TUI_REGISTER_REL" ] && operation=register
+    "$tui_runtime" "${SRC_DIR}/scripts/merge-tui-config.mjs" "$tui_input" "${STAGE_DIR}/${rel}" "./plugins/naru-minions-dashboard.tsx" "$operation"
+  done
+fi
+
 # Migrate old Core loader paths out of scanned directories.
 migrate_path "commands/naru"
 migrate_path "agents/naru"
@@ -325,6 +384,10 @@ if [ "$MIGRATE_ORCHESTRATOR" = true ]; then
   migrate_path "plugins/orchestrator-dashboard.js"
 fi
 
+if [ "$WITH_DASHBOARD" = true ]; then
+  migrate_path "plugins/naru-minions-dashboard.js"
+fi
+
 # Execute the install plan.
 while IFS="$(printf '\t')" read -r method src rel; do
   [ -n "$src" ] || continue
@@ -336,6 +399,19 @@ while IFS="$(printf '\t')" read -r method src rel; do
   printf '%s\n' "$dst" >> "$CREATED"
   echo "  installed ${rel}"
 done < "$PLAN"
+
+if [ "$WITH_DASHBOARD" = true ]; then
+  for rel in $TUI_CONFIG_RELS; do
+    backup_if_present "$rel"
+    mv "${STAGE_DIR}/${rel}" "${TARGET}/${rel}"
+    printf '%s\n' "${TARGET}/${rel}" >> "$CREATED"
+    if [ "$rel" = "$TUI_REGISTER_REL" ]; then
+      echo "  registered dashboard in ${rel}"
+    else
+      echo "  removed legacy dashboard registrations from ${rel}"
+    fi
+  done
+fi
 
 echo "Installed Naru into ${TARGET} (${MODE})"
 echo "Backups kept at ${BACKUP_DIR}"
