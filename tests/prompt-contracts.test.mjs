@@ -212,6 +212,105 @@ async function main() {
     fail('naru-orchestrator retains duplicate static model-selection section');
   }
 
+  for (const requiredText of [
+    'dependency DAG, not an ordered queue',
+    'after planning and after each completion',
+    'do not force fan-out or invent splits',
+    'At most two fresh Implement invocations',
+    'exact write paths or globs',
+    'shared contracts, generated artifacts, manifests or lockfiles or configuration, and mutable runtime resources',
+    'Any uncertainty, coupling, overlapping ownership, or required ordering falls back to one writer',
+    'Do not create worktrees automatically',
+    '`workItemId`',
+    '`waveId`',
+    'owned write scope',
+    'generated-artifact claims',
+    'verification needs',
+    'fresh Task invocation',
+    'never reuse `task_id`',
+    'live claim conflict is a blocked/serialization signal',
+    'never rerun the conflicting claim',
+    'If Weaver is unavailable',
+    'strict packet ownership and changed-path containment',
+    'full wave barrier',
+    'Cap active Implement children at two',
+    'Recalculate DAG readiness after each completion',
+    'do not dispatch the next wave until the current wave reaches a clean barrier',
+    'do not reset or revert automatically',
+    'union of the current wave\'s ownership claims',
+    'immutable pre-wave workspace baseline',
+    '`baselineIdentity`',
+    '`baselineState`',
+    '`postWaveIdentity`',
+    '`postWaveState`',
+    '`currentWaveDelta`',
+    'Later waves operate on and are checked against the full combined dirty workspace',
+    'ownership containment compares only the current wave\'s delta with the current wave\'s ownership union',
+    'not unknown current-wave paths',
+    'later edits are blocking',
+    'Remediation requires fresh aggregate verification and judgment',
+    'explicitly authorized delivery remains serialized',
+  ]) {
+    if (!orchestrator.includes(requiredText)) fail(`naru-orchestrator missing bounded-writer contract: ${requiredText}`);
+  }
+
+  for (const requiredText of [
+    'at most two fresh Implement invocations',
+    'Do not create a worktree automatically',
+    'every required exact owned path or glob claim must be successfully acquired before the first edit',
+    'Do not edit after only partial claim acquisition',
+    'blocked report with zero edits and zero changed paths',
+    'serialized coordinator fallback',
+    'never rerun the conflicting claim',
+    'If Weaver is unavailable',
+    'strict ownership and changed-path containment',
+    'Stop and report blocked',
+    'Concurrent writers may not commit, push, open or update a PR',
+    'shared/repository-wide mutating commands',
+    'never reset or revert the combined workspace automatically',
+    'Remediation and explicitly authorized delivery use later serialized packets',
+  ]) {
+    if (!implement.includes(requiredText)) fail(`naru-minion-implement missing concurrent-writer contract: ${requiredText}`);
+  }
+
+  for (const requiredText of [
+    'every Implement writer is terminal',
+    'every implementation report',
+    'union of the current wave\'s owned write-scope claims',
+    'immutable pre-wave `baselineIdentity` and `baselineState`',
+    '`postWaveIdentity` and `postWaveState`',
+    '`currentWaveDelta`',
+    'Compare only the current-wave delta\'s changed paths',
+    'full combined post-wave state',
+    'not unknown current-wave paths',
+    'stale/mixed evidence as blocking',
+    'Any later edit or unexpected worktree change invalidates this verification',
+    'full wave barrier',
+    '"waveId"',
+    '"workItemIds"',
+  ]) {
+    if (!verify.includes(requiredText)) fail(`naru-minion-verify missing aggregate-wave contract: ${requiredText}`);
+  }
+
+  for (const requiredText of [
+    'every Implement writer in the wave to be terminal',
+    'matching aggregate verification report',
+    'immutable pre-wave baseline identity/state',
+    'post-wave identity/state',
+    'current-wave delta',
+    'full integrated post-wave state',
+    'comparing ownership only against the current-wave delta',
+    'not unknown current-wave files',
+    'stale or mixed evidence',
+    'later edit or unexpected worktree change as blocking',
+    'Remediation is serialized',
+    'fresh aggregate verification and re-judgment',
+    'Explicitly authorized delivery is serialized',
+    'at most three judge passes',
+  ]) {
+    if (!judge.includes(requiredText)) fail(`naru-minion-judge missing wave-judgment contract: ${requiredText}`);
+  }
+
   for (const role of ['scout', 'investigate', 'architect', 'implement', 'debug', 'verify', 'judge']) {
     const text = await readFile(here(`agents/naru-minion-${role}.md`), 'utf8');
     if (!hasAny(text, ['do not read or reveal secrets'])) fail(`naru-minion-${role} missing secret boundary`);
@@ -232,6 +331,22 @@ async function main() {
   }
   if (!hasAny(implement, ['only minion authorized', 'only minion that edits'])) {
     fail('naru-minion-implement missing sole workflow editor boundary');
+  }
+  for (const requiredText of ['  edit: allow', '  apply_patch: allow', '  task: deny']) {
+    if (!implement.includes(requiredText)) fail(`naru-minion-implement permission boundary changed: ${requiredText.trim()}`);
+  }
+  for (const role of ['scout', 'investigate', 'architect', 'debug', 'verify', 'judge']) {
+    const text = await readFile(here(`agents/naru-minion-${role}.md`), 'utf8');
+    if (!text.includes('  edit: deny')) fail(`naru-minion-${role} no longer denies edits`);
+    if (text.includes('  task: allow')) fail(`naru-minion-${role} unexpectedly allows Task`);
+  }
+  for (const target of ['scout', 'investigate', 'architect', 'implement', 'debug', 'verify', 'judge']) {
+    if (!orchestrator.includes(`    'naru-minion-${target}': allow`)) {
+      fail(`naru-orchestrator Task route changed for naru-minion-${target}`);
+    }
+  }
+  if (orchestrator.includes('  edit: allow') || orchestrator.includes('  apply_patch: allow')) {
+    fail('naru-orchestrator unexpectedly gained edit permission');
   }
   for (const role of ['implement', 'debug', 'verify']) {
     const text = await readFile(here(`agents/naru-minion-${role}.md`), 'utf8');

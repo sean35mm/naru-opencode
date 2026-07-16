@@ -155,5 +155,116 @@
       "prohibited": { "actions": ["unrequested migration", "scope expansion"], "routes": ["naru-delegate-sol-xhigh-minion-implement"] },
       "expected": { "status": "completed", "authorization": "delivery-authorized", "allowedOperations": ["commit", "push", "open-pull-request"], "promptRequired": false }
     }
+  ],
+  "implementationSchedulingCases": [
+    {
+      "id": "scheduler-single-writer",
+      "scenario": "One ready implementation item does not create artificial fan-out.",
+      "readyWorkItems": ["a"],
+      "prohibitedActions": ["invent split"],
+      "expected": { "implementWaves": [["a"]], "maxConcurrentImplement": 1, "disposition": "single-writer" }
+    },
+    {
+      "id": "scheduler-safe-two-writer-wave",
+      "scenario": "Two ready items have demonstrably disjoint ownership and claims.",
+      "workItems": [
+        { "workItemId": "a", "waveId": "wave-1", "baselineIdentity": "wave-1-pre", "baselineState": { "status": "clean", "changedPaths": [], "diffSnapshot": "empty" }, "dependencies": [], "ownedWriteScope": ["src/a.js"], "contractClaims": ["contract-a"], "generatedArtifactClaims": [], "mutableResourceClaims": ["resource-a"], "exclusions": ["src/b.js"], "verificationNeeds": ["check-a"] },
+        { "workItemId": "b", "waveId": "wave-1", "baselineIdentity": "wave-1-pre", "baselineState": { "status": "clean", "changedPaths": [], "diffSnapshot": "empty" }, "dependencies": [], "ownedWriteScope": ["src/b.js"], "contractClaims": ["contract-b"], "generatedArtifactClaims": [], "mutableResourceClaims": ["resource-b"], "exclusions": ["src/a.js"], "verificationNeeds": ["check-b"] }
+      ],
+      "prohibitedActions": ["shared mutation"],
+      "expected": { "implementWaves": [["a", "b"]], "maxConcurrentImplement": 2, "disposition": "concurrent" }
+    },
+    {
+      "id": "scheduler-cap-two",
+      "scenario": "Three independent ready items are bounded to two active writers.",
+      "readyWorkItems": ["a", "b", "c"],
+      "disjointAcross": ["writeScope", "dependencies", "contracts", "generatedArtifacts", "configuration", "resources"],
+      "prohibitedActions": ["three concurrent writers"],
+      "expected": { "implementWaves": [["a", "b"], ["c"]], "maxConcurrentImplement": 2, "disposition": "bounded" }
+    },
+    {
+      "id": "scheduler-same-file-serialization",
+      "scenario": "Ready items claim the same file.",
+      "overlap": { "ownedWriteScope": ["src/shared.js"] },
+      "prohibitedActions": ["concurrent same-file edit"],
+      "expected": { "implementWaves": [["a"], ["b"]], "maxConcurrentImplement": 1, "disposition": "serialize" }
+    },
+    {
+      "id": "scheduler-shared-contract-serialization",
+      "scenario": "Ready items claim one shared interface contract.",
+      "overlap": { "contractClaims": ["public-api-v1"] },
+      "prohibitedActions": ["concurrent shared-contract edit"],
+      "expected": { "implementWaves": [["a"], ["b"]], "maxConcurrentImplement": 1, "disposition": "serialize" }
+    },
+    {
+      "id": "scheduler-shared-resource-serialization",
+      "scenario": "Ready items claim one mutable runtime resource.",
+      "overlap": { "mutableResourceClaims": ["dev-server:3000"] },
+      "prohibitedActions": ["concurrent shared-resource use"],
+      "expected": { "implementWaves": [["a"], ["b"]], "maxConcurrentImplement": 1, "disposition": "serialize" }
+    },
+    {
+      "id": "scheduler-dependency-serialization",
+      "scenario": "Item b depends on item a.",
+      "dependencies": { "a": [], "b": ["a"] },
+      "prohibitedActions": ["start dependent item early"],
+      "expected": { "implementWaves": [["a"], ["b"]], "maxConcurrentImplement": 1, "disposition": "serialize" }
+    },
+    {
+      "id": "scheduler-weaver-conflict",
+      "scenario": "A live Weaver claim conflicts before item b can make its first edit.",
+      "weaver": { "available": true, "conflictOn": "b", "requiredClaims": ["src/b.js"], "successfulClaims": [], "claimTiming": "before-first-edit", "claimRetries": 0 },
+      "prohibitedActions": ["edit before all claims succeed", "rerun conflicting claim"],
+      "expected": { "implementWaves": [["a"], ["b"]], "maxConcurrentImplement": 1, "editsBeforeConflict": 0, "reportChangedPaths": [], "coordinatorFallback": "serialized", "disposition": "blocked-then-serialize" }
+    },
+    {
+      "id": "scheduler-weaver-unavailable-internal-gates",
+      "scenario": "Weaver is unavailable but packet claims are strictly disjoint.",
+      "weaver": { "available": false, "fallback": "strict-packet-ownership-and-changed-path-containment" },
+      "prohibitedActions": ["relax ownership gates"],
+      "expected": { "implementWaves": [["a", "b"]], "maxConcurrentImplement": 2, "disposition": "concurrent-with-internal-gates" }
+    },
+    {
+      "id": "scheduler-aggregate-verification-barrier",
+      "scenario": "Aggregate verification waits for both wave writers to terminate.",
+      "wave": { "waveId": "wave-1", "writers": ["a", "b"] },
+      "prohibitedActions": ["verify partial wave"],
+      "expected": { "verificationStarts": "after-all-writers-terminal", "implementationReports": ["a", "b"], "claimComparison": "current-wave-delta-vs-current-wave-ownership-union" }
+    },
+    {
+      "id": "scheduler-second-wave-baseline-delta",
+      "scenario": "A second wave starts from a dirty baseline containing successful first-wave paths and verifies only its own delta while checking the full integrated state.",
+      "wave": {
+        "waveId": "wave-2",
+        "workItemIds": ["c"],
+        "baselineIdentity": "wave-2-pre",
+        "baselineState": { "status": "dirty", "changedPaths": ["src/a.js", "src/b.js"], "diffSnapshot": "wave-1-diff" },
+        "postWaveIdentity": "wave-2-post",
+        "postWaveState": { "status": "dirty", "changedPaths": ["src/a.js", "src/b.js", "src/c.js"], "diffSnapshot": "wave-1-plus-wave-2-diff" },
+        "currentWaveDelta": { "changedPaths": ["src/c.js"], "diffSnapshot": "wave-2-only-diff" },
+        "ownershipUnion": ["src/c.js"]
+      },
+      "prohibitedActions": ["compare full dirty path set with current ownership", "classify earlier-wave paths as unknown"],
+      "expected": { "verificationState": "full-integrated-post-wave-state", "claimComparison": "current-wave-delta-vs-current-wave-ownership-union", "earlierWavePaths": "valid-baseline-state", "disposition": "verified" }
+    },
+    {
+      "id": "scheduler-scope-drift-invalidates-evidence",
+      "scenario": "Owned-path drift and a later edit occur after aggregate verification.",
+      "events": ["owned-path-drift", "later-edit"],
+      "prohibitedActions": ["reuse stale verification", "reuse stale judgment"],
+      "expected": { "evidenceStatus": "invalid", "invalidated": ["verification", "judgment"], "disposition": "block-and-reverify" }
+    },
+    {
+      "id": "scheduler-remediation-delivery-serialized",
+      "scenario": "Remediation and authorized delivery follow a completed writer wave.",
+      "prohibitedActions": ["concurrent remediation", "delivery inside writer wave"],
+      "expected": { "phases": ["implementation-wave", "aggregate-verification", "judgment", "serialized-remediation", "reverification", "rejudgment", "serialized-delivery"], "remediationConcurrency": 1, "deliveryConcurrency": 1 }
+    },
+    {
+      "id": "scheduler-no-automatic-worktrees",
+      "scenario": "Concurrency remains in the current workspace without automatic worktree creation.",
+      "prohibitedActions": ["automatic worktree"],
+      "expected": { "automaticWorktreeCreation": false, "workspaceMode": "current-workspace" }
+    }
   ]
 }
