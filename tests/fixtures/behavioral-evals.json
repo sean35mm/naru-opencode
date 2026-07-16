@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Deterministic Naru behavioral contract corpus; not a live model-quality benchmark.",
+  "cases": [
+    {
+      "id": "narrow-implementation",
+      "workflow": "implementation",
+      "rootAgent": "naru-orchestrator",
+      "input": { "summary": "Add a label to one known component." },
+      "selection": { "baseline": ["naru-minion-implement", "naru-minion-verify", "naru-minion-judge"], "selected": ["naru-minion-implement", "naru-minion-verify", "naru-minion-judge"], "skipped": ["naru-minion-scout", "naru-minion-investigate", "naru-minion-architect", "naru-minion-debug"], "skippedStatus": "skipped-not-relevant" },
+      "routing": { "root": { "profile": "sol", "variant": "high" }, "children": { "profiles": ["luna", "terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["unrelated refactor", "automatic xhigh escalation"], "routes": ["naru-delegate-sol-xhigh-minion-implement"] },
+      "expected": { "status": "completed", "authorization": "authorized-local" }
+    },
+    {
+      "id": "cross-package-implementation",
+      "workflow": "implementation",
+      "rootAgent": "naru-orchestrator",
+      "input": { "summary": "Change a shared package API and its two consumers." },
+      "selection": { "baseline": ["naru-minion-scout", "naru-minion-architect", "naru-minion-implement", "naru-minion-verify", "naru-minion-judge"], "selected": ["naru-minion-scout", "naru-minion-architect", "naru-minion-implement", "naru-minion-verify", "naru-minion-judge"], "skipped": ["naru-minion-investigate", "naru-minion-debug"], "skippedStatus": "skipped-not-relevant" },
+      "routing": { "root": { "profile": "sol", "variant": "high" }, "children": { "profiles": ["luna", "terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["dependency change without request"], "routes": ["naru-delegate-sol-xhigh-minion-architect"] },
+      "expected": { "status": "completed", "authorization": "authorized-local" }
+    },
+    {
+      "id": "ambiguous-diagnosis",
+      "workflow": "triage",
+      "rootAgent": "naru-triage",
+      "input": { "summary": "The service is sometimes slow; no reproduction or target is supplied." },
+      "selection": { "baseline": ["naru-triage-reproduction", "naru-triage-codepath", "naru-triage-judge"], "selected": ["naru-triage-reproduction", "naru-triage-codepath", "naru-triage-judge"], "skipped": ["naru-triage-regression", "naru-triage-tests"], "skippedStatus": "skipped-not-relevant" },
+      "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["invent a root cause", "edit files"], "routes": ["naru-delegate-sol-xhigh-minion-debug"] },
+      "expected": { "status": "clarification-required", "authorization": "read-only" }
+    },
+    {
+      "id": "security-data-sensitive-change",
+      "workflow": "plan",
+      "rootAgent": "naru-plan",
+      "input": { "summary": "Add retention handling for customer account data." },
+      "selection": { "baseline": ["naru-plan-minimal-change", "naru-plan-tests", "naru-plan-judge"], "selected": ["naru-plan-architecture", "naru-plan-minimal-change", "naru-plan-risk", "naru-plan-tests", "naru-plan-judge"], "skipped": [], "skippedStatus": "skipped-not-relevant" },
+      "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["read secrets", "run migration"], "routes": ["naru-delegate-sol-xhigh-minion-implement"] },
+      "expected": { "status": "completed", "authorization": "read-only" }
+    },
+    {
+      "id": "frontend-review",
+      "workflow": "review",
+      "rootAgent": "naru-review",
+      "input": { "summary": "Review a PR that changes only a mobile layout component." },
+      "selection": { "baseline": ["naru-review-judge"], "selected": ["naru-review-frontend-mobile", "naru-review-judge"], "skipped": ["naru-review-security", "naru-review-backend", "naru-review-integrations", "naru-review-tests-ci"], "skippedStatus": "skipped-not-relevant" },
+      "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["post review", "inspect mutable local checkout"], "routes": ["naru-delegate-sol-xhigh-minion-verify"] },
+      "expected": { "status": "completed", "authorization": "dry-run" }
+    },
+    {
+      "id": "backend-review",
+      "workflow": "review",
+      "rootAgent": "naru-review",
+      "input": { "summary": "Review a PR that changes a server request handler." },
+      "selection": { "baseline": ["naru-review-judge"], "selected": ["naru-review-backend", "naru-review-judge"], "skipped": ["naru-review-security", "naru-review-frontend-mobile", "naru-review-integrations", "naru-review-tests-ci"], "skippedStatus": "skipped-not-relevant" },
+      "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["post review"], "routes": ["naru-delegate-sol-xhigh-minion-debug"] },
+      "expected": { "status": "completed", "authorization": "dry-run" }
+    },
+    {
+      "id": "cross-service-review",
+      "workflow": "review",
+      "rootAgent": "naru-review",
+      "input": { "summary": "Review a PR that changes an outbound webhook contract." },
+      "selection": { "baseline": ["naru-review-judge"], "selected": ["naru-review-integrations", "naru-review-judge"], "skipped": ["naru-review-security", "naru-review-backend", "naru-review-frontend-mobile", "naru-review-tests-ci"], "skippedStatus": "skipped-not-relevant" },
+      "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["post review"], "routes": ["naru-delegate-sol-xhigh-minion-architect"] },
+      "expected": { "status": "completed", "authorization": "dry-run" }
+    },
+    {
+      "id": "provider-failure",
+      "workflow": "plan",
+      "rootAgent": "naru-plan",
+      "input": { "summary": "Plan a focused bug fix; the tests specialist fails after one fresh retry." },
+      "selection": { "baseline": ["naru-plan-minimal-change", "naru-plan-tests", "naru-plan-judge"], "selected": ["naru-plan-minimal-change", "naru-plan-tests", "naru-plan-judge"], "skipped": ["naru-plan-architecture", "naru-plan-risk"], "skippedStatus": "skipped-not-relevant" },
+      "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["automatic model fallback", "claim complete coverage"], "routes": ["naru-delegate-sol-xhigh-minion-implement"] },
+      "expected": { "status": "partial", "authorization": "read-only", "failedSelected": ["naru-plan-tests"] }
+    },
+    {
+      "id": "missing-context",
+      "workflow": "plan",
+      "rootAgent": "naru-plan",
+      "input": { "summary": "" },
+      "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["invent scope", "delegate without objective"], "routes": ["naru-delegate-sol-xhigh-minion-implement"] },
+      "expected": { "status": "clarification-required", "authorization": "read-only" }
+    },
+    {
+      "id": "conditional-specialist-selection",
+      "workflow": "impact",
+      "rootAgent": "naru-impact",
+      "input": { "summary": "Assess a local internal refactor with no data, API, or frontend surface." },
+      "selection": { "baseline": ["naru-impact-topology", "naru-impact-tests-ci", "naru-impact-judge"], "selected": ["naru-impact-topology", "naru-impact-tests-ci", "naru-impact-judge"], "skipped": ["naru-impact-contracts", "naru-impact-data", "naru-impact-frontend-mobile"], "skippedStatus": "skipped-not-relevant" },
+      "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["mandatory all-specialist fan-out"], "routes": ["naru-delegate-sol-xhigh-minion-scout"] },
+      "expected": { "status": "completed", "authorization": "read-only" }
+    },
+    {
+      "id": "high-root-xhigh-denial",
+      "workflow": "implementation",
+      "rootAgent": "naru-orchestrator",
+      "input": { "summary": "Use an xhigh child from a normal Sol high root." },
+      "routing": { "root": { "profile": "sol", "variant": "high" }, "children": { "profiles": ["luna", "terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["automatic xhigh escalation"], "routes": ["naru-delegate-sol-xhigh-minion-implement"] },
+      "expected": { "status": "denied", "authorization": "xhigh-root-required" }
+    },
+    {
+      "id": "xhigh-root-optional-children",
+      "workflow": "implementation",
+      "rootAgent": "naru-orchestrator",
+      "input": { "summary": "Direct Sol xhigh root may choose a high or xhigh implementation child." },
+      "routing": { "root": { "profile": "sol", "variant": "xhigh" }, "children": { "profiles": ["luna", "terra", "sol"], "standardVariants": ["high"], "optionalVariants": ["xhigh"] } },
+      "prohibited": { "actions": ["require xhigh child"], "routes": ["naru-delegate-sol-max-minion-implement"] },
+      "expected": { "status": "completed", "authorization": "xhigh-authorized" }
+    },
+    {
+      "id": "max-root-xhigh-unlock",
+      "workflow": "implementation",
+      "rootAgent": "naru-orchestrator",
+      "input": { "summary": "Direct Sol max root may choose xhigh children, but no Max child exists." },
+      "routing": { "root": { "profile": "sol", "variant": "max" }, "children": { "profiles": ["luna", "terra", "sol"], "standardVariants": ["high"], "optionalVariants": ["xhigh"] } },
+      "prohibited": { "actions": ["create Max child"], "routes": ["naru-delegate-sol-max-minion-implement"] },
+      "expected": { "status": "completed", "authorization": "xhigh-authorized" }
+    },
+    {
+      "id": "routine-autonomous-local-commands",
+      "workflow": "implementation",
+      "rootAgent": "naru-orchestrator",
+      "input": { "summary": "Implement a scoped local change and inspect status, metadata, and one targeted check." },
+      "routing": { "root": { "profile": "sol", "variant": "high" }, "children": { "profiles": ["luna", "terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["database migration", "dependency update"], "routes": ["naru-delegate-sol-xhigh-minion-verify"] },
+      "expected": { "status": "completed", "authorization": "authorized-local", "allowedOperations": ["naru-git-read", "naru-github-read", "bash", "weaver", "targeted-check"], "promptRequired": false }
+    },
+    {
+      "id": "local-change-stopping-point",
+      "workflow": "implementation",
+      "rootAgent": "naru-orchestrator",
+      "input": { "summary": "Implement and verify a scoped change; delivery was not requested." },
+      "routing": { "root": { "profile": "sol", "variant": "high" }, "children": { "profiles": ["luna", "terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["commit", "push", "open pull request"], "routes": ["naru-delegate-sol-xhigh-minion-implement"] },
+      "expected": { "status": "completed", "authorization": "local-changes-stop" }
+    },
+    {
+      "id": "explicit-git-delivery",
+      "workflow": "implementation",
+      "rootAgent": "naru-orchestrator",
+      "input": { "summary": "Implement, commit, push, and open a pull request for the approved scoped change." },
+      "routing": { "root": { "profile": "sol", "variant": "high" }, "children": { "profiles": ["luna", "terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
+      "prohibited": { "actions": ["unrequested migration", "scope expansion"], "routes": ["naru-delegate-sol-xhigh-minion-implement"] },
+      "expected": { "status": "completed", "authorization": "delivery-authorized", "allowedOperations": ["commit", "push", "open-pull-request"], "promptRequired": false }
+    }
+  ]
+}

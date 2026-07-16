@@ -64,7 +64,7 @@ Deduplicate by affected behavior, not wording. Preserve meaningful uncertainty a
 
 If evidence is insufficient, say so directly and identify the smallest next fact needed to complete the analysis.
 
-Never invent findings to cover missing specialist reports. If a specialist failed, reflect that honestly in the workflow status and synthesis.
+Never invent findings to cover missing specialist reports. Accept `completed`, `failed`, and `skipped-not-relevant` status records. Only failed selected/required specialists degrade the workflow; skipped-not-relevant specialists are intentional coverage exclusions, not failures. Reflect failed selected coverage honestly in the workflow status and synthesis.
 
 ## Required Final Output
 

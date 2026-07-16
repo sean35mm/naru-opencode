@@ -71,20 +71,93 @@ const coreAgents = expectedAgents.filter(
     !p.startsWith('agents/naru-minion-')
 );
 
-const expectedTopLevelMinionPermissions = [
-  { key: '*', val: 'allow' },
+const readToolPermissions = [
+  'glob',
+  'grep',
+  'lsp',
+  'naru-git-read',
+  'naru-github-read',
+  'codebase-memory-mcp_list_projects',
+  'codebase-memory-mcp_index_status',
+  'codebase-memory-mcp_get_graph_schema',
+  'codebase-memory-mcp_search_graph',
+  'codebase-memory-mcp_trace_path',
+  'codebase-memory-mcp_get_code_snippet',
+  'codebase-memory-mcp_get_architecture',
+  'codebase-memory-mcp_detect_changes',
+  'codebase-memory-mcp_search_code',
+  'codebase-memory-mcp_query_graph',
+].map(key => ({ key, val: 'allow' }));
+
+const readOnlyMinionPermissions = [
+  { key: '*', val: 'deny' },
+  { key: 'edit', val: 'deny' },
+  { key: 'apply_patch', val: 'deny' },
+  { key: 'task', val: 'deny' },
+  { key: 'question', val: 'deny' },
+  { key: 'bash', val: 'deny' },
+  { key: 'external_directory', val: 'deny' },
+  ...readToolPermissions,
+  { key: 'read', val: '' },
+];
+
+const shellReadOnlyMinionPermissions = [
+  { key: '*', val: 'deny' },
+  { key: 'edit', val: 'deny' },
+  { key: 'apply_patch', val: 'deny' },
+  { key: 'task', val: 'deny' },
+  { key: 'question', val: 'deny' },
   { key: 'doom_loop', val: 'ask' },
   { key: 'external_directory', val: 'allow' },
+  ...readToolPermissions,
   { key: 'read', val: '' },
   { key: 'bash', val: '' },
 ];
 
+const implementMinionPermissions = [
+  { key: '*', val: 'deny' },
+  { key: 'edit', val: 'allow' },
+  { key: 'apply_patch', val: 'allow' },
+  { key: 'task', val: 'deny' },
+  { key: 'question', val: 'deny' },
+  { key: 'doom_loop', val: 'ask' },
+  { key: 'external_directory', val: 'allow' },
+  ...readToolPermissions,
+  { key: 'read', val: '' },
+  { key: 'bash', val: '' },
+];
+
+const minionPermissionClasses = {
+  scout: readOnlyMinionPermissions,
+  investigate: readOnlyMinionPermissions,
+  architect: readOnlyMinionPermissions,
+  judge: readOnlyMinionPermissions,
+  debug: shellReadOnlyMinionPermissions,
+  verify: shellReadOnlyMinionPermissions,
+  implement: implementMinionPermissions,
+};
+
 const expectedReadRules = [
   { pattern: '*', action: 'allow' },
-  { pattern: '.env', action: 'ask' },
-  { pattern: '.env.*', action: 'ask' },
-  { pattern: '*.env', action: 'ask' },
-  { pattern: '*.env.*', action: 'ask' },
+  { pattern: '.git/**', action: 'deny' },
+  { pattern: '.env', action: 'deny' },
+  { pattern: '.env.*', action: 'deny' },
+  { pattern: '*.env', action: 'deny' },
+  { pattern: '*.env.*', action: 'deny' },
+  { pattern: '*.pem', action: 'deny' },
+  { pattern: '*.key', action: 'deny' },
+  { pattern: '*.p12', action: 'deny' },
+  { pattern: '*.pfx', action: 'deny' },
+  { pattern: '**/id_rsa', action: 'deny' },
+  { pattern: '**/id_dsa', action: 'deny' },
+  { pattern: '**/id_ecdsa', action: 'deny' },
+  { pattern: '**/id_ed25519', action: 'deny' },
+  { pattern: '**/.ssh/**', action: 'deny' },
+  { pattern: '**/.aws/**', action: 'deny' },
+  { pattern: '**/.kube/**', action: 'deny' },
+  { pattern: '**/.gnupg/**', action: 'deny' },
+  { pattern: '**/credentials/**', action: 'deny' },
+  { pattern: '**/secrets/**', action: 'deny' },
   { pattern: '*.env.example', action: 'allow' },
   { pattern: 'env.example', action: 'allow' },
 ];
@@ -224,38 +297,29 @@ async function main() {
     if (!first || first.key !== '*' || first.val !== 'deny') fail(`${path} is not fail-closed`);
   }
 
-  let minionBaseline;
-  for (const path of minionPaths) {
+  for (const role of minionRoles) {
+    const path = `agents/naru-minion-${role}.md`;
     const text = await readFile(here(path), 'utf8');
     const topLevel = parsePermissions(text);
     const readRules = parseNestedPermission(text, 'read');
     const bashRules = parseNestedPermission(text, 'bash');
-    if (JSON.stringify(topLevel) !== JSON.stringify(expectedTopLevelMinionPermissions)) fail(`${path} top-level Build parity mismatch`);
+    if (JSON.stringify(topLevel) !== JSON.stringify(minionPermissionClasses[role])) fail(`${path} role permission class mismatch`);
     if (JSON.stringify(readRules) !== JSON.stringify(expectedReadRules)) fail(`${path} read policy mismatch`);
-    if (JSON.stringify(bashRules) !== JSON.stringify(expectedBashRules)) fail(`${path} bash policy mismatch`);
-    const completePolicy = JSON.stringify({ topLevel, readRules, bashRules });
-    if (minionBaseline === undefined) minionBaseline = completePolicy;
-    else if (completePolicy !== minionBaseline) fail(`${path} does not match the canonical minion policy`);
+    const hasShell = ['implement', 'debug', 'verify'].includes(role);
+    if (JSON.stringify(bashRules) !== JSON.stringify(hasShell ? expectedBashRules : null)) fail(`${path} bash policy mismatch`);
 
     for (const [value, expected] of [
-      ['.env', 'ask'], ['.env.production', 'ask'], ['service.env', 'ask'], ['service.env.local', 'ask'],
+      ['.env', 'deny'], ['.env.production', 'deny'], ['service.env', 'deny'], ['service.env.local', 'deny'],
+      ['private.pem', 'deny'], ['config/secrets/token.txt', 'deny'], ['home/.ssh/id_ed25519', 'deny'],
       ['.env.example', 'allow'], ['service.env.example', 'allow'], ['env.example', 'allow'], ['src/app.js', 'allow'],
     ]) {
       if (evaluateRule(readRules, value) !== expected) fail(`${path} reads ${value} as ${evaluateRule(readRules, value)}, expected ${expected}`);
     }
 
-    for (const command of [
-      'npm install lodash', 'git commit -m update', 'weaver task create-feature',
-      'python3 scripts/create_update.py', 'rm -rf build', 'npm test', 'echo MIXED_case',
-      'npm run migrate', 'npm run MIGRATION', 'npm run db:migrate', 'npm run database:reset',
-      'npm run seed', 'npm run SEED', 'npm run schema push', 'npm run schema:drop',
-      'npm run SCHEMA RESET', 'npm run SCHEMA:PUSH', 'prisma generate', 'drizzle-kit push',
-      'sequelize db:migrate', 'typeorm migration:run', 'knex migrate:latest', 'alembic upgrade head',
-      'psql app', 'mysql app', 'sqlite3 app.db', 'echo DROP', 'echo drop', 'echo DELETE', 'echo delete',
-      'echo TRUNCATE', 'echo truncate', 'echo UPDATE', 'echo update', 'echo INSERT', 'echo insert',
-      'echo ALTER', 'echo alter', 'echo CREATE', 'echo create',
-    ]) {
-      if (evaluateRule(bashRules, command) !== 'allow') fail(`${path} does not Build-allow ${command}`);
+    if (hasShell) {
+      for (const command of ['node tests/target.test.mjs', 'weaver status', 'npm run lint', 'git status']) {
+        if (evaluateRule(bashRules, command) !== 'allow') fail(`${path} does not allow routine shell command ${command}`);
+      }
     }
   }
 
@@ -314,12 +378,21 @@ async function main() {
   const postTool = 'naru-github-post-review';
   for (const path of expectedAgents) {
     const text = await readFile(here(path), 'utf8');
-    if ((path === 'agents/naru-review-post.md') !== text.includes(postTool)) fail(`${path} posting-tool boundary mismatch`);
+    const postPermissions = parsePermissions(text)?.filter(permission => permission.key === postTool) ?? [];
+    if (path === 'agents/naru-review-post.md') {
+      if (postPermissions.length !== 1 || postPermissions[0].val !== 'allow') {
+        fail(`${path} must exclusively allow the posting tool`);
+      }
+    } else {
+      if (postPermissions.some(permission => permission.val !== 'deny')) {
+        fail(`${path} must deny or exclude the posting tool`);
+      }
+    }
   }
 
   for (const path of [...expectedCommands, ...expectedAgents]) {
     const text = (await readFile(here(path), 'utf8')).toLowerCase();
-    for (const forbidden of ['/users/', '.config/opencode', 'weaver', 'herdr']) {
+    for (const forbidden of ['/users/', '.config/opencode', 'herdr']) {
       if (text.includes(forbidden)) fail(`${path} mentions forbidden ${forbidden}`);
     }
   }
@@ -335,7 +408,7 @@ async function main() {
 
   const delegate = await readFile(here('plugins/naru-delegate.js'), 'utf8');
   if (!delegate.includes('export const NaruDelegatePlugin') || !delegate.includes("'tool.execute.before'")) fail('delegate plugin contract mismatch');
-  if (delegate.includes('session.create') || delegate.includes('session.prompt')) fail('delegate bypasses native Task sessions');
+  if (delegate.includes('client.session.create') || delegate.includes('client.session.prompt')) fail('delegate bypasses native Task sessions');
 
   for (const tool of ['naru-git-read.js', 'naru-github-read.js', 'naru-github-post-review.js']) {
     const text = await readFile(here(`tools/${tool}`), 'utf8');

@@ -55,7 +55,7 @@ async function main() {
     fail(`docs inventory mismatch: got ${JSON.stringify(docs)} expected ${JSON.stringify(expectedDocs)}`);
   }
 
-  // Core orchestrators: retry/status/partial/incomplete handling and injection guards.
+  // Core orchestrators: conditional coverage, status semantics, early stop, and packet scoping.
   for (const wf of ['plan', 'impact', 'triage']) {
     const text = await readFile(here(`agents/naru-${wf}.md`), 'utf8');
     if (!hasAny(text, ['incomplete', 'partial', 'not enough', 'insufficient'])) {
@@ -67,11 +67,56 @@ async function main() {
     if (!hasAny(text, ['prompt injection', 'untrusted input', 'ignore any instruction', 'data, not instructions'])) {
       fail(`naru-${wf} missing prompt-injection guard`);
     }
+    for (const requiredText of [
+      'conservative relevance-based specialist selection',
+      'skipped-not-relevant',
+      'Selected specialists are required',
+      'Only a failed selected/required specialist degrades',
+      'Stop context gathering once the likely touchpoints',
+      'small shared base packet',
+      'lens-specific evidence, questions, and explicit exclusions',
+      'Do not forward raw arguments',
+      'untrusted context',
+    ]) {
+      if (!hasAny(text, [requiredText])) fail(`naru-${wf} missing conditional-selection contract: ${requiredText}`);
+    }
+    if (text.includes('Every specialist is required for this workflow')) {
+      fail(`naru-${wf} retains mandatory-all specialist coverage`);
+    }
     const judge = await readFile(here(`agents/naru-${wf}-judge.md`), 'utf8');
     if (!judge.includes('## Workflow Status')) fail(`naru-${wf}-judge missing Workflow Status contract`);
+    for (const requiredText of ['completed', 'failed', 'skipped-not-relevant', 'Only failed selected/required specialists degrade']) {
+      if (!hasAny(judge, [requiredText])) fail(`naru-${wf}-judge missing conditional-status contract: ${requiredText}`);
+    }
   }
 
-  // Review: strict payload/snapshot, nullable location, prior status.
+  const plan = await readFile(here('agents/naru-plan.md'), 'utf8');
+  for (const requiredText of [
+    'Always select `naru-plan-minimal-change` and `naru-plan-tests`',
+    'naru-plan-architecture` only for structural, API, dependency, or cross-module work',
+    'naru-plan-risk` only for security, data, billing, migrations, contracts, deployment, or compatibility work',
+  ]) {
+    if (!plan.includes(requiredText)) fail(`naru-plan missing relevance rule: ${requiredText}`);
+  }
+
+  const impact = await readFile(here('agents/naru-impact.md'), 'utf8');
+  for (const requiredText of [
+    'Always select `naru-impact-topology` and `naru-impact-tests-ci`',
+    'naru-impact-contracts`, `naru-impact-data`, and `naru-impact-frontend-mobile` only when their affected surface is present',
+  ]) {
+    if (!impact.includes(requiredText)) fail(`naru-impact missing relevance rule: ${requiredText}`);
+  }
+
+  const triage = await readFile(here('agents/naru-triage.md'), 'utf8');
+  for (const requiredText of [
+    'Always select `naru-triage-reproduction` and `naru-triage-codepath`',
+    'naru-triage-regression` only when recent changes, history, or a known-good state are relevant',
+    'naru-triage-tests` only when failing tests, coverage, CI, or reproduction evidence makes it relevant',
+  ]) {
+    if (!triage.includes(requiredText)) fail(`naru-triage missing relevance rule: ${requiredText}`);
+  }
+
+  // Review: conditional domain selection and preserved strict snapshot/payload invariants.
   const review = await readFile(here('agents/naru-review.md'), 'utf8');
   if (!hasAny(review, ['payload', 'snapshot'])) {
     fail('naru-review missing payload/snapshot framing');
@@ -82,14 +127,54 @@ async function main() {
   if (!hasAny(review, ['current/partial/stale/uncertain', 'classify prior findings', 'prior status', 'review status'])) {
     fail('naru-review missing prior status handling');
   }
-
-  // Review-post boundary: COMMENT-only, idempotency/snapshot.
-  const post = await readFile(here('agents/naru-review-post.md'), 'utf8');
-  if (!hasAny(post, ['COMMENT', 'comment-only'])) {
-    fail('naru-review-post missing COMMENT-only boundary');
+  for (const requiredText of [
+    'Select each domain specialist using the required-specialist relevance criteria below',
+    'always select at least one relevant domain specialist',
+    'naru-review-tests-ci` only when its existing relevance criteria apply',
+    'skipped-not-relevant',
+    'Only a failed selected/required specialist degrades the review',
+    'immutable PR snapshot',
+    'at the snapshot head or base SHA',
+    'validate inline comment candidates against the snapshot patch',
+    'exact final `naru_review_result` payload',
+    'dry-run only',
+    '`--post` is not accepted',
+  ]) {
+    if (!review.includes(requiredText)) fail(`naru-review missing conditional or invariant contract: ${requiredText}`);
   }
-  if (!hasAny(post, ['boundary', 'dry run', 'dry-run', 'snapshot', 'idempot'])) {
-    fail('naru-review-post missing post boundary language');
+  const reviewJudge = await readFile(here('agents/naru-review-judge.md'), 'utf8');
+  for (const requiredText of ['skipped-not-relevant', 'Only a failed selected/required specialist', 'schemaVersion": 1']) {
+    if (!reviewJudge.includes(requiredText)) fail(`naru-review-judge missing preserved status/schema contract: ${requiredText}`);
+  }
+  if (reviewJudge.includes('non-required specialist failed')) {
+    fail('naru-review-judge retains non-selected failure degradation semantics');
+  }
+
+  // Review-post boundary: explicit authorization, fail-closed validation, COMMENT-only, idempotency/snapshot.
+  const post = await readFile(here('agents/naru-review-post.md'), 'utf8');
+  const reviewPostCommand = await readFile(here('commands/naru-review-post.md'), 'utf8');
+  const reviewPostContract = `${post}\n${reviewPostCommand}`;
+  for (const requiredText of [
+    'explicitly requests posting',
+    'user authorization',
+    'Do not request another runtime confirmation',
+    'dry-run post-preparation mode',
+    'exactly one `### naru_review_result` heading',
+    'schemaVersion` must be `1`',
+    'workflow.status` is `incomplete`',
+    'workflow.degraded` is `true`',
+    'snapshot.complete` is `false`',
+    'exactly once',
+    'Do not parse or construct arbitrary endpoints',
+    'fall back to shell commands',
+    'do not retry',
+    'COMMENT',
+    'an identical existing review returns `alreadyPosted`',
+    'Degraded or incomplete reviews are never posted',
+    'Never approve a PR, request changes',
+    'push commits',
+  ]) {
+    if (!reviewPostContract.includes(requiredText)) fail(`naru-review-post missing authorization or fail-closed contract: ${requiredText}`);
   }
 
   // Verify/judge loop markers.
@@ -111,27 +196,37 @@ async function main() {
   if (!hasAny(orchestrator, ['delegate', 'delegation', 'approved'])) {
     fail('naru-orchestrator missing delegation marker');
   }
+  for (const requiredText of [
+    'Run the smallest safe analysis set',
+    'Skip `naru-minion-scout` when exact files or symbols are known',
+    'naru-minion-investigate` only when behavior, a failure path, or root cause remains uncertain',
+    'naru-minion-architect` only for structural or high-consequence work',
+    'Stop context gathering once the likely touchpoints',
+    'shared base packet',
+    'lens-specific evidence, questions, and exclusions',
+    'Do not forward raw arguments',
+  ]) {
+    if (!orchestrator.includes(requiredText)) fail(`naru-orchestrator missing selective-workflow contract: ${requiredText}`);
+  }
+  if (orchestrator.includes('## Model Selection')) {
+    fail('naru-orchestrator retains duplicate static model-selection section');
+  }
 
   for (const role of ['scout', 'investigate', 'architect', 'implement', 'debug', 'verify', 'judge']) {
     const text = await readFile(here(`agents/naru-minion-${role}.md`), 'utf8');
-    for (const requiredText of [
-      'Build-like capability envelope',
-      'workflow responsibility',
-      'do not read or reveal secrets',
-      'approval prompt is not authorization',
-    ]) {
-      if (!hasAny(text, [requiredText])) fail(`naru-minion-${role} missing capability/responsibility contract: ${requiredText}`);
-    }
+    if (!hasAny(text, ['do not read or reveal secrets'])) fail(`naru-minion-${role} missing secret boundary`);
+    if (!hasAny(text, ['environment example templates may be inspected'])) fail(`naru-minion-${role} missing environment-example allowance`);
+    if (hasAny(text, ['Build-like capability envelope', 'all seven minions have Build-like'])) fail(`naru-minion-${role} retains obsolete uniform-capability claim`);
   }
   for (const role of ['scout', 'investigate', 'architect', 'judge']) {
     const text = await readFile(here(`agents/naru-minion-${role}.md`), 'utf8');
-    for (const requiredText of ['do not edit or create files', 'call Task', 'run shell or project commands']) {
-      if (!hasAny(text, [requiredText])) fail(`naru-minion-${role} missing behavioral read-only boundary: ${requiredText}`);
+    for (const requiredText of ['technically read-only', 'edit or create files', 'call Task', 'run shell or project commands']) {
+      if (!hasAny(text, [requiredText])) fail(`naru-minion-${role} missing technical read-only boundary: ${requiredText}`);
     }
   }
   for (const role of ['debug', 'verify']) {
     const text = await readFile(here(`agents/naru-minion-${role}.md`), 'utf8');
-    for (const requiredText of ['behaviorally read-only', 'do not implement fixes', 'edit or create files', 'delegate with Task']) {
+    for (const requiredText of ['technically read-only', 'cannot implement fixes', 'edit or create files', 'delegate with Task']) {
       if (!hasAny(text, [requiredText])) fail(`naru-minion-${role} missing diagnostic boundary: ${requiredText}`);
     }
   }
@@ -149,29 +244,108 @@ async function main() {
       'external-directory access without an approval prompt',
       'one routine command per shell call',
       'naru-git-read',
+      'Git and GitHub reads',
+      'Weaver',
+      'lint',
+      'typecheck',
+      'targeted tests',
+      'ordinary local builds',
+      'without another approval question',
     ]) {
-      if (!hasAny(text, [requiredText])) fail(`naru-minion-${role} missing Build-like shell contract: ${requiredText}`);
+      if (!hasAny(text, [requiredText])) fail(`naru-minion-${role} missing routine shell contract: ${requiredText}`);
     }
     if (!hasAny(text, ['database writes', 'database migrations'])) {
       fail(`naru-minion-${role} missing behavioral database boundary`);
     }
   }
-  for (const requiredText of ['exact authorized command scope', 'explicit user approval', 'Git mutations', 'database writes']) {
-    if (!hasAny(orchestrator, [requiredText])) fail(`naru-orchestrator missing command authorization contract: ${requiredText}`);
+  for (const requiredText of [
+    'explicit implementation request authorizes delegation',
+    'scoped local edits',
+    'targeted routine verification',
+    'ordinary Git or GitHub reads',
+    'Weaver coordination',
+    'without approval',
+    'Local changes are the default stopping point',
+    'user explicitly requested that delivery action',
+    'do not reconfirm it',
+    'do not perform unrequested delivery',
+    'one user checkpoint',
+    'persistent database writes or migration execution',
+    'dependency changes not already explicitly requested',
+    'material scope expansion',
+    'exact path',
+    'user approved that specific path',
+  ]) {
+    if (!hasAny(orchestrator, [requiredText])) fail(`naru-orchestrator missing autonomous workflow boundary: ${requiredText}`);
   }
-  if (!hasAny(orchestrator, ['routine test', 'may be delegated directly'])) {
+  if (!hasAny(orchestrator, ['may be delegated directly without approval'])) {
     fail('naru-orchestrator does not permit direct routine-check delegation');
   }
-  for (const requiredText of ['Build-like runtime capabilities', 'capability is not workflow responsibility', 'only role authorized', 'behaviorally read-only']) {
-    if (!hasAny(orchestrator, [requiredText])) fail(`naru-orchestrator missing capability/responsibility contract: ${requiredText}`);
+  for (const requiredText of ['Only `naru-minion-implement` has technical edit permission', 'technically read-only roles', 'do not edit files']) {
+    if (!hasAny(orchestrator, [requiredText])) fail(`naru-orchestrator missing technical role boundary: ${requiredText}`);
   }
-  for (const requiredText of ['execute repository code', 'hidden side effects', 'manifest or Makefile target', 'allow shell commands and external-directory access without prompting', 'exact authorized command scope', 'one routine command per shell call']) {
+  for (const requiredText of ['execute repository code', 'hidden side effects', 'manifest or Makefile target', 'allow shell commands and external-directory access without prompting', 'one routine command per shell call']) {
     if (!hasAny(orchestrator, [requiredText])) fail(`naru-orchestrator missing execution-risk contract: ${requiredText}`);
+  }
+  if (!hasAny(orchestrator, ['generated `Naru Delegate Routing` appendix is authoritative', 'Sol xhigh eligibility'])) {
+    fail('naru-orchestrator missing generated xhigh appendix authority');
+  }
+
+  for (const requiredText of [
+    'explicit implementation request',
+    'scoped local edits',
+    'targeted routine verification',
+    'without another approval question',
+    'Local changes are the default stopping point',
+    'user explicitly requested that delivery action',
+    'do not ask for confirmation again',
+    'Do not perform unrequested delivery',
+    'exact external global configuration path',
+    'user approved specifically',
+    'destructive or irreversible operations',
+    'persistent databases',
+    'billing or security posture',
+    'Materially expand scope',
+  ]) {
+    if (!hasAny(implement, [requiredText])) fail(`naru-minion-implement missing autonomous implementation boundary: ${requiredText}`);
+  }
+
+  for (const command of ['plan', 'impact', 'triage', 'review']) {
+    const text = await readFile(here(`commands/naru-${command}.md`), 'utf8');
+    for (const requiredText of ['$ARGUMENTS', 'If empty, show:', `Use \`naru-${command}\` as the source of truth`]) {
+      if (!text.includes(requiredText)) fail(`naru-${command} command wrapper missing compact contract: ${requiredText}`);
+    }
+    if (text.includes('Read-only. Do not edit files') || text.includes('Run a multi-agent')) {
+      fail(`naru-${command} command wrapper duplicates agent policy`);
+    }
+  }
+  const reviewCommand = await readFile(here('commands/naru-review.md'), 'utf8');
+  for (const requiredText of ['dry-run only', 'never posts to GitHub', 'Reject `--post`', '/naru-review-post']) {
+    if (!reviewCommand.includes(requiredText)) fail(`naru-review command wrapper missing dry-run/post boundary: ${requiredText}`);
   }
 
   const userGuide = await readFile(here('docs/user-guide.md'), 'utf8');
   for (const requiredText of ['execute repository code', 'hidden side effects', 'mandatory', 'external_directory` is explicitly `allow', 'unconditionally allowed at runtime', 'Git, Weaver, Python', 'one routine command per shell call', 'intentionally permissive, not a sandbox', 'PATH']) {
     if (!hasAny(userGuide, [requiredText])) fail(`user guide missing shell-policy limitation: ${requiredText}`);
+  }
+  for (const [name, text] of [
+    ['development guide', await readFile(here('docs/development.md'), 'utf8')],
+    ['user guide', userGuide],
+  ]) {
+    if (!/(?:environment(?:-file)?|env|secret)[^.\n]{0,120}\bden(?:y|ied)\b|\bden(?:y|ied)\b[^.\n]{0,120}(?:environment(?:-file)?|env|secret)/i.test(text)) {
+      fail(`${name} must document denied minion environment/secret reads`);
+    }
+    const sentences = text.split(/[.\n]/);
+    if (!sentences.some((sentence) => (
+      /\b(?:environment(?:-file)?|env)\b/i.test(sentence) &&
+      /\b(?:templates?|examples?)\b/i.test(sentence) &&
+      /\b(?:allow(?:ed|ance)?|inspect(?:ed|ion)?)\b/i.test(sentence)
+    ))) {
+      fail(`${name} must document allowed environment templates`);
+    }
+    if (/(?:\b(?:environment(?:-file)?|env(?:ironment)?|secret)\b[^.\n]{0,120}\b(?:ask|prompt(?:ed|ing)?|auto(?:-| )?approv(?:e|ed|al))\b|\b(?:ask|auto(?:-| )?approv(?:e|ed|al)|prompt(?:ed|ing)?\s+(?:for|to|before|when|on))\b[^.\n]{0,120}\b(?:environment(?:-file)?|env(?:ironment)?|secret)\b)/i.test(text)) {
+      fail(`${name} describes minion environment/secret reads as ask, prompt, or auto-approved`);
+    }
   }
 
   const readme = await readFile(here('README.md'), 'utf8');

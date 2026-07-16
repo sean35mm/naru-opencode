@@ -72,7 +72,7 @@ git pull
 ./install.sh --with-dashboard
 ```
 
-Even a symlink install must be rerun because tools, helpers, and plugins are copy-pinned. A `--copy` install is entirely stale until reinstalled.
+Even a symlink install must be rerun because tools, helpers, and plugins are copy-pinned. A `--copy` install is entirely stale until reinstalled. Restart OpenCode after reinstalling so active sessions reload routing and permissions.
 
 ## Commands and primary agent
 
@@ -109,6 +109,10 @@ opencode --agent naru-orchestrator
 
 Do not use `naru-orchestrator` as a Task target from custom agents. See the [agent integration guide](agent-integration.md) for supported read-only delegation.
 
+### Conditional specialist coverage
+
+Core workflows select specialists by relevant surface rather than launching every specialist. Plan always includes minimal-change and tests; Impact always includes topology and tests/CI; Triage always includes reproduction and codepath; Review always includes its judge and at least one relevant domain specialist. Selected specialists are required. Unselected specialists are recorded as `skipped-not-relevant`, are not retried, and do not degrade the final status. A failed selected specialist can produce a partial or incomplete result; review and review-post retain their immutable snapshot and validated posting boundaries.
+
 ## Activity dashboard
 
 Install the dashboard explicitly:
@@ -124,7 +128,7 @@ In OpenCode's full terminal TUI, the dashboard provides:
 - A compact **Naru Activity** section in the standard session sidebar, showing up to four active or recently completed recognized Naru children for the current workflow root.
 - `/naru-minions`, which lists all recognized sibling child sessions and lets you navigate into one.
 - Status derived from native session and Task state, age since the latest child update, and foreground/background mode.
-- Canonical agent name and a `Luna`, `Terra`, `Sol`, `Sol floor`, or neutral `Routed` classification.
+- Canonical agent name and a `Luna`, `Terra`, `Sol`, `Sol xhigh`, `Sol floor`, or neutral `Routed` classification.
 - Provider, model, and variant from Task or child-message metadata. The UI shows `resolving` instead of guessing while metadata is unavailable.
 - The delegated Task description. Unrelated OpenCode Task children are omitted.
 
@@ -164,6 +168,8 @@ For example, an implementation minion assigned Terra exposes:
 | `naru-delegate-sol-minion-implement` | Sol |
 
 The five Luna-eligible minions produce five Luna aliases. All delegable non-floor roles assigned Terra produce Sol alternatives, currently seventeen aliases. Sol-floor roles and explicit Sol assignments are invoked canonically and receive no generated alternatives. The aliases are internal runtime details: do not invoke them from custom agents or persist them in integrations.
+
+Naru also creates seven hidden `naru-delegate-sol-xhigh-*` aliases, one for each direct `naru-orchestrator` minion child. They are optional, never required, and are gated by the actual root session: only a direct `naru-orchestrator` root using the configured Sol model at `xhigh` or `max` may invoke them. A normal Sol `high` root cannot use xhigh, and no Max child alias exists. Reinstall all copy-pinned Naru components (including `--with-dashboard` where used) and restart OpenCode before expecting the `Sol xhigh` dashboard label or routes.
 
 Model choice is not a one-way escalation ladder. The orchestrator may start with Sol, choose Luna when speed and capability fit the assignment, retain Terra for balanced work, or reassess to any available profile after incomplete, conflicting, context-limited, or low-confidence evidence.
 
@@ -255,23 +261,23 @@ For a manual dashboard install, also copy both dashboard files and add `"./plugi
 ### Read-only Core and scoped implementation
 
 - Core planning, impact, triage, and dry-run review workflows do not edit files, install dependencies, execute project code, run tests, run migrations, commit, push, or open pull requests.
-- `naru-orchestrator` is the primary implementation coordinator but does not edit directly. All seven canonical minions have the same Build-like capability envelope, while their prompts preserve separate workflow responsibilities.
-- Only `naru-minion-implement` is authorized by the current workflow to edit, and only within an explicitly approved delegation packet. Scout, investigate, architect, debug, verify, and judge remain behaviorally read-only even though their runtime envelope technically permits edits, shell use, and Task delegation.
-- Generated `naru-delegate-luna-*` and `naru-delegate-sol-*` aliases clone the complete permission map of their canonical source role. Selecting a model does not strengthen or weaken permissions.
+- `naru-orchestrator` is the primary implementation coordinator but does not edit directly. Only `naru-minion-implement` can make scoped edits within an approved packet.
+- Scout, Investigate, Architect, and Judge are technically read-only static-analysis roles. Debug and Verify are technically read-only but can run targeted Bash checks. Implement is the only scoped edit/shell role. No minion can delegate with Task.
+- Generated Luna, Sol, and Sol-xhigh aliases clone the exact permission map of their canonical source role. Selecting a route never strengthens permissions.
 
-### Build-like minion permissions
+### Role-specific minion permissions
 
-- Every canonical `naru-minion-*` role starts with top-level `'*': allow`, which broadly permits tools including edit, Task, web access, reads, and shell commands. `doom_loop` remains `ask`, while `external_directory` is explicitly `allow`.
-- Reads default to allow. `.env`, `.env.*`, `*.env`, and `*.env.*` resolve to `ask`, while `env.example` and `*.env.example` templates resolve to allow. This is prompt-visible friction, not secret isolation.
-- Shell commands and external-directory access are unconditionally allowed at runtime so Git, Weaver, Python, and other routine tools do not pause for approval.
-- Checks execute repository code and can have hidden side effects. Package scripts and Make targets are opaque indirection, so inspection of the relevant manifest or Makefile target before every invocation is mandatory.
-- OpenCode evaluates commands extracted from compound commands and pipelines independently. Minion prompts require one routine command per shell call and discourage composition, but that is an instruction-level safeguard.
-- Environment-file reads remain `ask`. `doom_loop` also remains `ask` and can prompt after the same tool call repeats three times with identical input; neither prompt is a shell-command classification.
+- All minion maps are fail-closed and deny environment and secret file reads; example environment templates remain allowed and may be inspected.
+- Debug, Verify, and Implement allow Bash and `external_directory` for routine Git/GitHub reads, Weaver, targeted lint/typecheck/test commands, and ordinary local builds. For those shell-enabled roles, `external_directory` is explicitly `allow` and these operations are unconditionally allowed at runtime; Scout, Investigate, Architect, and Judge cannot run shell or project commands.
+- Checks execute repository code and can have hidden side effects. Inspect the relevant manifest or Makefile target before every package script or target; use one routine command per shell call. Permission matching does not validate executable identity through `PATH`.
+- A scoped implementation request authorizes local edits and targeted routine verification without another approval question. Local changes are the default stopping point. If the user explicitly requests commit, push, or PR delivery, perform that requested delivery without reconfirmation; do not perform unrequested delivery.
+- An explicit `/naru-review-post` invocation likewise authorizes its one validated GitHub review posting call without reconfirmation; it does not authorize any other GitHub posting.
+- Persistent database writes or migration execution, dependency changes not explicitly requested, destructive or irreversible work, external global configuration outside an exact approved path, billing/security-posture changes, and material scope expansion still require the applicable approval boundary.
 
 ### Permission limitations
 
-- Runtime shell and external-directory permissions are intentionally permissive, not a sandbox. They do not verify executable identity through `PATH`, inspect script behavior, or prevent package scripts and targets from changing Git, files, databases, or external state.
-- The read policy is not a secret sandbox. Environment-file patterns ask rather than deny, other secret paths are broadly readable, and installed tools or previously indexed graph content can expose data outside read matching. Direct prompt guidance forbids minions from reading or revealing secrets, but that behavioral rule is not technical isolation. Trust the selected provider, model, and installed tools as you would any code with repository access.
+- Shell-enabled role permissions are intentionally permissive, not a sandbox. They do not inspect script behavior or prevent package scripts and targets from changing Git, files, databases, or external state.
+- Direct reads deny known secret patterns, but permission policy is not a complete secret sandbox. Prompt guidance also forbids reading or revealing secrets; trust the selected provider, model, and installed tools as you would any code with repository access.
 
 ### GitHub posting boundary
 
@@ -281,7 +287,7 @@ For a manual dashboard install, also copy both dashboard files and add `"./plugi
 
 ### Auto mode
 
-OpenCode auto mode automatically approves the remaining `ask` prompts, including environment-file reads and doom-loop detection. Shell and external-directory access already run without prompting. The validated review-posting boundary remains in force. Neither auto mode nor permissive runtime access makes repository code, package scripts, targets, secret access, or database-connected commands safe.
+OpenCode auto mode automatically approves only configured `doom_loop` asks. Environment-file and secret reads remain denied. Allowed shell and external-directory access already run without prompting for Debug, Verify, and Implement. The validated review-posting boundary remains in force. Neither auto mode nor permissive runtime access makes repository code, package scripts, targets, secret access, or database-connected commands safe.
 
 ## What Naru does not manage
 
@@ -311,7 +317,7 @@ Luna routes exist only for scout, investigate, implement, debug, and verify whil
 
 ### A minion still asks before Git, Weaver, Python, or another shell command
 
-Current minion definitions end with unconditional Bash and external-directory allows. Rerun the installer with the same location and `--with-dashboard` flags, restart OpenCode, and inspect `opencode debug agent naru-minion-implement`. The final matching `bash` and `external_directory` entries should both be `allow`. Environment-file and repeated-identical-call prompts are expected and come from `read` or `doom_loop`, not Bash.
+Only Debug, Verify, and Implement have Bash and external-directory allows. Rerun the installer with the same location and `--with-dashboard` flags, restart OpenCode, and inspect the intended role. Scout, Investigate, Architect, and Judge correctly deny shell commands. Environment-file reads are denied. Repeated identical calls can prompt only through configured `doom_loop`, not Bash.
 
 ### Review commands cannot resolve a pull request
 

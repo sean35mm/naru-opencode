@@ -3,6 +3,7 @@ import {
   isLunaAlias,
   isManagedRoutingAlias,
   isSolAlias,
+  isSolXhighAlias,
   SOL_FLOOR_ROLES,
 } from '../tools/naru-lib/model-routing.mjs'
 
@@ -21,9 +22,10 @@ function profile(agent) {
 
 export function routeText(rawAgent, agent, configuredAgents = {}) {
   if (!agent) return 'Unknown'
-  if (SOL_FLOOR.has(agent)) return 'Sol floor'
   if (isLunaAlias(rawAgent)) return 'Luna'
+  if (isSolXhighAlias(rawAgent)) return 'Sol xhigh'
   if (isManagedRoutingAlias(rawAgent)) return 'Sol'
+  if (SOL_FLOOR.has(agent)) return 'Sol floor'
 
   const current = profile(configuredAgents[rawAgent] ?? configuredAgents[agent])
   const alias = Object.keys(configuredAgents).find(isSolAlias)

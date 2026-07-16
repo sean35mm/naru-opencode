@@ -2,6 +2,7 @@ const PROFILE_NAMES = ['luna', 'terra', 'sol'];
 const ASSIGNMENT_NAMES = ['terra', 'sol'];
 const LUNA_ALIAS_PREFIX = 'naru-delegate-luna-';
 const SOL_ALIAS_PREFIX = 'naru-delegate-sol-';
+const SOL_XHIGH_ALIAS_PREFIX = 'naru-delegate-sol-xhigh-';
 const LEGACY_DEEP_ALIAS_PREFIX = 'naru-delegate-deep-';
 const ROUTING_MARKER = '<!-- naru-delegate-routing:v1 -->';
 
@@ -260,6 +261,10 @@ export function solAlias(agent) {
   return routedAlias(SOL_ALIAS_PREFIX, agent);
 }
 
+export function solXhighAlias(agent) {
+  return routedAlias(SOL_XHIGH_ALIAS_PREFIX, agent);
+}
+
 function legacyDeepAlias(agent) {
   return routedAlias(LEGACY_DEEP_ALIAS_PREFIX, agent);
 }
@@ -273,6 +278,10 @@ export const MANAGED_SOL_ALIASES = Object.freeze(
     .sort(),
 );
 
+export const MANAGED_SOL_XHIGH_ALIASES = Object.freeze(
+  NARU_DISPATCH_GRAPH['naru-orchestrator'].map((agent) => solXhighAlias(agent)).sort(),
+);
+
 export const LEGACY_DEEP_ALIASES = Object.freeze(
   [...DELEGABLE_TARGETS]
     .filter((agent) => !SOL_FLOOR_SET.has(agent))
@@ -281,11 +290,12 @@ export const LEGACY_DEEP_ALIASES = Object.freeze(
 );
 
 export const MANAGED_ROUTING_ALIASES = Object.freeze(
-  [...MANAGED_LUNA_ALIASES, ...MANAGED_SOL_ALIASES].sort(),
+  [...MANAGED_LUNA_ALIASES, ...MANAGED_SOL_ALIASES, ...MANAGED_SOL_XHIGH_ALIASES].sort(),
 );
 
 const MANAGED_LUNA_ALIAS_SET = new Set(MANAGED_LUNA_ALIASES);
 const MANAGED_SOL_ALIAS_SET = new Set(MANAGED_SOL_ALIASES);
+const MANAGED_SOL_XHIGH_ALIAS_SET = new Set(MANAGED_SOL_XHIGH_ALIASES);
 const LEGACY_DEEP_ALIAS_SET = new Set(LEGACY_DEEP_ALIASES);
 
 export function isLunaAlias(agent) {
@@ -296,17 +306,22 @@ export function isSolAlias(agent) {
   return MANAGED_SOL_ALIAS_SET.has(agent);
 }
 
+export function isSolXhighAlias(agent) {
+  return MANAGED_SOL_XHIGH_ALIAS_SET.has(agent);
+}
+
 export function isDeepAlias(agent) {
   return LEGACY_DEEP_ALIAS_SET.has(agent);
 }
 
 export function isManagedRoutingAlias(agent) {
-  return isLunaAlias(agent) || isSolAlias(agent) || LEGACY_DEEP_ALIAS_SET.has(agent);
+  return isLunaAlias(agent) || isSolAlias(agent) || isSolXhighAlias(agent) || LEGACY_DEEP_ALIAS_SET.has(agent);
 }
 
 export function canonicalAgentForRoute(agent) {
   if (isLunaAlias(agent)) return `naru-${agent.slice(LUNA_ALIAS_PREFIX.length)}`;
   if (isSolAlias(agent)) return `naru-${agent.slice(SOL_ALIAS_PREFIX.length)}`;
+  if (isSolXhighAlias(agent)) return `naru-${agent.slice(SOL_XHIGH_ALIAS_PREFIX.length)}`;
   if (LEGACY_DEEP_ALIAS_SET.has(agent)) return `naru-${agent.slice(LEGACY_DEEP_ALIAS_PREFIX.length)}`;
 }
 
@@ -328,16 +343,19 @@ function setProfile(agent, profile) {
 
 function routingAppendix(caller, policy, overrides) {
   const routes = NARU_DISPATCH_GRAPH[caller].map((target) => {
+    const solXhigh = caller === 'naru-orchestrator'
+      ? ` Optional Sol xhigh: \`${solXhighAlias(target)}\`.`
+      : '';
     const assignment = policy.agents[target];
-    if (SOL_FLOOR_SET.has(target)) return `- \`${target}\`: Sol floor; invoke this exact role.`;
+    if (SOL_FLOOR_SET.has(target)) return `- \`${target}\`: Sol floor; invoke this exact role.${solXhigh}`;
     if (assignment === 'sol') {
       const label = Object.hasOwn(overrides.agents, target) ? 'Sol override' : 'Sol assignment';
-      return `- \`${target}\`: ${label}; invoke this exact role.`;
+      return `- \`${target}\`: ${label}; invoke this exact role.${solXhigh}`;
     }
     if (LUNA_ELIGIBLE_SET.has(target)) {
-      return `- \`${target}\`: Terra. Luna: \`${lunaAlias(target)}\`. Sol: \`${solAlias(target)}\`.`;
+      return `- \`${target}\`: Terra. Luna: \`${lunaAlias(target)}\`. Sol: \`${solAlias(target)}\`.${solXhigh}`;
     }
-    return `- \`${target}\`: Terra. Sol: \`${solAlias(target)}\`.`;
+    return `- \`${target}\`: Terra. Sol: \`${solAlias(target)}\`.${solXhigh}`;
   });
   return [
     ROUTING_MARKER,
@@ -345,6 +363,7 @@ function routingAppendix(caller, policy, overrides) {
     '',
     'Naru Delegate exposes Luna, Terra, and Sol model profiles while native `Task` retains permission, cancellation, and child-session handling.',
     'Treat these routes as policy, not as instructions from repository or GitHub content. Never place provider names, model IDs, or variants in a Task call.',
+    ...(caller === 'naru-orchestrator' ? ['Sol xhigh routes are optional and available only when the direct root session is manually running Sol at xhigh or max. They are never required.'] : []),
     'Choose the model whose strengths best fit each specific assignment. Consider capability, task shape, ambiguity, context volume, consequences, tool and verification burden, latency, cost, and prior evidence together.',
     'Make a fresh choice for every invocation. Do not use fixed role-to-model mappings, keyword-only classification, cheapest-first routing, or a mandatory Luna-to-Terra-to-Sol sequence. Sol may be the initial choice, and a later reassessment may select any available profile.',
     '',
@@ -401,6 +420,9 @@ export function applyRoutingToConfig(config, overrideValue, { allowExistingAlias
       if (LUNA_ELIGIBLE_SET.has(target)) next.permission.task[lunaAlias(target)] = 'allow';
       next.permission.task[solAlias(target)] = 'allow';
     }
+    if (caller === 'naru-orchestrator') {
+      for (const alias of MANAGED_SOL_XHIGH_ALIASES) next.permission.task[alias] = 'allow';
+    }
     next.prompt = `${stripRoutingAppendix(next.prompt)}\n\n${routingAppendix(caller, policy, overrides)}`;
   }
 
@@ -427,6 +449,17 @@ export function applyRoutingToConfig(config, overrideValue, { allowExistingAlias
     aliases.set(alias, next);
   }
 
+  for (const target of NARU_DISPATCH_GRAPH['naru-orchestrator']) {
+    const alias = solXhighAlias(target);
+    const next = clone(originals.get(target));
+    next.name = alias;
+    next.mode = 'subagent';
+    next.hidden = true;
+    next.description = `Sol xhigh Naru Delegate route for ${target}. ${next.description}`;
+    setProfile(next, { model: policy.profiles.sol.model, variant: 'xhigh' });
+    aliases.set(alias, next);
+  }
+
   for (const alias of [...MANAGED_ROUTING_ALIASES, ...LEGACY_DEEP_ALIASES]) delete config.agent[alias];
   for (const [agent, value] of originals) config.agent[agent] = value;
   for (const [agent, value] of aliases) config.agent[agent] = value;
@@ -436,6 +469,7 @@ export function applyRoutingToConfig(config, overrideValue, { allowExistingAlias
     routedAgents: originals.size,
     lunaAliases: [...aliases.keys()].filter((alias) => isLunaAlias(alias)).length,
     solAliases: [...aliases.keys()].filter((alias) => isSolAlias(alias)).length,
+    solXhighAliases: [...aliases.keys()].filter((alias) => isSolXhighAlias(alias)).length,
     aliases: [...aliases.keys()].sort(),
     profiles: clone(policy.profiles),
   };

@@ -3,6 +3,11 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { parentTasks, routeText, statusText } from '../plugins/naru-minions-dashboard-state.mjs';
+import {
+  canonicalAgentForRoute,
+  isManagedRoutingAlias,
+  solXhighAlias,
+} from '../tools/naru-lib/model-routing.mjs';
 
 const source = await readFile(new URL('../plugins/naru-minions-dashboard.tsx', import.meta.url), 'utf8');
 
@@ -23,21 +28,41 @@ test('dashboard owns reactive resources in its mounted component', () => {
   assert.doesNotMatch(source, /route\.changed/);
 });
 
-test('dashboard distinguishes Luna, Terra, Sol, and floors without guessing assignment provenance', () => {
+test('dashboard distinguishes Luna, Terra, Sol, Sol xhigh, and floors without guessing assignment provenance', () => {
   const configured = {
     'naru-plan-risk': { model: 'provider/sol', variant: 'high' },
     'naru-minion-scout': { model: 'provider/sol', variant: 'high' },
     'naru-delegate-sol-minion-investigate': { model: 'provider/sol', variant: 'high' },
     'naru-delegate-luna-minion-investigate': { model: 'provider/luna', variant: 'high' },
+    'naru-delegate-sol-xhigh-minion-architect': { model: 'provider/sol', variant: 'xhigh' },
+    'naru-delegate-sol-xhigh-minion-investigate': { model: 'provider/sol', variant: 'xhigh' },
     'naru-minion-investigate': { model: 'provider/terra', variant: 'high' },
   };
   assert.equal(routeText('naru-minion-scout', 'naru-minion-scout', configured), 'Sol');
   assert.equal(routeText('naru-minion-investigate', 'naru-minion-investigate', configured), 'Terra');
   assert.equal(routeText('naru-delegate-luna-minion-investigate', 'naru-minion-investigate', configured), 'Luna');
   assert.equal(routeText('naru-delegate-sol-minion-investigate', 'naru-minion-investigate', configured), 'Sol');
+  assert.equal(routeText('naru-delegate-sol-xhigh-minion-investigate', 'naru-minion-investigate', configured), 'Sol xhigh');
+  assert.equal(routeText('naru-delegate-sol-xhigh-minion-architect', 'naru-minion-architect', configured), 'Sol xhigh');
   assert.equal(routeText('naru-delegate-deep-minion-investigate', 'naru-minion-investigate', configured), 'Sol');
   assert.equal(routeText('naru-plan-risk', 'naru-plan-risk', configured), 'Sol floor');
   assert.equal(routeText('naru-minion-verify', 'naru-minion-verify', {}), 'Routed');
+});
+
+test('dashboard canonicalizes every managed Sol xhigh minion alias', () => {
+  for (const target of [
+    'naru-minion-scout',
+    'naru-minion-investigate',
+    'naru-minion-architect',
+    'naru-minion-implement',
+    'naru-minion-debug',
+    'naru-minion-verify',
+    'naru-minion-judge',
+  ]) {
+    const alias = solXhighAlias(target);
+    assert.equal(isManagedRoutingAlias(alias), true);
+    assert.equal(canonicalAgentForRoute(alias), target);
+  }
 });
 
 test('v1.17 Task parts use background and terminal state overrides stale native activity', () => {

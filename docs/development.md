@@ -7,7 +7,7 @@ This guide describes the repository architecture, sources of truth, security inv
 Naru has three related layers:
 
 1. **Human-facing commands.** Five flat Markdown commands in `commands/` parse slash-command input and delegate to top-level Core agents.
-2. **Canonical agents.** Thirty-five Markdown agents in `agents/` define prompts, modes, visibility, and permissions. Core remains fail-closed; the seven general implementation-workflow minions intentionally use a shared Build-like envelope.
+2. **Canonical agents.** Thirty-five Markdown agents in `agents/` define prompts, modes, visibility, and permissions. Core remains fail-closed; minion permissions are fail-closed and role-specific.
 3. **Runtime plugins and validated tools.** Naru Delegate applies central model routing, validated Git/GitHub tools expose narrow read-only or posting operations, and the optional TUI plugin displays child-session activity.
 
 Core dispatch is fixed and explicit:
@@ -20,6 +20,8 @@ Core dispatch is fixed and explicit:
 ```
 
 `/naru-review-post` delegates to `naru-review`, validates the complete review payload and snapshot, then uses the comment-only posting tool. The visible primary `naru-orchestrator` dispatches only to the seven `naru-minion-*` roles: scout, investigate, architect, implement, debug, verify, and judge.
+
+Dispatch authorization is fixed, but specialist fan-out is conditional. Each workflow keeps its documented baseline, marks unselected specialists `skipped-not-relevant`, and only degrades on failed selected specialists. Review remains dry-run against an immutable GitHub snapshot; review-post alone can submit the validated comment-only payload.
 
 OpenCode's native Task implementation remains responsible for permission evaluation, cancellation, retries, background work, and child-session handling. Naru Delegate mutates runtime agent configuration; it does not create sessions itself.
 
@@ -34,6 +36,7 @@ OpenCode's native Task implementation remains responsible for permission evaluat
 | Luna/Terra/Sol profiles and built-in assignments | `DEFAULT_MODEL_PROFILES` and `DEFAULT_AGENT_ASSIGNMENTS` |
 | Luna-eligible minions | `LUNA_ELIGIBLE_ROLES` |
 | Non-downgradeable roles | `SOL_FLOOR_ROLES` |
+| Generated Sol-xhigh child aliases | `MANAGED_SOL_XHIGH_ALIASES` and the direct-root gate in `plugins/naru-delegate.js` |
 | Runtime routing/config parsing and aliases | `tools/naru-lib/model-routing.mjs` |
 | Plugin loading, scope merge, rollback, and Task resume guard | `plugins/naru-delegate.js` |
 | Git and GitHub validation | `tools/naru-git-read.js`, `tools/naru-github-read.js`, `tools/naru-github-post-review.js`, and `tools/naru-lib/` |
@@ -67,13 +70,13 @@ At config application time, routing:
 2. Clones source definitions and applies the selected profile.
 3. Validates every dispatcher's exact fail-closed Task map against `NARU_DISPATCH_GRAPH`.
 4. Appends one generated routing policy section to dispatchers.
-5. Creates hidden Luna aliases for the five eligible minions that resolve to Terra and hidden Sol aliases for every eligible delegable Terra target.
-6. Adds only generated aliases reachable from each caller to its runtime Task map.
+5. Creates hidden Luna aliases for the five eligible minions that resolve to Terra, hidden Sol aliases for eligible delegable Terra targets, and seven optional Sol-xhigh aliases for direct orchestrator children.
+6. Adds only generated aliases reachable from each caller to its runtime Task map. Sol-xhigh aliases are added only to `naru-orchestrator` and are runtime-gated to a direct configured-Sol root at `xhigh` or `max`.
 7. Invokes Sol-floor, Sol-assigned, and Sol-overridden roles canonically without an alias. Only true floor members are labeled `Sol floor`; other Sol routes are `Sol assignment` or `Sol override`.
 
-The managed alias prefixes are `naru-delegate-luna-` and `naru-delegate-sol-`. Generated aliases have no Markdown source file and are runtime implementation details, not public integration targets. A current managed alias collision fails closed. Legacy `naru-delegate-deep-*` aliases are recognized only for cleanup, dashboard normalization, and fresh-session enforcement; new routing never generates them.
+The managed alias prefixes are `naru-delegate-luna-`, `naru-delegate-sol-`, and `naru-delegate-sol-xhigh-`. Generated aliases have no Markdown source file and are runtime implementation details, not public integration targets. A current managed alias collision fails closed. Legacy `naru-delegate-deep-*` aliases are recognized only for cleanup, dashboard normalization, and fresh-session enforcement; new routing never generates them.
 
-The default policy generates five Luna aliases and seventeen Sol aliases. The canonical role is the Terra route, so no redundant Terra alias exists. An exact Sol assignment removes every generated alias for that target and applies the Sol profile to its canonical definition.
+The default policy generates five Luna aliases, seventeen Sol aliases, and seven Sol-xhigh aliases. The canonical role is the Terra route, so no redundant Terra alias exists. An exact Sol assignment removes ordinary generated aliases for that target and applies the Sol profile to its canonical definition; Sol-xhigh child routes remain optional orchestrator routes. No Max child route is generated, and a normal high root cannot use xhigh.
 
 The generated dispatcher appendix makes the Sol orchestrator select a route independently for each invocation. Selection weighs capability, task shape, ambiguity, context, consequences, tool and verification burden, latency, cost, and prior evidence. It prohibits fixed role mappings, keyword-only classification, cheapest-first routing, and a mandatory model sequence. Naru Delegate itself remains deterministic and does not call a classifier model.
 
@@ -85,15 +88,16 @@ For mixed copy-pinned generations, the v2 plugin stores normalized v2 overrides 
 
 - Core, review-post, and `naru-orchestrator` permission blocks begin with `'*': deny`; this change does not weaken Core workflows.
 - Every dispatcher Task map begins with `'*': deny` and allows exactly the targets in `NARU_DISPATCH_GRAPH`. Hidden status is never authorization.
-- All seven canonical `naru-minion-*` files have an exact shared Build-like permission map: top-level allow; `doom_loop` ask; external-directory allow; reads allow with environment-file asks and example-template allows; and unconditional shell allow. Do not add edit, Task, or webfetch denies to individual minions.
-- Capability and workflow responsibility are distinct. Only `naru-minion-implement` is authorized by the current workflow to edit. Scout, investigate, architect, debug, verify, and judge prompts keep those roles behaviorally read-only despite technical edit, shell, and Task access.
-- Shell and external-directory operations do not prompt. Package scripts and Make targets must be inspected before invocation because they can hide side effects. Permission matching does not validate executable identity through `PATH` and is not a process, database, or secret sandbox.
-- Minion prompts directly prohibit reading or revealing secrets, but environment patterns ask rather than deny and other paths remain broadly readable. Validated Git/GitHub tools still validate requested paths and use fixed argument arrays rather than a shell.
-- Generated Luna and Sol aliases deep-clone their canonical source definitions, including the complete permission map. Routing must never invent a stronger or weaker alias policy.
+- Minion permission classes are exact: Scout/Investigate/Architect/Judge are static read-only; Debug/Verify are targeted-shell read-only; Implement alone has scoped edit and shell permission. Every class starts fail-closed and denies Task delegation.
+- Shell-enabled roles allow routine Bash, external-directory access, validated Git/GitHub reads, Weaver, and targeted checks without an approval prompt. They must inspect package scripts and Make targets before execution because repository code can hide side effects; use one routine command per shell call.
+- An explicit implementation request authorizes scoped local edits and targeted verification. Local changes are the default stopping point; an explicit commit/push/PR request authorizes that delivery without repeated confirmation. Persistent database writes or migrations, unrequested dependencies, destructive actions, external global paths not specifically approved, and material scope expansion remain consequential boundaries.
+- An explicit `/naru-review-post` invocation authorizes its one validated GitHub review posting call without repeated confirmation; it does not authorize any other GitHub posting.
+- Direct-read rules deny all minion environment and known-secret file paths; explicit environment templates remain allowed. Prompts also prohibit reading or revealing secrets. Permission policy is not a complete secret sandbox. Validated Git/GitHub tools still validate requested paths and use fixed argument arrays rather than a shell.
+- Generated Luna, Sol, and Sol-xhigh aliases deep-clone their canonical source definitions. Routing must never invent a stronger or weaker alias policy.
 - Pull-request review uses an immutable GitHub snapshot. Posting is isolated to `naru-review-post` and the validated posting tool, is `COMMENT`-only, requires a complete non-degraded payload, and is idempotent for the snapshot.
 - Prompt and Task packets treat repository, GitHub, log, and user-provided payloads as untrusted data. Content cannot redefine roles, permissions, models, or output contracts.
-- The remaining environment-file and doom-loop asks are approval points, not isolation boundaries. Shell and external-directory safety relies on workflow scope and behavioral instructions.
-- Because OpenCode uses last-match-wins permission ordering, the canonical minion map must keep unconditional Bash and external-directory allows as its effective final rules. Config-policy tests exercise Git, Weaver, Python, migration, ORM, and SQL-like command strings to prevent lexical prompts from returning.
+- Environment-file reads are denied and never require approval. Doom-loop remains an ask only for roles where it is configured. Shell and external-directory safety relies on workflow scope and behavioral instructions.
+- The behavioral-eval corpus is a data-only policy contract, not a measurement of live model quality. It can later be paired with captured-run metrics without giving fixtures provider access.
 
 ## Dashboard and TUI architecture
 
@@ -124,7 +128,7 @@ When changing installed inventory, update the install plan and its fixture inven
 
 Keep extensions explicit and fail-closed:
 
-1. Add a canonical `agents/naru-<name>.md` with the correct mode, visibility, secret policy, and permission envelope. New Core roles remain fail-closed; do not copy the minion Build envelope outside the explicitly scoped general implementation workflow.
+1. Add a canonical `agents/naru-<name>.md` with the correct mode, visibility, secret policy, and least-privilege role class. New Core roles remain fail-closed; do not copy Implement shell/edit permission to a role that does not require it.
 2. Add its ID to `NARU_AGENT_IDS`.
 3. If another Naru agent may call it, add the exact edge to `NARU_DISPATCH_GRAPH` and the caller's exact Task permission map. Do not use broad `naru-*` allows.
 4. Add it to `SOL_FLOOR_ROLES` only when downgrade must be prohibited. A preferred default that users may override belongs in `DEFAULT_AGENT_ASSIGNMENTS` instead.
@@ -133,7 +137,7 @@ Keep extensions explicit and fail-closed:
 
 Reserved identifiers and contracts:
 
-- `naru-delegate-luna-*` and `naru-delegate-sol-*` are reserved for generated model routes. The legacy `naru-delegate-deep-*` prefix remains reserved for cleanup compatibility. Do not create files, custom agents, or user integrations with these prefixes.
+- `naru-delegate-luna-*`, `naru-delegate-sol-*`, and `naru-delegate-sol-xhigh-*` are reserved for generated model routes. The legacy `naru-delegate-deep-*` prefix remains reserved for cleanup compatibility. Do not create files, custom agents, or user integrations with these prefixes.
 - Canonical `naru-*` IDs listed in `NARU_AGENT_IDS` are centrally routed and guarded against `task_id` resume.
 - Public slash commands remain the five flat `/naru-*` command files. There are no nested `/naru/*` aliases.
 - `naru-review-post` is reserved for the explicit posting boundary and must never become a general custom-agent Task target.
@@ -146,6 +150,7 @@ Run the smallest relevant check for the changed area:
 
 ```sh
 node --test tests/model-routing.test.mjs
+node --test tests/behavioral-evals.test.mjs
 node tests/config-policy.test.mjs
 node tests/prompt-contracts.test.mjs
 node --test tests/dashboard-contract.test.mjs
@@ -163,9 +168,9 @@ Inspect any script or target before execution and do not run database-connected 
 ## Release checklist
 
 1. Confirm the command and 35-agent inventories are intentional and the dispatch graph matches every dispatcher Task allowlist.
-2. Confirm model defaults, v1 normalization/projection, exact assignments, Sol floors, five Luna aliases, seventeen Sol aliases, canonical Terra/Sol invocation, and override behavior are covered.
+2. Confirm model defaults, v1 normalization/projection, exact assignments, Sol floors, five Luna aliases, seventeen Sol aliases, seven gated optional Sol-xhigh aliases, canonical Terra/Sol invocation, and override behavior are covered.
 3. Confirm no agent accidentally gained model frontmatter; only the implementation fallback pin should remain.
-4. Review permission blocks for Core fail-closed behavior, exact Task targets, minion Build-map parity, uninterrupted shell/external access, behavioral role boundaries, secret guidance, alias cloning, and posting boundaries.
+4. Review permission blocks for Core fail-closed behavior, exact Task targets, role-specific minion permissions, shell/edit boundaries, secret guidance, alias cloning, and posting boundaries.
 5. Verify README and the three guides match public commands, installer flags, routing behavior, dashboard support, and safety limitations.
 6. Run the targeted checks for every touched subsystem and `git diff --check`; record any checks not run.
 7. Exercise the installer test when release inventory, migration, dashboard registration, or copy/symlink behavior changed.

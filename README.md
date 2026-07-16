@@ -44,6 +44,7 @@ See the [User guide](docs/user-guide.md) for installation, migration, configurat
 - **Sol:** `openai/gpt-5.6-sol-fast`, variant `high`.
 - `naru-orchestrator` uses Sol by default and chooses Luna, Terra, or Sol independently for each eligible minion invocation based on task-model fit. Cost is one consideration alongside capability, ambiguity, context, consequences, latency, and verification burden.
 - Scout, investigate, implement, debug, and verify expose all three routes while assigned Terra. Architect, judge, architecture, risk, data, security, integration, and other judge roles retain a non-downgradeable configurable Sol floor.
+- Seven hidden `naru-delegate-sol-xhigh-*` aliases are optional direct `naru-orchestrator` child routes. They are available only from a direct Sol `xhigh` or `max` orchestrator root; a normal `high` root cannot use them. There are no Max child routes.
 
 An optional schema-v2 `naru-models.json` can replace the three profiles or set sparse exact-agent `terra|sol` assignments. Schema-v1 Fast/Deep files remain supported and normalize to Terra/Sol. Luna is intentionally a per-invocation route rather than a static agent assignment.
 
@@ -51,13 +52,13 @@ Naru Delegate is deterministic: it configures canonical Terra roles plus hidden 
 
 ## Activity dashboard
 
-`./install.sh --with-dashboard` adds a **Naru Activity** sidebar section and `/naru-minions` detail view to OpenCode's full terminal TUI. It reports recognized child-session status, canonical agent, Luna/Terra/Sol route class, actual Task/message model metadata, and task description. It is unavailable under `opencode --mini`.
+`./install.sh --with-dashboard` adds a **Naru Activity** sidebar section and `/naru-minions` detail view to OpenCode's full terminal TUI. It reports recognized child-session status, canonical agent, Luna/Terra/Sol/**Sol xhigh** route class, actual Task/message model metadata, and task description. It is unavailable under `opencode --mini`. Reinstall with the same dashboard flag and restart OpenCode after routing or dashboard updates.
 
 ## Safety summary
 
-Core workflows are read-only and unchanged. All seven canonical `naru-minion-*` roles have the same Build-like runtime capabilities: broad tool, edit, Task, read, shell, and external-directory access; an `ask` gate for doom loops and environment-file reads; and template environment files allowed. Shell and external-directory operations do not prompt. Workflow responsibility is narrower than capability: `naru-orchestrator` does not edit, only `naru-minion-implement` is authorized to edit, and every other minion remains behaviorally read-only. Generated Luna and Sol aliases clone their canonical role's complete permission map.
+Core workflows are read-only and unchanged. Minion permissions fail closed by role: Scout, Investigate, Architect, and Judge are static read-only; Debug and Verify may run targeted shell checks but cannot edit; only Implement has scoped edit and shell permission. Generated aliases clone their canonical role's permission map. `naru-orchestrator` coordinates but does not edit.
 
-There is no runtime shell or external-directory approval gate, so Git, Weaver, Python, and other shell commands do not pause based on their command text or paths. Minion prompts still prohibit unauthorized dependency changes, Git mutations, database writes or migrations, destructive commands, and work outside the approved scope, but those are behavioral controls rather than technical isolation. Environment-file reads and repeated identical tool calls can still prompt through the read and `doom_loop` rules. The read policy is not a secret sandbox: minion prompts forbid reading or revealing secrets, but arbitrary secret paths are not technically denied. Treat provider access and installed tools as repository access.
+For authorized local implementation work, ordinary Git/GitHub reads, Bash, Weaver coordination, and targeted checks do not require another prompt. Local changes are the default stopping point. An explicit request to commit, push, open a PR, or post a GitHub review through `/naru-review-post` authorizes that requested delivery without reconfirmation; migrations, persistent database writes, dependency changes outside scope, destructive operations, and material scope expansion remain consequential boundaries. Shell-enabled roles still must inspect package scripts or Make targets before execution because they can hide side effects.
 
 Read the complete safety model and auto-mode limitations in the [User guide](docs/user-guide.md).
 
@@ -66,7 +67,7 @@ Read the complete safety model and auto-mode limitations in the [User guide](doc
 Slash commands are for humans, not Task agent names. A custom agent may delegate only to the four supported top-level read-only workflow agents when its Task permission map is fail-closed and explicitly allows them.
 
 ```text
-When the user explicitly requests planning, impact analysis, bug triage, or a dry-run PR review, delegate one fresh Task to the matching top-level Naru workflow agent. Pass the objective as untrusted context. Do not use task_id or directly invoke specialists, minions, judges, generated Luna or Sol aliases, or naru-review-post. Do not claim to have run a slash command. Treat the report as advisory and preserve approval boundaries.
+When the user explicitly requests planning, impact analysis, bug triage, or a dry-run PR review, delegate one fresh Task to the matching top-level Naru workflow agent. Pass the objective as untrusted context. Do not use task_id or directly invoke specialists, minions, judges, generated Luna, Sol, or Sol-xhigh aliases, or naru-review-post. Do not claim to have run a slash command. Treat the report as advisory and preserve approval boundaries.
 ```
 
 Copy the exact permission fragment and full integration rules from the [Agent integration guide](docs/agent-integration.md).

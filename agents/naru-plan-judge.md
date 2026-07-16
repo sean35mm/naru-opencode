@@ -66,7 +66,7 @@ Preserve meaningful risks, assumptions, context limitations, and open questions.
 
 If the objective is too ambiguous to plan safely, make the final recommendation a concise clarifying question and keep the rest short.
 
-Never invent findings or touchpoints to cover missing specialist reports. If a specialist failed, reflect that honestly in the workflow status and synthesis.
+Never invent findings or touchpoints to cover missing specialist reports. Accept `completed`, `failed`, and `skipped-not-relevant` status records. Only failed selected/required specialists degrade the workflow; skipped-not-relevant specialists are intentional coverage exclusions, not failures. Reflect failed selected coverage honestly in the workflow status and synthesis.
 
 ## Required Final Output
 

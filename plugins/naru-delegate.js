@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import {
   applyRoutingToConfig,
   isManagedRoutingAlias,
+  isSolXhighAlias,
   mergeRoutingOverrides,
   NARU_AGENT_IDS,
   parseRoutingOverrides,
@@ -13,9 +14,13 @@ import {
 
 const CONFIG_PATH = fileURLToPath(new URL('../naru-models.json', import.meta.url))
 const MAX_CONFIG_BYTES = 64 * 1024
+const MAX_SESSION_METADATA = 512
+const SESSION_METADATA_TTL_MS = 30 * 60 * 1000
 const NARU_AGENTS = new Set(NARU_AGENT_IDS)
 const STATE_KEY = Symbol.for('naru.delegate.config-state.v1')
 const shared = globalThis[STATE_KEY] ?? { configs: new WeakMap() }
+shared.sessions ??= new Map()
+shared.solModels ??= new Map()
 globalThis[STATE_KEY] = shared
 
 async function readOverrides(options) {
@@ -69,6 +74,106 @@ function clone(value) {
   return structuredClone(value)
 }
 
+function responseData(result) {
+  if (result?.error) throw new Error(result.error.message ?? 'OpenCode client request failed')
+  return result?.data ?? result
+}
+
+function sessionOptions(sessionID, directory) {
+  return {
+    path: { id: sessionID },
+    ...(typeof directory === 'string' && directory ? { query: { directory } } : {}),
+  }
+}
+
+function modelParts(model) {
+  if (typeof model !== 'string') return {}
+  const slash = model.indexOf('/')
+  if (slash <= 0 || slash === model.length - 1) return {}
+  return { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) }
+}
+
+function pruneSessions(now = Date.now()) {
+  for (const [sessionID, metadata] of shared.sessions) {
+    if (metadata.updatedAt + SESSION_METADATA_TTL_MS <= now) shared.sessions.delete(sessionID)
+  }
+  while (shared.sessions.size > MAX_SESSION_METADATA) {
+    shared.sessions.delete(shared.sessions.keys().next().value)
+  }
+}
+
+function updateSession(sessionID, values) {
+  if (typeof sessionID !== 'string' || !sessionID) return
+  const current = shared.sessions.get(sessionID) ?? {}
+  shared.sessions.delete(sessionID)
+  shared.sessions.set(sessionID, { ...current, ...values, updatedAt: Date.now() })
+  pruneSessions()
+}
+
+function messageMetadata(message) {
+  const info = message?.info ?? message
+  if (info?.role !== 'user') return
+  return {
+    agent: typeof info.agent === 'string' ? info.agent : undefined,
+    modelID: typeof info.model?.modelID === 'string' ? info.model.modelID : undefined,
+    providerID: typeof info.model?.providerID === 'string' ? info.model.providerID : undefined,
+    variant: typeof info.variant === 'string' ? info.variant : undefined,
+  }
+}
+
+function completeRootMetadata(metadata) {
+  return (
+    typeof metadata?.root === 'boolean' &&
+    typeof metadata.agent === 'string' &&
+    typeof metadata.providerID === 'string' &&
+    typeof metadata.modelID === 'string' &&
+    typeof metadata.variant === 'string'
+  )
+}
+
+async function hydrateSession(client, directory, sessionID) {
+  const session = responseData(await client.session.get(sessionOptions(sessionID, directory)))
+  if (session?.id !== sessionID) throw new Error('OpenCode returned incomplete session metadata')
+  updateSession(sessionID, { root: !session.parentID })
+  let metadata = shared.sessions.get(sessionID)
+  if (!completeRootMetadata(metadata)) {
+    const messages = responseData(await client.session.messages(sessionOptions(sessionID, directory)))
+    const user = Array.isArray(messages)
+      ? messages.map(messageMetadata).findLast((value) => value !== undefined)
+      : undefined
+    if (user) updateSession(sessionID, user)
+    metadata = shared.sessions.get(sessionID)
+  }
+  return metadata
+}
+
+async function rootMetadata(client, directory, sessionID) {
+  pruneSessions()
+  const cached = shared.sessions.get(sessionID)
+  if (completeRootMetadata(cached)) return cached
+  if (!client?.session?.get || !client?.session?.messages) return cached
+  try {
+    return await hydrateSession(client, directory, sessionID)
+  } catch {
+    return shared.sessions.get(sessionID)
+  }
+}
+
+async function assertSolXhighRoot(client, directory, scope, sessionID) {
+  const expected = modelParts(shared.solModels.get(scope))
+  const metadata = await rootMetadata(client, directory, sessionID)
+  const authorized =
+    completeRootMetadata(metadata) &&
+    metadata.root &&
+    metadata.agent === 'naru-orchestrator' &&
+    (metadata.variant === 'xhigh' || metadata.variant === 'max') &&
+    metadata.providerID === expected.providerID &&
+    metadata.modelID === expected.modelID
+  if (!authorized) {
+    throw new Error('Sol xhigh routes require a direct naru-orchestrator root running the configured Sol model at xhigh or max')
+  }
+}
+
 function legacyProjection(value) {
   const policy = resolveRoutingPolicy(value)
   const agents = {}
@@ -114,30 +219,63 @@ function restoreOriginals(config, state) {
   state.aliases.clear()
 }
 
-export const NaruDelegatePlugin = async ({ client }, options = {}) => ({
-  config: async (config) => {
-    const state = stateFor(config)
-    if (state.disabled) return
-    try {
-      const legacyOverrides = parseRoutingOverrides(state.overrides)
-      const baseOverrides = mergeRoutingOverrides(state.overridesV2 ?? legacyOverrides, legacyOverrides)
-      const overrides = mergeRoutingOverrides(baseOverrides, await readOverrides(options))
-      restoreOriginals(config, state)
-      const summary = applyRoutingToConfig(config, overrides)
-      state.overrides = legacyProjection(overrides)
-      state.overridesV2 = overrides
-      state.aliases = new Set(summary.aliases)
-    } catch (error) {
-      restoreOriginals(config, state)
-      state.disabled = true
-      await logFailure(client, error)
-    }
-  },
-  'tool.execute.before': async (input, output) => {
-    if (input.tool !== 'task' || !output.args || typeof output.args !== 'object') return
-    const target = output.args.subagent_type
-    if ((NARU_AGENTS.has(target) || isManagedRoutingAlias(target)) && output.args.task_id) {
-      throw new Error('Naru Delegate requires a fresh child session; task_id resume is disabled')
-    }
-  },
-})
+export const NaruDelegatePlugin = async ({ client, directory }, options = {}) => {
+  const scope = typeof directory === 'string' ? directory : ''
+  return {
+    config: async (config) => {
+      const state = stateFor(config)
+      if (state.disabled) return
+      try {
+        const legacyOverrides = parseRoutingOverrides(state.overrides)
+        const baseOverrides = mergeRoutingOverrides(state.overridesV2 ?? legacyOverrides, legacyOverrides)
+        const overrides = mergeRoutingOverrides(baseOverrides, await readOverrides(options))
+        restoreOriginals(config, state)
+        const summary = applyRoutingToConfig(config, overrides)
+        state.overrides = legacyProjection(overrides)
+        state.overridesV2 = overrides
+        state.aliases = new Set(summary.aliases)
+        shared.solModels.set(scope, summary.profiles.sol.model)
+      } catch (error) {
+        restoreOriginals(config, state)
+        state.disabled = true
+        shared.solModels.delete(scope)
+        await logFailure(client, error)
+      }
+    },
+    event: async ({ event }) => {
+      const info = event?.properties?.info
+      if (event?.type === 'session.deleted') {
+        if (typeof info?.id === 'string') shared.sessions.delete(info.id)
+        return
+      }
+      if ((event?.type === 'session.created' || event?.type === 'session.updated') && typeof info?.id === 'string') {
+        updateSession(info.id, { root: !info.parentID })
+      }
+    },
+    'chat.message': async (input) => {
+      updateSession(input.sessionID, {
+        agent: typeof input.agent === 'string' ? input.agent : undefined,
+        modelID: typeof input.model?.modelID === 'string' ? input.model.modelID : undefined,
+        providerID: typeof input.model?.providerID === 'string' ? input.model.providerID : undefined,
+        variant: typeof input.variant === 'string' ? input.variant : undefined,
+      })
+      if (!client?.session?.get) return
+      try {
+        const session = responseData(await client.session.get(sessionOptions(input.sessionID, directory)))
+        if (session?.id === input.sessionID) updateSession(input.sessionID, { root: !session.parentID })
+      } catch {
+        // The Task gate will retry hydration and fail closed if session metadata remains incomplete.
+      }
+    },
+    'tool.execute.before': async (input, output) => {
+      if (input.tool !== 'task' || !output.args || typeof output.args !== 'object') return
+      const target = output.args.subagent_type
+      if ((NARU_AGENTS.has(target) || isManagedRoutingAlias(target)) && output.args.task_id) {
+        throw new Error('Naru Delegate requires a fresh child session; task_id resume is disabled')
+      }
+      if (isSolXhighAlias(target)) {
+        await assertSolXhighRoot(client, directory, scope, input.sessionID)
+      }
+    },
+  }
+}
