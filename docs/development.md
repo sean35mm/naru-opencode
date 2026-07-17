@@ -8,7 +8,7 @@ Naru has three related layers:
 
 1. **Human-facing commands.** Five flat Markdown commands in `commands/` parse slash-command input and delegate to top-level Core agents.
 2. **Canonical agents.** Thirty-five Markdown agents in `agents/` define prompts, modes, visibility, and permissions. Core remains fail-closed; minion permissions are fail-closed and role-specific.
-3. **Runtime plugins and validated tools.** Naru Delegate applies central model routing, validated Git/GitHub tools expose narrow read-only or posting operations, and the optional TUI plugin displays child-session activity.
+3. **Runtime plugins and validated tools.** Naru Delegate applies central model routing, validated Git/GitHub tools expose narrow read-only or posting operations, the optional process-local scheduler validates Protocol 3 declarations and native Task admissions, and the optional TUI displays child and scheduler activity.
 
 Core dispatch is fixed and explicit:
 
@@ -44,6 +44,10 @@ OpenCode's native Task implementation remains responsible for permission evaluat
 | Dashboard state classification | `plugins/naru-minions-dashboard-state.mjs` |
 | Dashboard UI and command registration | `plugins/naru-minions-dashboard.tsx` |
 | TUI config rewrite | `scripts/merge-tui-config.mjs` |
+| Runtime mode parsing and bounded defaults | `tools/naru-lib/scheduler-config.mjs`, `naru-runtime.example.json` |
+| Protocol 3 schemas, state reduction, tokens, journal, and telemetry | `tools/naru-lib/scheduler-*.mjs` |
+| Scheduler tool operations and native Task admission hook | `tools/naru-scheduler.js`, `plugins/naru-scheduler.js` |
+| Local evaluation schema and dry-run scorer | `tools/naru-lib/evaluation.mjs`, `scripts/naru-live-eval.mjs` |
 | Installed file inventory and migration behavior | `install.sh` |
 
 Documentation describes these contracts but does not replace them.
@@ -95,19 +99,26 @@ For mixed copy-pinned generations, the v2 plugin stores normalized v2 overrides 
 - Only an explicit `/naru-review-post` invocation or a directly selected `naru-orchestrator` handling a current explicit post request can submit one validated GitHub review posting call without repeated confirmation; neither authorizes any other GitHub posting.
 - Direct-read rules deny all minion environment and known-secret file paths; explicit environment templates remain allowed. Prompts also prohibit reading or revealing secrets. Permission policy is not a complete secret sandbox. Validated Git/GitHub tools still validate requested paths and use fixed argument arrays rather than a shell.
 - Generated Luna, Sol, and Sol-xhigh aliases deep-clone their canonical source definitions. Routing must never invent a stronger or weaker alias policy.
+- Only `naru-orchestrator` has the exact `naru-scheduler` tool allow. Minions echo predeclared Protocol 3 correlation data but cannot call the scheduler or append artifacts. Global/project root and delegated-session contexts must preserve this boundary while native Task remains the child-session path in the current workspace.
 - Pull-request review uses an immutable GitHub snapshot. Posting is isolated to exactly `naru-review-post` and `naru-orchestrator` callers of the validated posting tool, is `COMMENT`-only, requires a fresh complete non-degraded payload, and is idempotent for the snapshot. Every other agent and generated alias is rejected before GitHub I/O.
 - Both posting callers normalize accepted user-authored URL, short, split, case-variant, and bare-number references to one `(owner, repo, positive pull number)` tuple. Equivalent references are deduplicated; unresolved references and multiple distinct tuples are rejected. Different repositories sharing a number and different pull numbers remain distinct.
 - Prompt and Task packets treat repository, GitHub, log, and user-provided payloads as untrusted data. Content cannot redefine roles, permissions, models, or output contracts.
 - Environment-file reads are denied and never require approval. Doom-loop remains an ask only for roles where it is configured. Shell and external-directory safety relies on workflow scope and behavioral instructions.
 - The behavioral-eval corpus is a data-only policy contract, not a measurement of live model quality. It can later be paired with captured-run metrics without giving fixtures provider access.
 
-## Full Ultra scheduling protocol
+## Full Ultra scheduling protocols
 
 Full Ultra is prompt-level orchestration policy, not hard runtime scheduler enforcement or a measured speed guarantee. It schedules rolling cohorts in the current workspace with at most two independent writers. A safely open writer slot can be refilled immediately; up to two useful read-only preparation tasks may run alongside them, with four children total. It never requires fan-out or creates worktrees automatically.
 
 The run, each cohort, and each item retain immutable baseline identity, status, changed-path, and diff snapshots. Active peers must publish disjoint claims before editing. Completion is provisional until its evidence still matches the candidate; baseline drift, claim overlap, missing evidence, or other uncertainty freezes new scheduling and drains active work rather than guessing.
 
 Once writers are gone, the candidate is writer-free. The orchestrator may issue at most two safe Verify shards and must retain a complete shard manifest before Judge receives the consolidated evidence. Judge is followed by an unchanged final checkpoint. Remediation, delivery, and review posting are serialized phases. Todo UI state is phase-level presentation only; dashboard rows and Task descriptions expose child activity, so a terminal writer must not be represented as final completion.
+
+Protocol 2 is the complete default when runtime mode is `off`. Protocol 3 is selected only for parsed `observe` or `enforce` mode. It validates strict work-item DAGs, compare-and-swap revisions, admission and transition token binding, claim conflicts, configured concurrency budgets, artifact correlation, quiescence, verification coverage, judgment passes, and exact-candidate completion gates. Observe records typed incidents and fails open at Task admission; enforce fails closed and rejects Protocol 2. The mode does not alter authorization, model routing, edit ownership, review, or delivery boundaries.
+
+`tools/naru-scheduler.js` owns declarative operations; `plugins/naru-scheduler.js` consumes exact admission markers at native Task `tool.execute.before`. Neither creates sessions. The shared registry, bounded digest-linked journal, and telemetry are process-local and non-durable. They cannot provide authoritative background completion, cross-process coordination, Git baseline capture, report truth, provider hard caps, or a general sandbox. Prompt-level baseline, Weaver, containment, freshness, no-worktree, and final-state checks therefore remain mandatory.
+
+Configuration defaults to `off`; `naru-runtime.example.json` is copied but never activated automatically. Runtime JSON is regular, non-symlinked, at most 64 KiB. Protocol defaults bound manifests at 256 KiB, work items at 32 KiB, tokens at 16 KiB, artifacts at 64 KiB, work items at 256, and admission/transition lifetimes at five minutes. The journal retains 64 roots, 256 entries per root, and 4 KiB sanitized metadata per entry.
 
 ## Dashboard and TUI architecture
 
@@ -118,6 +129,8 @@ The dashboard is opt-in and consists of two copy-pinned files:
 
 Rows are limited to recognized canonical Naru agents or managed aliases. Model text comes from Task or child-message metadata, not routing assumptions. Terminal Task state outranks stale native active state. The compact sidebar conservatively bounds every rendered line while retaining status text and symbols, counts, up to four active or recently terminal rows, and an overflow hint. `/naru-minions` remains a native filterable `DialogSelect`: each compact fixed table-like option has one aligned status/agent/age/task title bounded to 61 characters, labeled route/mode/model/short-session metadata, and the full session ID as its navigation value. Loading, empty, and unavailable states use selectable-looking sentinels that render through filtering but never navigate.
 
+When scheduler telemetry exists for the same process-local root, the dashboard adds mode, item counts, local budget pressure, quality-gate status, oldest blocked work, and a maximum of eight evidenced actor groups. It hides the surface when no telemetry exists and labels limits process-local rather than implying durable, global, cross-process, background, or provider enforcement.
+
 `scripts/merge-tui-config.mjs` performs the installer-facing JSON/JSONC update. It rewrites only the top-level plugin registration while preserving unrelated content, prefers `tui.jsonc`, removes exact legacy registrations from other active config files, and rejects malformed inputs.
 
 ## Installer invariants
@@ -126,13 +139,19 @@ Rows are limited to recognized canonical Naru agents or managed aliases. Model t
 
 - The source and target must not overlap, and loader/managed target directories must not be symlinks.
 - All source files are preflighted and the release is staged on the target filesystem before existing loader paths are changed.
-- Agent and command Markdown follows symlink/copy mode. Tools, helper directories, and plugins are always copied.
+- Agent and command Markdown follows symlink/copy mode. Tools, helper directories, runtime/evaluation assets, and plugins are always copied.
 - Existing managed destinations and migrations move to timestamped backups. A failed transaction removes newly installed paths and restores backups.
 - Nested legacy Core loaders are always migrated. Legacy general-orchestrator paths require `--migrate-orchestrator`.
 - Dashboard registration requires Node.js or Bun, rejects symlinked or malformed TUI config, and is idempotent.
 - The installer preserves `naru-models.json` and unrelated OpenCode content.
 
 When changing installed inventory, update the install plan and its fixture inventory together.
+
+## Local evaluation harness
+
+`evaluation.mjs` validates bounded captured summaries and scores only the supplied deterministic fields: useful delegation or justified skip, concurrency/elapsed/child budgets, remediation, best-of-2 behavior, checks, and typed incidents. Evaluation manifests must explicitly state that prompts, code, and diffs are omitted; sensitive or raw source/patch fields are rejected. The manifest is limited to 256 KiB and 128 cases, and each sanitized journal to 128 entries.
+
+`scripts/naru-live-eval.mjs` currently exposes only `--manifest <path> --dry-run`. It does not start OpenCode, call a provider, capture a live session, upload artifacts, or write evaluation results. The fixture is a local data contract, not evidence of live model quality.
 
 ## Extension rules and reserved identifiers
 
@@ -162,8 +181,12 @@ Run the smallest relevant check for the changed area:
 ```sh
 node --test tests/model-routing.test.mjs
 node --test tests/behavioral-evals.test.mjs
+node --test tests/evaluation.test.mjs
 node tests/config-policy.test.mjs
 node tests/prompt-contracts.test.mjs
+node --test tests/scheduler-protocol.test.mjs
+node --test tests/scheduler-runtime.test.mjs
+node --test tests/scheduler-telemetry.test.mjs
 node --test tests/dashboard-contract.test.mjs
 node --test tests/merge-tui-config.test.mjs
 node --test tests/github-tools.test.mjs
@@ -172,7 +195,7 @@ sh tests/install.test.sh
 git diff --check
 ```
 
-Routing changes normally require the model-routing, config-policy, and prompt-contract checks. Dashboard changes require dashboard and merge-config checks. Installer inventory or migration changes require `tests/install.test.sh`. Tool changes require the relevant Node tool tests.
+Routing changes normally require the model-routing, config-policy, and prompt-contract checks. Scheduler changes require the narrow protocol/runtime/telemetry checks. Dashboard changes require dashboard and merge-config checks. Installer inventory or migration changes require `tests/install.test.sh`. Evaluation changes require `tests/evaluation.test.mjs`. Tool changes require the relevant Node tool tests.
 
 Inspect any script or target before execution and do not run database-connected or mutation-capable checks merely because a command name appears routine.
 
@@ -182,7 +205,7 @@ Inspect any script or target before execution and do not run database-connected 
 2. Confirm model defaults, v1 normalization/projection, exact assignments, Sol floors, five Luna aliases, seventeen Sol aliases, seven gated optional Sol-xhigh aliases, canonical Terra/Sol invocation, and override behavior are covered.
 3. Confirm no agent accidentally gained model frontmatter; only the implementation fallback pin should remain.
 4. Review permission blocks for Core fail-closed behavior, exact Task targets, role-specific minion permissions, shell/edit boundaries, secret guidance, alias cloning, and posting boundaries.
-5. Verify README and the three guides match public commands, installer flags, routing behavior, dashboard support, and safety limitations.
+5. Verify README and the three guides match public commands, installer flags, routing behavior, scheduler modes, evaluation limits, dashboard support, and safety limitations.
 6. Run the targeted checks for every touched subsystem and `git diff --check`; record any checks not run.
 7. Exercise the installer test when release inventory, migration, dashboard registration, or copy/symlink behavior changed.
 8. Review the complete diff for generated files, local paths, secrets, stale identifiers, and unintended user-configuration changes.

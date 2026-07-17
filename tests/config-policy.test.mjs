@@ -61,6 +61,21 @@ const expectedAgents = [
   'agents/naru-minion-judge.md',
 ];
 
+const expectedRuntimeFiles = [
+  'naru-runtime.example.json',
+  'plugins/naru-scheduler.js',
+  'scripts/naru-live-eval.mjs',
+  'tests/fixtures/live-evals.json',
+  'tools/naru-scheduler.js',
+  'tools/naru-lib/evaluation.mjs',
+  'tools/naru-lib/scheduler-config.mjs',
+  'tools/naru-lib/scheduler-journal.mjs',
+  'tools/naru-lib/scheduler-protocol.mjs',
+  'tools/naru-lib/scheduler-state.mjs',
+  'tools/naru-lib/scheduler-telemetry.mjs',
+  'tools/naru-lib/scheduler-token.mjs',
+];
+
 const minionRoles = ['scout', 'investigate', 'architect', 'implement', 'debug', 'verify', 'judge'];
 const minionPaths = minionRoles.map(role => `agents/naru-minion-${role}.md`);
 const coreAgents = expectedAgents.filter(
@@ -257,7 +272,7 @@ function fail(message) {
 }
 
 async function main() {
-  for (const path of [...expectedCommands, ...expectedAgents]) {
+  for (const path of [...expectedCommands, ...expectedAgents, ...expectedRuntimeFiles]) {
     if (!(await exists(path))) fail(`missing expected file: ${path}`);
   }
 
@@ -404,6 +419,23 @@ async function main() {
   }
   if (!orchestratorAllows.includes('naru-review') || orchestratorAllows.includes('naru-review-post')) {
     fail('orchestrator review Task boundary mismatch');
+  }
+
+  const schedulerCapable = [];
+  for (const path of expectedAgents) {
+    const permissions = parsePermissions(await readFile(here(path), 'utf8')) ?? [];
+    const schedulerPermissions = permissions.filter(permission => permission.key === 'naru-scheduler');
+    if (schedulerPermissions.length) schedulerCapable.push({ path, schedulerPermissions });
+  }
+  if (
+    schedulerCapable.length !== 1 ||
+    schedulerCapable[0].path !== 'agents/naru-orchestrator.md' ||
+    JSON.stringify(schedulerCapable[0].schedulerPermissions) !== JSON.stringify([{ key: 'naru-scheduler', val: 'allow' }])
+  ) {
+    fail('exactly naru-orchestrator must have one scheduler allow');
+  }
+  for (const required of ['native Task', 'current workspace', 'Do not create worktrees automatically']) {
+    if (!orchestratorText.includes(required)) fail(`orchestrator missing scheduler boundary: ${required}`);
   }
 
   for (const path of [...expectedCommands, ...expectedAgents]) {

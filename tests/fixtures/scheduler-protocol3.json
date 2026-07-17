@@ -1,0 +1,115 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "schedulingProtocol": 3,
+    "runId": "run-fixture",
+    "revision": 7,
+    "budgets": {
+      "maxConcurrentWriters": 2,
+      "maxConcurrentReadOnly": 2,
+      "maxTotalChildren": 4,
+      "maxJudgePasses": 3
+    },
+    "workItems": [
+      {
+        "workItemId": "a",
+        "dependencies": [],
+        "ownedWriteScope": ["src/a/**"],
+        "frozenContractClaims": ["api-v1"],
+        "mutableContractClaims": ["contract-a"],
+        "generatedArtifactClaims": [],
+        "configurationClaims": [],
+        "mutableResourceClaims": ["cache-a"],
+        "exclusions": ["src/b/**"],
+        "verificationNeeds": ["test-a"],
+        "status": "ready"
+      },
+      {
+        "workItemId": "b",
+        "dependencies": ["a"],
+        "ownedWriteScope": ["src/b/**"],
+        "frozenContractClaims": ["api-v1"],
+        "mutableContractClaims": ["contract-b"],
+        "generatedArtifactClaims": [],
+        "configurationClaims": [],
+        "mutableResourceClaims": ["cache-b"],
+        "exclusions": ["src/a/**"],
+        "verificationNeeds": ["test-b"],
+        "status": "pending"
+      },
+      {
+        "workItemId": "c",
+        "dependencies": [],
+        "ownedWriteScope": ["src/c.mjs"],
+        "frozenContractClaims": ["api-v1"],
+        "mutableContractClaims": ["contract-c"],
+        "generatedArtifactClaims": [],
+        "configurationClaims": [],
+        "mutableResourceClaims": ["cache-c"],
+        "exclusions": [],
+        "verificationNeeds": ["test-c"],
+        "status": "ready"
+      }
+    ]
+  },
+  "admissionToken": {
+    "schemaVersion": 1,
+    "tokenType": "admission",
+    "tokenId": "admission-a",
+    "runId": "run-fixture",
+    "workItemId": "a",
+    "expectedRevision": 7,
+    "lane": "writer",
+    "activePeerIds": [],
+    "issuedAt": 100,
+    "expiresAt": 200
+  },
+  "transitionToken": {
+    "schemaVersion": 1,
+    "tokenType": "transition",
+    "tokenId": "transition-a",
+    "admissionTokenId": "admission-a",
+    "runId": "run-fixture",
+    "workItemId": "a",
+    "expectedRevision": 8,
+    "fromStatus": "active",
+    "toStatus": "terminal-contained",
+    "issuedAt": 100,
+    "expiresAt": 200
+  },
+  "transitionArtifact": {
+    "schemaVersion": 1,
+    "artifactType": "transition",
+    "artifactId": "artifact-a",
+    "transitionTokenId": "transition-a",
+    "runId": "run-fixture",
+    "workItemId": "a",
+    "expectedRevision": 8,
+    "fromStatus": "active",
+    "toStatus": "terminal-contained",
+    "changedPaths": ["src/a/index.mjs"]
+  },
+  "legacyRun": {
+    "schedulingProtocol": 2,
+    "cohortId": "legacy-cohort",
+    "workItems": [
+      {
+        "workItemId": "legacy-a",
+        "dependencies": [],
+        "ownedWriteScope": ["legacy/a.mjs"],
+        "frozenContractClaims": [],
+        "mutableContractClaims": ["legacy-contract"],
+        "generatedArtifactClaims": [],
+        "configurationClaims": [],
+        "mutableResourceClaims": [],
+        "exclusions": [],
+        "verificationNeeds": ["legacy-test"],
+        "status": "ready"
+      }
+    ],
+    "runBaseline": { "identity": "run-baseline" },
+    "cohortBaseline": { "identity": "cohort-baseline" },
+    "itemDispatchBaseline": { "identity": "dispatch-baseline" },
+    "provisionalDependencyStatus": "not-applicable"
+  }
+}

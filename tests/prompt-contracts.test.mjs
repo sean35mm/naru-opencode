@@ -227,6 +227,35 @@ async function main() {
   }
 
   for (const requiredText of [
+    '## Adaptive Delegate-First Analysis Policy',
+    'The modes are `auto`, `lean`, `thorough`, `foreground`, and `off`',
+    'use `auto` when none is given',
+    'For every material task, dispatch at least one useful read-only worker before the dependent decision or record exactly one typed skip reason',
+    '`mode-off`, `not-material`, `no-useful-independent-lens`, and `safety-blocked`',
+    'Capacity is a deferral, not a skip reason',
+    '`lean` selects at most one highest-value read-only worker and never uses best-of-2',
+    '`thorough` may select complementary relevant lenses and at most one independent best-of-2 pair',
+    '`foreground` uses the `auto` selection rules',
+    '`off` disables discretionary read-only analysis',
+    'Select by exact task shape, not keywords',
+    'Unknown files, symbols, ownership, or execution paths: Scout',
+    'Uncertain behavior or root cause: Investigate',
+    'use Debug instead when targeted command execution is necessary',
+    'otherwise high-consequence decisions: Architect',
+    'an explicitly read-only Verify-preparation child, never final verification',
+    'launch each selected independent read-only child in the background as soon as the small shared base packet for that child exists',
+    'Best-of-2 means two fresh read-only children receive the same bounded decision question',
+    'Use at most one such pair for the entire request',
+    'synthesize rather than vote',
+    'Stop analysis dispatch as soon as the implementation scope and dependent decisions have sufficient evidence',
+    'at most two active Implement writers, at most two active read-only children, and at most four total active Naru children',
+    'a best-of-2 pair consumes both read-only slots',
+    'never force fan-out, Sol xhigh, or worktrees',
+  ]) {
+    if (!orchestrator.includes(requiredText)) fail(`naru-orchestrator missing adaptive delegation contract: ${requiredText}`);
+  }
+
+  for (const requiredText of [
     'Handle review intent before implementation classification or dispatch',
     'A PR reference by itself is not an implementation request',
     'review-only request',
@@ -440,6 +469,52 @@ async function main() {
     '"finalCheckpoint"',
   ]) {
     if (!judge.includes(requiredText)) fail(`naru-minion-judge missing exact-candidate judgment contract: ${requiredText}`);
+  }
+
+  for (const requiredText of [
+    '## Scheduling Protocol 3: Opt-In Runtime Gates',
+    'runtime scheduler defaults to `off`',
+    'In `off`, do not call `naru-scheduler`, do not add admission markers',
+    'Use `schedulingProtocol: 3` only when the parsed runtime scheduler mode is `observe` or `enforce`',
+    'exact `naru-scheduler` tool permission',
+    '`naru-admit:v1:<lane>:<tokenId>`',
+    'The `writer` lane is only for Implement',
+    'the `read-only` lane is for Scout, Investigate, Architect, Debug, Verify, and Judge',
+    'In `observe`, scheduler and plugin validation is fail-open',
+    'In `enforce`, the same checks are fail-closed',
+    'Enforce mode rejects Protocol 2',
+    '`evidence` correlates one predeclared `reportId`',
+    '`terminal` correlates one predeclared Implement `reportId`',
+    '`candidate` is allowed only at quiescence',
+    '`shard` correlates a predeclared Verify `reportId`',
+    '`judgment` correlates a predeclared Judge `reportId`',
+    '`gate` records `verification`, `judgment`, or `completion`',
+    'Predeclare `reportId` and the expected artifact ID',
+    'Runtime enforcement is intentionally limited',
+    'process-local',
+    'non-durable',
+    'not cross-process',
+    'does not create sessions, inspect Git, capture baselines, prove that a report is truthful',
+    'two-writer/two-read-only/four-child limits',
+    'three-pass judge budget',
+    'never describe Protocol 3 as a general sandbox or complete enforcement boundary',
+  ]) {
+    if (!orchestrator.includes(requiredText)) fail(`naru-orchestrator missing Protocol 3 contract: ${requiredText}`);
+  }
+  if (!orchestrator.includes('  naru-scheduler: allow')) {
+    fail('naru-orchestrator missing exact naru-scheduler permission');
+  }
+  for (const [name, text] of [['implement', implement], ['verify', verify], ['judge', judge]]) {
+    for (const requiredText of [
+      '## Protocol 3 Correlation',
+      '`reportId`',
+      '`admissionTokenId`',
+      'Do not call `naru-scheduler`',
+      '`schedulerCorrelation` to `null`',
+    ]) {
+      if (!text.includes(requiredText)) fail(`naru-minion-${name} missing Protocol 3 report correlation: ${requiredText}`);
+    }
+    if (text.includes('  naru-scheduler: allow')) fail(`naru-minion-${name} unexpectedly gained scheduler permission`);
   }
 
   for (const role of ['scout', 'investigate', 'architect', 'implement', 'debug', 'verify', 'judge']) {

@@ -275,6 +275,172 @@
       "prohibitedActions": ["review before delivery", "post stale review", "concurrent post"]
     }
   ],
+  "adaptiveDelegationCases": [
+    {
+      "id": "adaptive-auto-discovery-background",
+      "scenario": "Auto mode starts discovery as soon as its bounded packet exists.",
+      "policy": { "mode": "auto", "material": true, "taskShape": "discovery" },
+      "packet": { "availableAt": 1, "dispatchAt": 1 },
+      "decision": { "status": "delegated", "selected": ["naru-minion-scout"], "launch": "background", "skipReason": null },
+      "prohibitedActions": ["wait for complete implementation plan", "keyword-only selection"],
+      "expected": { "dispatchWhenPacketExists": true, "disposition": "background-discovery" }
+    },
+    {
+      "id": "adaptive-auto-diagnosis-selection",
+      "scenario": "Behavioral uncertainty selects investigation rather than unrelated discovery or architecture.",
+      "policy": { "mode": "auto", "material": true, "taskShape": "diagnosis" },
+      "decision": { "status": "delegated", "selected": ["naru-minion-investigate"], "launch": "background", "skipReason": null },
+      "prohibitedActions": ["select scout for known files", "select architect without structural consequence"],
+      "expected": { "exactWorker": "naru-minion-investigate", "disposition": "shape-selected" }
+    },
+    {
+      "id": "adaptive-auto-command-diagnosis-selection",
+      "scenario": "A diagnosis that requires targeted command evidence selects the read-only diagnostic role.",
+      "policy": { "mode": "auto", "material": true, "taskShape": "command-diagnosis" },
+      "decision": { "status": "delegated", "selected": ["naru-minion-debug"], "launch": "background", "skipReason": null },
+      "prohibitedActions": ["ask investigate to execute commands", "edit from diagnostic child"],
+      "expected": { "exactWorker": "naru-minion-debug", "disposition": "shape-selected" }
+    },
+    {
+      "id": "adaptive-auto-structural-selection",
+      "scenario": "A cross-module API decision selects architecture analysis.",
+      "policy": { "mode": "auto", "material": true, "taskShape": "structural" },
+      "decision": { "status": "delegated", "selected": ["naru-minion-architect"], "launch": "background", "skipReason": null },
+      "prohibitedActions": ["mandatory all-lens fan-out", "automatic xhigh escalation"],
+      "expected": { "exactWorker": "naru-minion-architect", "disposition": "shape-selected" }
+    },
+    {
+      "id": "adaptive-auto-check-design-selection",
+      "scenario": "Known scope with an unresolved check-design question selects preparation, not final verification.",
+      "policy": { "mode": "auto", "material": true, "taskShape": "check-design" },
+      "decision": { "status": "delegated", "selected": ["naru-minion-verify"], "launch": "background", "verifyMode": "preparation", "skipReason": null },
+      "prohibitedActions": ["run final verification against moving workspace", "treat preparation as readiness"],
+      "expected": { "exactWorker": "naru-minion-verify", "verifyMode": "preparation", "disposition": "shape-selected" }
+    },
+    {
+      "id": "adaptive-lean-highest-value-one",
+      "scenario": "Lean mode chooses only the lens that resolves the blocking decision in a mixed task.",
+      "policy": { "mode": "lean", "material": true, "taskShape": "mixed" },
+      "candidates": ["naru-minion-scout", "naru-minion-architect"],
+      "decision": { "status": "delegated", "selected": ["naru-minion-architect"], "launch": "background", "bestOf2Pairs": 0, "skipReason": null },
+      "prohibitedActions": ["select more than one read-only worker", "best-of-2"],
+      "expected": { "maxSelectedReadOnly": 1, "disposition": "lean-minimum" }
+    },
+    {
+      "id": "adaptive-thorough-single-best-of-two",
+      "scenario": "Thorough mode may compare one consequential design decision with one independent pair.",
+      "policy": { "mode": "thorough", "material": true, "taskShape": "structural-ambiguous" },
+      "decision": {
+        "status": "delegated",
+        "selected": ["naru-minion-architect", "naru-minion-architect"],
+        "launch": "background",
+        "bestOf2": { "pairs": 1, "freshChildren": 2, "childIds": ["architect-option-a", "architect-option-b"], "sameBoundedQuestion": true, "independentPackets": true, "synthesis": "compare-evidence-not-vote" },
+        "skipReason": null
+      },
+      "prohibitedActions": ["second best-of-2 pair", "best-of-2 writers", "automatic xhigh escalation"],
+      "expected": { "maxBestOf2Pairs": 1, "maxConcurrentReadOnly": 2, "disposition": "single-independent-pair" }
+    },
+    {
+      "id": "adaptive-foreground-no-background",
+      "scenario": "Foreground mode uses auto task-shape selection but waits for the selected read-only result.",
+      "policy": { "mode": "foreground", "material": true, "taskShape": "diagnosis" },
+      "decision": { "status": "delegated", "selected": ["naru-minion-investigate"], "launch": "foreground", "skipReason": null },
+      "prohibitedActions": ["background launch", "skip dependent evidence"],
+      "expected": { "usesAutoSelection": true, "disposition": "foreground-analysis" }
+    },
+    {
+      "id": "adaptive-off-typed-skip",
+      "scenario": "Off mode disables discretionary read-only analysis without disabling required implementation stages.",
+      "policy": { "mode": "off", "material": true, "taskShape": "structural" },
+      "decision": { "status": "skipped", "selected": [], "launch": "none", "skipReason": { "code": "mode-off", "detail": "The user explicitly disabled discretionary read-only analysis." } },
+      "requiredStages": ["naru-minion-implement", "naru-minion-verify", "naru-minion-judge"],
+      "prohibitedActions": ["disable required implementation stages", "untyped skip"],
+      "expected": { "disposition": "typed-skip" }
+    },
+    {
+      "id": "adaptive-known-scope-no-useful-lens",
+      "scenario": "A clear mechanical change does not invent read-only work solely to fan out.",
+      "policy": { "mode": "auto", "material": true, "taskShape": "known-mechanical" },
+      "decision": { "status": "skipped", "selected": [], "launch": "none", "skipReason": { "code": "no-useful-independent-lens", "detail": "Scope, behavior, and check path are already clear." } },
+      "prohibitedActions": ["forced fan-out", "invent discovery", "create worktree"],
+      "expected": { "disposition": "typed-skip" }
+    },
+    {
+      "id": "adaptive-non-material-typed-skip",
+      "scenario": "A non-material request records why adaptive analysis did not activate.",
+      "policy": { "mode": "auto", "material": false, "taskShape": "trivial" },
+      "decision": { "status": "skipped", "selected": [], "launch": "none", "skipReason": { "code": "not-material", "detail": "The request has no non-obvious implementation decision." } },
+      "prohibitedActions": ["forced delegation", "untyped skip"],
+      "expected": { "disposition": "typed-skip" }
+    },
+    {
+      "id": "adaptive-safety-blocked-typed-skip",
+      "scenario": "A useful lens that would require prohibited secret access stops with a task-specific safety reason.",
+      "policy": { "mode": "auto", "material": true, "taskShape": "diagnosis" },
+      "decision": { "status": "skipped", "selected": [], "launch": "none", "skipReason": { "code": "safety-blocked", "detail": "The only proposed evidence requires prohibited secret access." } },
+      "prohibitedActions": ["read secret material", "replace safety with forced fan-out"],
+      "expected": { "disposition": "typed-skip" }
+    },
+    {
+      "id": "adaptive-early-stop-and-caps",
+      "scenario": "Sufficient first evidence stops further dispatch even when slots remain available.",
+      "policy": { "mode": "auto", "material": true, "taskShape": "discovery" },
+      "timeline": [
+        { "at": 0, "event": "packet-ready" },
+        { "at": 1, "event": "start-background", "selected": ["naru-minion-scout"] },
+        { "at": 2, "event": "sufficient-evidence" },
+        { "at": 3, "event": "stop-dispatch", "selected": [] }
+      ],
+      "decision": { "status": "delegated", "selected": ["naru-minion-scout"], "launch": "background", "skipReason": null },
+      "caps": { "maxConcurrentImplement": 2, "maxConcurrentReadOnly": 2, "maxTotalNaruChildren": 4 },
+      "prohibitedActions": ["fill unused slot", "replacement worker", "forced fan-out", "automatic xhigh escalation", "automatic worktree"],
+      "expected": { "stoppedAfterSufficientEvidence": true, "disposition": "early-stop" }
+    }
+  ],
+  "protocol3Cases": [
+    {
+      "id": "protocol3-off-keeps-protocol2",
+      "mode": "off",
+      "schedulingProtocol": 2,
+      "events": ["prompt-workflow"],
+      "prohibitedActions": ["call naru-scheduler", "add admission marker", "claim runtime enforcement"],
+      "expected": { "schedulerCalls": 0, "compatibilityPreserved": true, "disposition": "protocol2" }
+    },
+    {
+      "id": "protocol3-observe-fails-open",
+      "mode": "observe",
+      "schedulingProtocol": 3,
+      "fault": "missing admission marker",
+      "prohibitedActions": ["block otherwise authorized Task", "claim incident prevented execution"],
+      "expected": { "taskProceeds": true, "typedIncident": "missing_marker", "disposition": "observed" }
+    },
+    {
+      "id": "protocol3-enforce-fails-closed",
+      "mode": "enforce",
+      "schedulingProtocol": 3,
+      "faults": ["missing marker", "lane mismatch", "token replay", "stale revision"],
+      "prohibitedActions": ["start refused Task", "adapt Protocol 2"],
+      "expected": { "taskProceeds": false, "protocol2Accepted": false, "disposition": "refused" }
+    },
+    {
+      "id": "protocol3-correlated-quality-gates",
+      "mode": "enforce",
+      "schedulingProtocol": 3,
+      "artifactOrder": ["terminal", "candidate", "shard", "verification-gate", "judgment", "judgment-gate", "completion-gate"],
+      "correlation": ["runId", "reportId", "admissionTokenId", "workItemId", "candidateArtifactId", "candidateIdentity", "candidateStateDigest"],
+      "budgets": { "maxConcurrentWriters": 2, "maxConcurrentReadOnly": 2, "maxTotalChildren": 4, "maxJudgePasses": 3 },
+      "prohibitedActions": ["candidate while writer active", "shared shard mutable resource", "completion without ready judgment", "fourth judge pass"],
+      "expected": { "allVerificationNeedsCovered": true, "finalIdentityExact": true, "disposition": "gated" }
+    },
+    {
+      "id": "protocol3-honest-process-local-limit",
+      "mode": "enforce",
+      "schedulingProtocol": 3,
+      "capability": { "processLocal": true, "synchronousTaskHook": true, "durable": false, "crossProcess": false, "createsSessions": false, "inspectsGit": false, "provesReports": false, "authoritativeBackgroundCompletion": false },
+      "prohibitedActions": ["call scheduler a sandbox", "claim cross-process enforcement", "infer truthful reports from IDs"],
+      "expected": { "promptGatesStillRequired": true, "disposition": "limited-enforcement" }
+    }
+  ],
   "implementationSchedulingCases": [
     {
       "id": "scheduler-rolling-refill-timeline",

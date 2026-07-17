@@ -188,6 +188,73 @@ export function sidebarOverflowLine(count) {
   return sidebarLine(`+${truncateText(value, 6)} more · /naru-minions`)
 }
 
+function schedulerMode(telemetry) {
+  const mode = sanitizeText(telemetry?.mode).toUpperCase()
+  return mode || 'UNKNOWN'
+}
+
+export function schedulerHeaderLine(telemetry) {
+  if (!telemetry) return ''
+  return sidebarLine(`Scheduler · ${schedulerMode(telemetry)} · local`)
+}
+
+export function schedulerCountsLine(telemetry) {
+  if (!telemetry) return ''
+  const counts = telemetry.counts ?? {}
+  return sidebarLine(`Live ${counts.live ?? 0} · Pend ${counts.pending ?? 0} · Block ${counts.blocked ?? 0}`)
+}
+
+export function schedulerBudgetLine(telemetry) {
+  if (!telemetry) return ''
+  const budget = telemetry.budget ?? {}
+  const usage = budget.usage ?? {}
+  const limits = budget.limits ?? {}
+  return sidebarLine(`Local budget ${budget.pressure ?? 'unknown'} · ${usage.totalChildren ?? 0}/${limits.maxTotalChildren ?? 0}`)
+}
+
+export function schedulerQualityLine(telemetry) {
+  if (!telemetry) return ''
+  return sidebarLine(`Quality gate · ${telemetry.qualityGate?.status ?? 'unknown'}`)
+}
+
+export function schedulerBlockedLine(telemetry, now = Date.now()) {
+  const blocked = telemetry?.oldestBlocked
+  if (!blocked) return ''
+  const age = Number.isSafeInteger(blocked.since) ? ageText(blocked.since, now) : 'age unknown'
+  return sidebarLine(`Oldest block · ${blocked.workItemId} · ${age}`)
+}
+
+export function schedulerActorsLine(telemetry) {
+  const actors = telemetry?.actors ?? []
+  if (actors.length === 0) return ''
+  const values = actors.slice(0, 2).map((actor) => (
+    `${shortAgent(actor.agent)} A${actor.active ?? 0}/E${actor.artifacts ?? 0}`
+  ))
+  if ((telemetry.omittedActorCount ?? 0) > 0 || actors.length > 2) values.push('+more')
+  return sidebarLine(`Roles · ${values.join(' · ')}`)
+}
+
+export function schedulerDialogTitle(telemetry) {
+  if (!telemetry) return ''
+  const counts = telemetry.counts ?? {}
+  return truncateText(
+    `Scheduler ${schedulerMode(telemetry)} local · L:${counts.live ?? 0} P:${counts.pending ?? 0} B:${counts.blocked ?? 0}`,
+    61,
+  )
+}
+
+export function schedulerDialogMetadata(telemetry) {
+  if (!telemetry) return ''
+  const budget = telemetry.budget ?? {}
+  const usage = budget.usage ?? {}
+  const limits = budget.limits ?? {}
+  const blocked = telemetry.oldestBlocked?.workItemId ?? 'none'
+  return truncateText(
+    `Process-local budget: ${budget.pressure ?? 'unknown'} ${usage.totalChildren ?? 0}/${limits.maxTotalChildren ?? 0} · Quality: ${telemetry.qualityGate?.status ?? 'unknown'} · Oldest blocked: ${blocked}`,
+    100,
+  )
+}
+
 function canonicalAgent(value) {
   if (typeof value !== 'string') return undefined
   if (isManagedRoutingAlias(value)) return canonicalAgentForRoute(value)

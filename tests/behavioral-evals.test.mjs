@@ -27,6 +27,18 @@ function schedulingCaseByID(id) {
   return item;
 }
 
+function adaptiveCaseByID(id) {
+  const item = fixture.adaptiveDelegationCases.find((entry) => entry.id === id);
+  assert.ok(item, `missing adaptive delegation fixture case: ${id}`);
+  return item;
+}
+
+function protocol3CaseByID(id) {
+  const item = fixture.protocol3Cases.find((entry) => entry.id === id);
+  assert.ok(item, `missing Protocol 3 fixture case: ${id}`);
+  return item;
+}
+
 function reviewPostingCaseByID(id) {
   const item = fixture.reviewPostingCases.find((entry) => entry.id === id);
   assert.ok(item, `missing review posting fixture case: ${id}`);
@@ -83,6 +95,150 @@ test('implementation scheduling corpus keeps schema v1 and covers bounded concur
       assert.ok(entry.expected.maxConcurrentImplement <= 2, `${entry.id} respects writer cap`);
     }
   }
+});
+
+test('adaptive delegation corpus covers every mode and enforces material-task decisions', () => {
+  const requiredIDs = [
+    'adaptive-auto-discovery-background',
+    'adaptive-auto-diagnosis-selection',
+    'adaptive-auto-command-diagnosis-selection',
+    'adaptive-auto-structural-selection',
+    'adaptive-auto-check-design-selection',
+    'adaptive-lean-highest-value-one',
+    'adaptive-thorough-single-best-of-two',
+    'adaptive-foreground-no-background',
+    'adaptive-off-typed-skip',
+    'adaptive-known-scope-no-useful-lens',
+    'adaptive-non-material-typed-skip',
+    'adaptive-safety-blocked-typed-skip',
+    'adaptive-early-stop-and-caps',
+  ];
+  assert.deepEqual(fixture.adaptiveDelegationCases.map((entry) => entry.id), requiredIDs);
+  assert.deepEqual(new Set(fixture.adaptiveDelegationCases.map((entry) => entry.policy.mode)), new Set([
+    'auto', 'lean', 'thorough', 'foreground', 'off',
+  ]));
+
+  const allowedSkipReasons = new Set(['mode-off', 'not-material', 'no-useful-independent-lens', 'safety-blocked']);
+  for (const entry of fixture.adaptiveDelegationCases) {
+    assert.ok(Array.isArray(entry.prohibitedActions) && entry.prohibitedActions.length, entry.id);
+    assert.equal(typeof entry.expected.disposition, 'string', entry.id);
+    if (entry.decision) {
+      const delegated = entry.decision.status === 'delegated';
+      assert.equal(delegated, entry.decision.selected.length > 0, entry.id);
+      if (entry.policy.material && !delegated) {
+        assert.ok(allowedSkipReasons.has(entry.decision.skipReason?.code), `${entry.id} has a typed skip reason`);
+        assert.equal(typeof entry.decision.skipReason.detail, 'string', entry.id);
+        assert.ok(entry.decision.skipReason.detail.length > 0, entry.id);
+      }
+    }
+  }
+});
+
+test('adaptive auto mode selects the exact useful role from task shape', () => {
+  const expectedRoles = new Map([
+    ['adaptive-auto-discovery-background', 'naru-minion-scout'],
+    ['adaptive-auto-diagnosis-selection', 'naru-minion-investigate'],
+    ['adaptive-auto-command-diagnosis-selection', 'naru-minion-debug'],
+    ['adaptive-auto-structural-selection', 'naru-minion-architect'],
+    ['adaptive-auto-check-design-selection', 'naru-minion-verify'],
+  ]);
+  for (const [id, role] of expectedRoles) {
+    const entry = adaptiveCaseByID(id);
+    assert.deepEqual(entry.decision.selected, [role], id);
+    assert.equal(entry.decision.skipReason, null, id);
+  }
+  assert.equal(adaptiveCaseByID('adaptive-auto-check-design-selection').decision.verifyMode, 'preparation');
+});
+
+test('adaptive modes bound selection, background behavior, and best-of-2', () => {
+  const lean = adaptiveCaseByID('adaptive-lean-highest-value-one');
+  assert.equal(lean.decision.selected.length, 1);
+  assert.equal(lean.decision.bestOf2Pairs, 0);
+
+  const thorough = adaptiveCaseByID('adaptive-thorough-single-best-of-two');
+  assert.equal(thorough.decision.bestOf2.pairs, 1);
+  assert.equal(thorough.decision.bestOf2.freshChildren, 2);
+  assert.equal(thorough.decision.bestOf2.sameBoundedQuestion, true);
+  assert.equal(thorough.decision.bestOf2.independentPackets, true);
+  assert.equal(thorough.expected.maxConcurrentReadOnly, 2);
+
+  const foreground = adaptiveCaseByID('adaptive-foreground-no-background');
+  assert.equal(foreground.decision.launch, 'foreground');
+  assert.equal(foreground.expected.usesAutoSelection, true);
+
+  const off = adaptiveCaseByID('adaptive-off-typed-skip');
+  assert.equal(off.decision.skipReason.code, 'mode-off');
+  assert.deepEqual(off.requiredStages, ['naru-minion-implement', 'naru-minion-verify', 'naru-minion-judge']);
+});
+
+test('adaptive delegation launches when its packet exists, stops early, and preserves all caps', () => {
+  const background = adaptiveCaseByID('adaptive-auto-discovery-background');
+  assert.equal(background.packet.dispatchAt, background.packet.availableAt);
+  assert.equal(background.decision.launch, 'background');
+
+  const stopped = adaptiveCaseByID('adaptive-early-stop-and-caps');
+  assert.deepEqual(stopped.timeline.map((entry) => entry.event), [
+    'packet-ready', 'start-background', 'sufficient-evidence', 'stop-dispatch',
+  ]);
+  assert.deepEqual(stopped.caps, {
+    maxConcurrentImplement: 2,
+    maxConcurrentReadOnly: 2,
+    maxTotalNaruChildren: 4,
+  });
+  assert.equal(stopped.expected.stoppedAfterSufficientEvidence, true);
+  for (const action of ['forced fan-out', 'automatic xhigh escalation', 'automatic worktree']) {
+    assert.ok(stopped.prohibitedActions.includes(action));
+  }
+});
+
+test('Protocol 3 corpus preserves off compatibility and distinct observe and enforce behavior', () => {
+  assert.deepEqual(fixture.protocol3Cases.map((entry) => entry.id), [
+    'protocol3-off-keeps-protocol2',
+    'protocol3-observe-fails-open',
+    'protocol3-enforce-fails-closed',
+    'protocol3-correlated-quality-gates',
+    'protocol3-honest-process-local-limit',
+  ]);
+  const off = protocol3CaseByID('protocol3-off-keeps-protocol2');
+  assert.equal(off.schedulingProtocol, 2);
+  assert.equal(off.expected.schedulerCalls, 0);
+  assert.equal(off.expected.compatibilityPreserved, true);
+
+  const observe = protocol3CaseByID('protocol3-observe-fails-open');
+  assert.equal(observe.expected.taskProceeds, true);
+  assert.equal(observe.expected.typedIncident, 'missing_marker');
+
+  const enforce = protocol3CaseByID('protocol3-enforce-fails-closed');
+  assert.equal(enforce.expected.taskProceeds, false);
+  assert.equal(enforce.expected.protocol2Accepted, false);
+});
+
+test('Protocol 3 quality gates expose bounded correlation without overstating enforcement', () => {
+  const gated = protocol3CaseByID('protocol3-correlated-quality-gates');
+  assert.deepEqual(gated.artifactOrder, [
+    'terminal', 'candidate', 'shard', 'verification-gate', 'judgment', 'judgment-gate', 'completion-gate',
+  ]);
+  assert.deepEqual(gated.budgets, {
+    maxConcurrentWriters: 2,
+    maxConcurrentReadOnly: 2,
+    maxTotalChildren: 4,
+    maxJudgePasses: 3,
+  });
+  assert.equal(gated.expected.allVerificationNeedsCovered, true);
+  assert.equal(gated.expected.finalIdentityExact, true);
+
+  const limited = protocol3CaseByID('protocol3-honest-process-local-limit');
+  assert.deepEqual(limited.capability, {
+    processLocal: true,
+    synchronousTaskHook: true,
+    durable: false,
+    crossProcess: false,
+    createsSessions: false,
+    inspectsGit: false,
+    provesReports: false,
+    authoritativeBackgroundCompletion: false,
+  });
+  assert.equal(limited.expected.promptGatesStillRequired, true);
 });
 
 test('review posting corpus keeps schema v1 and covers authorization, freshness, and topology', () => {

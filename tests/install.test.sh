@@ -15,6 +15,7 @@ mkdir -p "$FIXTURE/commands"
 mkdir -p "$FIXTURE/agents"
 mkdir -p "$FIXTURE/tools/naru-lib"
 mkdir -p "$FIXTURE/plugins"
+mkdir -p "$FIXTURE/scripts"
 
 # 5 commands
 touch "$FIXTURE/commands/naru-plan.md"
@@ -55,11 +56,11 @@ touch "$FIXTURE/agents/naru-review-tests-ci.md"
 touch "$FIXTURE/agents/naru-review-judge.md"
 
 touch "$FIXTURE/agents/naru-review-post.md"
-touch "$FIXTURE/agents/naru-orchestrator.md"
+cp "$ROOT/agents/naru-orchestrator.md" "$FIXTURE/agents/naru-orchestrator.md"
 touch "$FIXTURE/agents/naru-minion-scout.md"
 touch "$FIXTURE/agents/naru-minion-investigate.md"
 touch "$FIXTURE/agents/naru-minion-architect.md"
-touch "$FIXTURE/agents/naru-minion-implement.md"
+cp "$ROOT/agents/naru-minion-implement.md" "$FIXTURE/agents/naru-minion-implement.md"
 touch "$FIXTURE/agents/naru-minion-debug.md"
 touch "$FIXTURE/agents/naru-minion-verify.md"
 touch "$FIXTURE/agents/naru-minion-judge.md"
@@ -68,12 +69,17 @@ touch "$FIXTURE/agents/naru-minion-judge.md"
 touch "$FIXTURE/tools/naru-git-read.js"
 touch "$FIXTURE/tools/naru-github-read.js"
 touch "$FIXTURE/tools/naru-github-post-review.js"
+touch "$FIXTURE/tools/naru-scheduler.js"
 touch "$FIXTURE/tools/naru-lib/helper.js"
 touch "$FIXTURE/plugins/naru-delegate.js"
+touch "$FIXTURE/plugins/naru-scheduler.js"
 touch "$FIXTURE/plugins/naru-minions-dashboard.tsx"
 cp "$ROOT/plugins/naru-minions-dashboard-state.mjs" "$FIXTURE/plugins/naru-minions-dashboard-state.mjs"
-mkdir -p "$FIXTURE/scripts"
 cp "$ROOT/scripts/merge-tui-config.mjs" "$FIXTURE/scripts/merge-tui-config.mjs"
+touch "$FIXTURE/scripts/naru-live-eval.mjs"
+mkdir -p "$FIXTURE/tests/fixtures"
+touch "$FIXTURE/tests/fixtures/live-evals.json"
+touch "$FIXTURE/naru-runtime.example.json"
 
 PASS=0
 FAIL=0
@@ -97,6 +103,9 @@ if is_link "$T1/agents/naru-plan.md"; then pass "symlinked agent"; else fail "sy
 if is_file "$T1/tools/naru-git-read.js"; then pass "tool copy-pinned"; else fail "tool copy-pinned"; fi
 if is_dir "$T1/tools/naru-lib"; then pass "tool helper dir copy-pinned"; else fail "tool helper dir copy-pinned"; fi
 if is_file "$T1/plugins/naru-delegate.js"; then pass "delegate plugin installed by default"; else fail "delegate plugin installed by default"; fi
+if is_file "$T1/tools/naru-scheduler.js" && is_file "$T1/plugins/naru-scheduler.js"; then pass "scheduler runtime copy-pinned"; else fail "scheduler runtime copy-pinned"; fi
+if is_file "$T1/naru-runtime.example.json" && is_file "$T1/scripts/naru-live-eval.mjs" && is_file "$T1/scripts/live-evals.example.json"; then pass "runtime example and evaluation assets copy-pinned"; else fail "runtime example and evaluation assets copy-pinned"; fi
+if [ "$(grep -c '^  naru-scheduler: allow$' "$T1/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -q '^  naru-scheduler: allow$' "$T1/agents/naru-minion-implement.md"; then pass "global root and delegated scheduler permissions"; else fail "global root and delegated scheduler permissions"; fi
 if [ ! -e "$T1/plugins/naru-minions-dashboard.tsx" ]; then pass "dashboard omitted by default"; else fail "dashboard omitted by default"; fi
 if [ ! -e "$T1/commands/naru" ] && [ ! -e "$T1/agents/naru" ]; then pass "no old loader paths"; else fail "no old loader paths"; fi
 
@@ -114,6 +123,7 @@ PROJECT="$TMP/project"
 mkdir -p "$PROJECT"
 (cd "$PROJECT" && "$FIXTURE/install.sh" --project >/dev/null)
 if is_link "$PROJECT/.opencode/commands/naru-plan.md"; then pass "project install"; else fail "project install"; fi
+if [ "$(grep -c '^  naru-scheduler: allow$' "$PROJECT/.opencode/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -q '^  naru-scheduler: allow$' "$PROJECT/.opencode/agents/naru-minion-implement.md"; then pass "project root and delegated scheduler permissions"; else fail "project root and delegated scheduler permissions"; fi
 
 # 3. Paths with spaces.
 T3="$TMP/path with spaces/target"

@@ -40,6 +40,7 @@ Do not allow or invoke:
 - Any workflow specialist or judge such as `naru-plan-architecture` or `naru-review-judge`.
 - Any generated `naru-delegate-luna-*`, `naru-delegate-sol-*`, or `naru-delegate-sol-xhigh-*` alias, or legacy `naru-delegate-deep-*` route.
 - `naru-orchestrator` as a Task target.
+- `naru-scheduler`; it is an exact tool permission reserved for the directly selected `naru-orchestrator`, not a Task target or custom-agent integration API.
 
 This boundary is especially important because minion permissions differ by role: static analysts are read-only, Debug/Verify can run targeted checks, and Implement can edit. Every generated Luna, Sol, or Sol-xhigh alias clones its source role's permission map. Keep custom-agent integration limited to the four top-level read-only Core workflows above; never expose minions or any generated alias through the caller's Task map.
 
@@ -68,6 +69,14 @@ Delegate only when the user explicitly requests one of these activities. Do not 
 
 `naru-orchestrator` is a visible primary agent for implementation work. Users select it in OpenCode's UI, configure `"default_agent": "naru-orchestrator"`, or launch `opencode --agent naru-orchestrator`. It is not a supported Task target for custom-agent integration, and custom agents must not route around its approval-aware implementation workflow by calling minions directly.
 
+The selected orchestrator delegates through OpenCode's native Task implementation in the current workspace. Its adaptive `auto`, `lean`, `thorough`, `foreground`, and `off` analysis preferences do not change authorization or grant custom callers new targets. Runtime scheduler `off`, `observe`, and `enforce` modes likewise do not authorize custom agents, create worktrees, or move work to a cloud service.
+
+## Global/project and child permission layers
+
+OpenCode may load Naru definitions from global and project configuration, and policy applies to both the root and its delegated child sessions. Verify all four effective contexts after combining installations: root/global, root/project, delegated/global, and delegated/project. Project configuration should remain scoped to the current workspace. Changing an external global configuration requires the user's explicit approval.
+
+In every context, only the directly selected `naru-orchestrator` may have the exact `naru-scheduler` tool allow. Minions, generated aliases, and custom callers must not gain it. Scheduler admissions and quality artifacts are internal Protocol 3 correlation, not a public API and not proof that a report or workspace is correct. Observe is fail-open; enforce is fail-closed only at the compatible process-local synchronous native Task hook. Neither is durable, cross-process, an authoritative background-completion signal, or a provider/global concurrency boundary.
+
 ## Agents without Task access
 
 If a custom agent cannot call Task, use instruction-only fallback behavior:
@@ -91,6 +100,7 @@ For implementation, select the `naru-orchestrator` primary agent and repeat the 
 - Treat every Naru report as advisory and potentially incomplete. Validate material claims before acting on them.
 - A read-only report does not authorize edits, commands, dependency changes, Git mutations, migrations, database access, posting, or deployment.
 - Custom agents must never invoke Luna, Sol, Sol-xhigh aliases, or minions directly, even if an alias is visible. Their permissions are role-specific and their route gate applies only inside Naru's native Task workflow.
+- Custom agents must never call `naru-scheduler`, add or reconstruct an admission marker, or claim a Protocol 3 artifact. Scheduler authority remains exact and orchestrator-only.
 - Preserve the user's existing approval boundaries. Never convert a recommendation into implementation or a GitHub mutation without the approval required by the calling agent.
 - A custom agent cannot turn a prior dry-run report, pasted payload, or user phrase into a Naru posting call; direct users must switch to a supported root posting path, which acquires a fresh review.
 - Do not imply that a Task call executed a slash command. Report the actual delegated agent and whether it completed, failed, or returned degraded coverage.

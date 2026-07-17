@@ -6,9 +6,9 @@
 #
 # Defaults to a global symlinked install into ~/.config/opencode. Markdown
 # command/agent files are symlinked individually so a git pull keeps them
-# current. Executable custom tools, helper directories, and the optional
-# model-routing and dashboard plugins are always copy-pinned; rerun ./install.sh after git pull
-# to update those executables.
+# current. Executable custom tools, helper directories, runtime plugins, and
+# the optional dashboard plugin are always copy-pinned; rerun ./install.sh
+# after git pull to update those executables.
 set -eu
 
 SRC_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
@@ -103,7 +103,7 @@ case "${SRC_DIR}/" in
     ;;
 esac
 
-for managed in commands agents tools plugins .naru-backups .naru-staging; do
+for managed in commands agents tools plugins scripts .naru-backups .naru-staging; do
   if [ -L "${TARGET}/${managed}" ]; then
     echo "install.sh: refusing symlinked loader or managed directory: ${TARGET}/${managed}" >&2
     exit 1
@@ -199,10 +199,18 @@ add_md "${SRC_DIR}/agents/naru-minion-judge.md"  "agents/naru-minion-judge.md"
 add_copy "${SRC_DIR}/tools/naru-git-read.js"          "tools/naru-git-read.js"
 add_copy "${SRC_DIR}/tools/naru-github-read.js"       "tools/naru-github-read.js"
 add_copy "${SRC_DIR}/tools/naru-github-post-review.js" "tools/naru-github-post-review.js"
+add_copy "${SRC_DIR}/tools/naru-scheduler.js"         "tools/naru-scheduler.js"
 add_copy "${SRC_DIR}/tools/naru-lib"                  "tools/naru-lib"
 
-# Model-routing plugin (always copy-pinned and installed by default).
+# Runtime plugins (always copy-pinned and installed by default). The scheduler
+# remains inert unless naru-runtime.json explicitly selects observe or enforce.
 add_copy "${SRC_DIR}/plugins/naru-delegate.js" "plugins/naru-delegate.js"
+add_copy "${SRC_DIR}/plugins/naru-scheduler.js" "plugins/naru-scheduler.js"
+
+# Runtime configuration example and bounded local evaluation assets.
+add_copy "${SRC_DIR}/naru-runtime.example.json"         "naru-runtime.example.json"
+add_copy "${SRC_DIR}/scripts/naru-live-eval.mjs"        "scripts/naru-live-eval.mjs"
+add_copy "${SRC_DIR}/tests/fixtures/live-evals.json"    "scripts/live-evals.example.json"
 
 # Optional dashboard plugin (always copy-pinned).
 if [ "$WITH_DASHBOARD" = true ]; then
@@ -416,5 +424,5 @@ fi
 echo "Installed Naru into ${TARGET} (${MODE})"
 echo "Backups kept at ${BACKUP_DIR}"
 if [ "$MODE" = symlink ]; then
-  echo "Markdown files are symlinked; rerun ./install.sh after git pull to update copy-pinned tools, helpers, and plugins."
+  echo "Markdown files are symlinked; rerun ./install.sh after git pull to update copy-pinned runtime and evaluation assets."
 fi

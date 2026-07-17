@@ -17,6 +17,14 @@ import {
   parentTasks,
   routeText,
   sanitizeText,
+  schedulerActorsLine,
+  schedulerBlockedLine,
+  schedulerBudgetLine,
+  schedulerCountsLine,
+  schedulerDialogMetadata,
+  schedulerDialogTitle,
+  schedulerHeaderLine,
+  schedulerQualityLine,
   shortSessionID,
   sidebarDividerLine,
   sidebarHeaderLine,
@@ -29,6 +37,7 @@ import {
   truncateText,
   visibleActivityRows,
 } from "./naru-minions-dashboard-state.mjs"
+import { schedulerTelemetrySnapshot } from "../tools/naru-lib/scheduler-telemetry.mjs"
 
 const COMMAND = "naru.minions"
 const TITLE = "Naru Activity"
@@ -159,7 +168,13 @@ async function loadRows(api, sessionID) {
     }]
   }).sort((a, b) => statusRank(a.status) - statusRank(b.status) || (b.updated ?? 0) - (a.updated ?? 0))
 
-  return { rootID, rows }
+  let telemetry = null
+  try {
+    telemetry = schedulerTelemetrySnapshot(rootID)
+  } catch {
+    telemetry = null
+  }
+  return { rootID, rows, telemetry }
 }
 
 function showError(api, message) {
@@ -182,8 +197,8 @@ async function showMinions(api) {
     skipFilter: true,
   }))
   try {
-    const { rootID, rows } = await loadRows(api, sessionID)
-    const options = rows.length ? rows.map((row) => ({
+    const { rootID, rows, telemetry } = await loadRows(api, sessionID)
+    const activityOptions = rows.length ? rows.map((row) => ({
       title: compactRowTitle(row),
       value: row.id,
       description: compactRowMetadata(row),
@@ -192,6 +207,11 @@ async function showMinions(api) {
       value: DASHBOARD_SENTINELS.empty,
       description: "Unrelated Task children are intentionally hidden.",
     }]
+    const options = telemetry ? [{
+      title: schedulerDialogTitle(telemetry),
+      value: DASHBOARD_SENTINELS.empty,
+      description: schedulerDialogMetadata(telemetry),
+    }, ...activityOptions] : activityOptions
     api.ui.dialog.replace(() => api.ui.DialogSelect({
       title: `${TITLE} (${rows.length}) · ${compactLegend()}`,
       placeholder: `Filter children of ${shortSessionID(rootID)}`,
@@ -243,6 +263,7 @@ function registerCommand(api) {
 
 function NaruActivity(props) {
   const [rows, setRows] = createSignal([])
+  const [telemetry, setTelemetry] = createSignal(null)
   const [degraded, setDegraded] = createSignal(false)
   const [loading, setLoading] = createSignal(true)
   let debounce
@@ -253,6 +274,7 @@ function NaruActivity(props) {
     setLoading(true)
     if (!sessionID) {
       setRows([])
+      setTelemetry(null)
       setDegraded(false)
       setLoading(false)
       return
@@ -261,12 +283,14 @@ function NaruActivity(props) {
       const loaded = await loadRows(props.api, sessionID)
       if (current === generation) {
         setRows(loaded.rows)
+        setTelemetry(loaded.telemetry)
         setDegraded(false)
         setLoading(false)
       }
     } catch {
       if (current === generation) {
         setRows([])
+        setTelemetry(null)
         setDegraded(true)
         setLoading(false)
       }
@@ -294,6 +318,15 @@ function NaruActivity(props) {
   const omitted = () => hiddenCount(counts().active + counts().recent, visibleRows().length)
 
   return <box flexDirection="column" paddingTop={1}>
+    {telemetry() ? <box flexDirection="column">
+      <text><b>{schedulerHeaderLine(telemetry())}</b></text>
+      <text>{schedulerCountsLine(telemetry())}</text>
+      <text>{schedulerBudgetLine(telemetry())}</text>
+      <text>{schedulerQualityLine(telemetry())}</text>
+      {schedulerBlockedLine(telemetry()) ? <text>{schedulerBlockedLine(telemetry())}</text> : null}
+      {schedulerActorsLine(telemetry()) ? <text>{schedulerActorsLine(telemetry())}</text> : null}
+      <text>{sidebarDividerLine()}</text>
+    </box> : null}
     <text><b>{sidebarHeaderLine(counts().active, counts().recent)}</b></text>
     <text>{sidebarDividerLine()}</text>
     <For each={visibleRows()} fallback={<text>{sidebarLine(loading() ? "Loading activity..." : degraded() ? "Activity unavailable" : rows().length ? "No active or recent minions" : "No recognized Naru sessions")}</text>}>

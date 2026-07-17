@@ -19,7 +19,7 @@ cd naru-opencode
 ./install.sh
 ```
 
-The installer preflights and stages the complete release before replacing loader paths. Replaced content is retained in a timestamped `.naru-backups/` directory and restored if installation fails.
+The installer preflights and stages the complete release before replacing loader paths. Replaced content is retained in a timestamped `.naru-backups/` directory and restored if installation fails. It copies the scheduler tool/plugin, runtime libraries, `naru-runtime.example.json`, and local evaluation script/fixture, but does not create an active runtime configuration or enable scheduling.
 
 ### Global install
 
@@ -72,7 +72,7 @@ git pull
 ./install.sh --with-dashboard
 ```
 
-Even a symlink install must be rerun because tools, helpers, and plugins are copy-pinned. A `--copy` install is entirely stale until reinstalled. Restart OpenCode after reinstalling so active sessions reload routing and permissions.
+Even a symlink install must be rerun because tools, helpers, runtime/evaluation assets, and plugins are copy-pinned. A `--copy` install is entirely stale until reinstalled. Restart OpenCode after reinstalling so active sessions reload routing and permissions.
 
 ## Commands and primary agent
 
@@ -125,6 +125,38 @@ Every run, cohort, and item carries its baseline. Active-peer claims identify is
 
 After writers are finished, the candidate must be writer-free. The orchestrator may run up to two safe Verify shards, records a complete shard manifest, then asks Judge to assess the combined evidence and confirms an unchanged final checkpoint. Remediation, delivery, and review posting stay serialized. Todo status is phase-level presentation, while dashboard rows and Task descriptions report child activity; a terminal writer does not mean the overall implementation is complete.
 
+### Adaptive read-only analysis modes
+
+For implementation work, the orchestrator resolves one user preference or defaults to `auto`:
+
+- `auto` selects the smallest useful read-only analysis set and permits one justified best-of-2 comparison.
+- `lean` selects at most one highest-value read-only worker and never uses best-of-2.
+- `thorough` may use complementary relevant lenses and at most one best-of-2 pair within the normal caps; it does not launch every lens.
+- `foreground` applies `auto` selection but waits for that analysis before proceeding.
+- `off` disables only discretionary read-only analysis. Required Implement, final Verify, Judge, and canonical review work remain enabled.
+
+These modes do not change authorization, model eligibility, edit ownership, verification, judgment, scheduler mode, or review posting. For a material task the orchestrator either uses a useful read-only worker or records one bounded reason: `mode-off`, `not-material`, `no-useful-independent-lens`, or `safety-blocked`.
+
+### Optional Protocol 3 runtime
+
+The scheduler is installed but defaults to `off`. To configure a project-local current workspace, copy the installed example to `.opencode/naru-runtime.json` and change only the required fields. Do not modify a global OpenCode configuration without explicit approval.
+
+```sh
+cp .opencode/naru-runtime.example.json .opencode/naru-runtime.json
+```
+
+The `scheduler.mode` values are:
+
+- `off` — keep complete prompt-level Protocol 2 and retain no scheduler run or journal.
+- `observe` — use Protocol 3 state and admission markers, but record typed incidents and fail open when runtime admission validation cannot be satisfied. Protocol 2 can be observed only when `legacyProtocol2` is explicitly `observe`.
+- `enforce` — fail closed on incompatible capability, missing or invalid admission, replay, stale revision, claim conflict, expiry, or budget exhaustion. This mode requires `legacyProtocol2: "reject"` and refuses Protocol 2.
+
+Protocol 3 uses strict manifests, compare-and-swap revisions, one-time admission and transition tokens, and correlated `evidence`, `terminal`, `candidate`, `shard`, `judgment`, and `gate` artifacts. Verification, judgment, and completion gates require the declared exact candidate and bounded coverage. Default limits are two writers, two read-only children, four total children, three judge passes, 256 work items, a 256 KiB manifest, 64 KiB artifacts, and five-minute token lifetimes. `maxArtifactBytes` may be configured only from 1 KiB through 256 KiB; runtime configuration itself is limited to 64 KiB and must be regular non-symlinked JSON.
+
+The scheduler plugin intercepts the native Task `tool.execute.before` path; it does not replace Task or grant children scheduler authority. Only `naru-orchestrator` has the exact scheduler tool permission. Runtime state and its digest-linked journal are process-local, memory-only, non-durable, and bounded. Journal metadata redacts prompt, diff, path, directory, secret, token, authorization, command/output/content, and model-like fields; it retains at most 64 roots, 256 entries per root, and 4 KiB metadata per entry.
+
+These gates are not a sandbox. They do not create sessions, inspect Git, capture or compare baselines, prove report truth, infer model routes, authoritatively observe background completion, coordinate another process, or impose provider/global hard caps. Prompt-level authorization, routing, Weaver, scope containment, current-workspace ownership, no-worktree behavior, freshness, and final-state checks remain required.
+
 ## Activity dashboard
 
 Install the dashboard explicitly:
@@ -143,6 +175,7 @@ In OpenCode's full terminal TUI, the dashboard provides:
 - Canonical agent name and a `Luna`, `Terra`, `Sol`, `Sol xhigh`, `Sol floor`, or neutral `Routed` classification.
 - Provider, model, and variant from Task or child-message metadata. The UI shows `resolving` instead of guessing while metadata is unavailable.
 - The delegated Task description. Unrelated OpenCode Task children are omitted.
+- When a process-local scheduler run exists, a separate scheduler summary shows `OBSERVE` or `ENFORCE`, live/pending/blocked counts, local budget pressure, quality-gate progress, the oldest blocked item, and bounded evidenced actors. It is hidden when telemetry is absent and does not represent durable, cross-process, global, or provider state.
 
 The persistent card appears only while the standard session sidebar is open. `opencode --mini` does not host full-TUI plugins, so neither the dashboard nor `/naru-minions` is available there. Dashboard files are copy-pinned: rerun the installer with `--with-dashboard` for every loaded copy and restart OpenCode after dashboard changes.
 
@@ -266,6 +299,8 @@ cp plugins/naru-delegate.js ~/.config/opencode/plugins/
 
 For a project install, use `.opencode` in place of `~/.config/opencode`.
 
+To include the optional runtime and local evaluation assets in a manual install, also copy the scheduler tool/plugin, the complete current `tools/naru-lib` directory, the runtime example, evaluation script, and sanitized fixture while preserving their relative paths. Copy the example to `naru-runtime.json` only when intentionally enabling a mode.
+
 For a manual dashboard install, also copy both dashboard files and add `"./plugins/naru-minions-dashboard.tsx"` to the top-level `plugin` array in the active `tui.jsonc` or `tui.json`. Remove the old dashboard JS file and its exact registrations from every active TUI config before registering the TSX plugin. Restart OpenCode after a manual install.
 
 ## Complete safety model
@@ -301,9 +336,23 @@ For a manual dashboard install, also copy both dashboard files and add `"./plugi
 
 OpenCode auto mode automatically approves only configured `doom_loop` asks. Environment-file and secret reads remain denied. Allowed shell and external-directory access already run without prompting for Debug, Verify, and Implement. The validated review-posting boundary remains in force. Neither auto mode nor permissive runtime access makes repository code, package scripts, targets, secret access, or database-connected commands safe.
 
+### Permission layers and native Task
+
+Global and project OpenCode configuration can each contribute root-agent and delegated-session policy. Check all four effective contexts after combining installs: root/global, root/project, delegated/global, and delegated/project. In every context, only `naru-orchestrator` should have the exact `naru-scheduler` permission; minions and custom callers must not. Naru still delegates through native Task in the current workspace, and neither scheduler mode nor project configuration creates worktrees automatically.
+
+## Local evaluation
+
+The installed evaluator deterministically scores supplied, sanitized captured summaries against bounded budgets and rubrics:
+
+```sh
+node scripts/naru-live-eval.mjs --manifest tests/fixtures/live-evals.json --dry-run
+```
+
+From an installed config root, use the copy-pinned sample at `scripts/live-evals.example.json` instead. The manifest is limited to 256 KiB and 128 cases; each captured journal is limited to 128 entries and must omit prompts, code, diffs, raw source/patch fields, credentials, and tokens. The output is a local dry-run score plan. Despite the script name, there is no live provider/session execution, capture API, upload, or cloud evaluation path; invoking it without `--dry-run` is rejected.
+
 ## What Naru does not manage
 
-Naru does not modify your personal `AGENTS.md`, `opencode.json`, optional `naru-models.json`, unrelated OpenCode tools or plugins, or external agent-state systems.
+Naru does not modify your personal `AGENTS.md`, `opencode.json`, optional `naru-models.json` or `naru-runtime.json`, unrelated OpenCode tools or plugins, or external agent-state systems. The installer supplies examples and managed runtime files only.
 
 ## Troubleshooting
 
@@ -340,6 +389,10 @@ After updating Naru review-posting behavior, rerun the installer for every loade
 ### The dashboard is missing
 
 Reinstall with `--with-dashboard`, verify the TSX plugin is registered in the active TUI config, restart OpenCode, and use the full terminal TUI with the standard sidebar open. The dashboard does not run under `--mini`.
+
+### Scheduler telemetry is missing
+
+Telemetry appears only for a scheduler run in the same OpenCode process. Confirm `naru-runtime.json` selects `observe` or `enforce`, the scheduler and dashboard were both reinstalled, OpenCode was restarted, and a Protocol 3 run was created. A run in another process or a default-off session is intentionally invisible.
 
 ### Dashboard installation rejects TUI configuration
 

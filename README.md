@@ -5,6 +5,7 @@ Multi-agent workflows for [OpenCode](https://opencode.ai).
 - **Core** provides read-only planning, impact analysis, bug triage, and pull-request review workflows.
 - **Naru Minions** provides a visible `naru-orchestrator` primary agent for scoped implementation, debugging, verification, and judgment.
 - **Naru Delegate** exposes Luna, Terra, and Sol model-fit routes without replacing OpenCode's native Task permissions or child sessions.
+- **Naru Scheduler** optionally observes or enforces process-local Protocol 3 admission and quality gates; it is installed off by default.
 
 Built by [Naru Labs](https://github.com/sean35mm).
 
@@ -35,7 +36,7 @@ cd naru-opencode
 ./install.sh
 ```
 
-The default install targets `~/.config/opencode` and symlinks Markdown files. Use `./install.sh --project` from the target project for `.opencode`, `--dir PATH` for another config directory, `--copy` to copy Markdown, and `--with-dashboard` to install the optional TUI activity view. Rerun the installer with the same flags after updating Naru because tools and plugins are always copy-pinned, then restart OpenCode so active sessions reload routing and permissions.
+The default install targets `~/.config/opencode` and symlinks Markdown files. Use `./install.sh --project` from the target project for `.opencode`, `--dir PATH` for another config directory, `--copy` to copy Markdown, and `--with-dashboard` to install the optional TUI activity view. Rerun the installer with the same flags after updating Naru because tools, runtime helpers, evaluation assets, and plugins are always copy-pinned, then restart OpenCode so active sessions reload routing and permissions. The installer copies `naru-runtime.example.json` but does not create an active `naru-runtime.json`.
 
 See the [User guide](docs/user-guide.md) for installation, migration, configuration, dashboard, and troubleshooting details.
 
@@ -54,17 +55,33 @@ Naru Delegate is deterministic: it configures canonical Terra roles plus hidden 
 
 ## Activity dashboard
 
-`./install.sh --with-dashboard` adds a **Naru Activity** sidebar section and `/naru-minions` detail view to OpenCode's full terminal TUI. The sidebar conservatively bounds its status, counts, task, routing, and overflow lines for narrow standard sidebars. The detail view uses OpenCode's filterable `DialogSelect`: each compact fixed table-like row has aligned status, agent, age, and task columns plus labeled route, mode, model, and short-session metadata, while selection navigates with the full session ID. It is unavailable under `opencode --mini`. Reinstall with the same dashboard flag and restart OpenCode after routing or dashboard updates because dashboard code is copy-pinned.
+`./install.sh --with-dashboard` adds a **Naru Activity** sidebar section and `/naru-minions` detail view to OpenCode's full terminal TUI. The sidebar conservatively bounds its status, counts, task, routing, and overflow lines for narrow standard sidebars. When a local scheduler run exists, the same surfaces also show its mode, work counts, process-local budget pressure, quality-gate state, oldest blocked item, and evidenced actors. Telemetry is absent when no local run exists and is not a global or provider cap. It is unavailable under `opencode --mini`. Reinstall with the same dashboard flag and restart OpenCode after routing or dashboard updates because dashboard code is copy-pinned.
+
+## Adaptive analysis and optional runtime gates
+
+For implementation requests, `naru-orchestrator` defaults to adaptive `auto` analysis. Users may request `lean`, `thorough`, `foreground`, or `off`; these choices affect only discretionary read-only analysis, not authorization, required implementation, final verification, judgment, routing, or review posting. `auto` chooses the smallest useful lens, `lean` allows one, `thorough` may use complementary lenses or one justified best-of-2, and `foreground` applies `auto` before proceeding.
+
+Runtime scheduling is separately configured as `off`, `observe`, or `enforce` in `naru-runtime.json` beside the installed plugins. `off` keeps prompt-level Protocol 2. `observe` uses Protocol 3 but fails open after recording typed admission incidents. `enforce` fails closed on the same admission checks, rejects Protocol 2, and requires compatible synchronous runtime capability. Prefer current-workspace project configuration; changing global configuration requires explicit approval.
+
+Protocol 3 deterministically validates declared DAGs, claims, revisions, bounded admission tokens and artifacts, quiescence, verification coverage, judgment correlation, and exact-candidate completion gates. It still uses OpenCode's native Task path and preserves the two-writer, two-read-only, four-child, and three-judge-pass limits. The runtime is process-local, non-durable, and not cross-process; it does not create sessions, inspect Git, capture baselines, prove reports, authoritatively observe background completion, or impose provider-wide concurrency caps.
+
+The installed local evaluator currently supports deterministic dry-run scoring of sanitized captured summaries only:
+
+```sh
+node scripts/naru-live-eval.mjs --manifest tests/fixtures/live-evals.json --dry-run
+```
+
+Prompts, code, and diffs must be omitted. Live provider execution or capture is not implemented by this command.
 
 ## Full Ultra implementation scheduling
 
-Full Ultra is the orchestrator's implementation scheduling protocol, not a speed guarantee or runtime scheduler enforcement. It uses rolling cohorts of at most two independent writers in the current workspace, refilling a safely free slot immediately when useful. It may prepare up to two useful read-only tasks (four children total), but never forces fan-out or creates worktrees automatically.
+Full Ultra is the orchestrator's implementation scheduling policy, not a speed guarantee. With runtime mode `off`, Protocol 2 uses prompt-level rolling cohorts. In `observe` or `enforce`, Protocol 3 adds the bounded machine gates above without replacing prompt-level safety checks. Both use at most two independent writers in the current workspace, may prepare up to two useful read-only tasks (four children total), never force fan-out, and never create worktrees automatically.
 
 Each run, cohort, and item records a baseline and active-peer claims. Writer completion is provisional until its evidence remains valid; uncertainty freezes and drains the cohort. The final candidate is writer-free, receives up to two safe Verify shards with a complete shard manifest, then a Judge and an unchanged final checkpoint. Remediation, delivery, and review posting remain serialized. Todo states are phase-level presentation only: dashboard rows and Task descriptions show child activity, and a terminal writer is not final completion.
 
 ## Safety summary
 
-Core workflows are read-only and unchanged. Minion permissions fail closed by role: Scout, Investigate, Architect, and Judge are static read-only; Debug and Verify may run targeted shell checks but cannot edit; only Implement has scoped edit and shell permission. Generated aliases clone their canonical role's permission map. `naru-orchestrator` coordinates but does not edit.
+Core workflows are read-only and unchanged. Minion permissions fail closed by role: Scout, Investigate, Architect, and Judge are static read-only; Debug and Verify may run targeted shell checks but cannot edit; only Implement has scoped edit and shell permission. Generated aliases clone their canonical role's permission map. `naru-orchestrator` coordinates but does not edit and is the only agent granted the exact `naru-scheduler` tool permission; children cannot call it.
 
 For authorized local implementation work, ordinary Git/GitHub reads, Bash, Weaver coordination, and targeted checks do not require another prompt. Local changes are the default stopping point. An explicit current request to commit, push, open a PR, or post a GitHub review through `/naru-review-post` or the selected orchestrator authorizes that requested delivery without reconfirmation; migrations, persistent database writes, dependency changes outside scope, destructive operations, and material scope expansion remain consequential boundaries. Shell-enabled roles still must inspect package scripts or Make targets before execution because they can hide side effects.
 
@@ -92,10 +109,10 @@ Copy the exact permission fragment and full integration rules from the [Agent in
 commands/   five human-facing Core slash commands
 agents/     Core orchestrators/specialists and Naru Minions agents
 docs/       user-guide.md, agent-integration.md, development.md
-plugins/    central model routing and optional dashboard
-scripts/    safe TUI configuration merge helper
+plugins/    central model routing, optional scheduler runtime, and dashboard
+scripts/    safe TUI merge and local evaluation helpers
 tests/      routing, policy, prompt, dashboard, tool, and installer checks
-tools/      validated Git/GitHub tools and shared routing helpers
+tools/      validated Git/GitHub/scheduler tools and shared runtime helpers
 install.sh  transactional global, project, or custom-path installer
 ```
 

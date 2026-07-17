@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "local-runtime-evaluation",
+  "redaction": { "prompts": "omitted", "code": "omitted", "diffs": "omitted" },
+  "budgets": { "maxPeakConcurrency": 4, "maxElapsedMs": 60000, "maxChildCount": 4 },
+  "cases": [
+    {
+      "id": "narrow",
+      "scenario": "narrow-scope",
+      "budget": { "maxPeakConcurrency": 1, "maxElapsedMs": 10000, "maxChildCount": 1 },
+      "rubric": { "usefulDelegationRequired": false, "justifiedSkipRequired": true, "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false }, "remediationRequired": false, "checks": { "minimumPassed": 1, "maximumFailed": 0, "candidateValid": true } },
+      "capturedRun": { "mode": "auto", "elapsedMs": 100, "childCount": 0, "peakConcurrency": 0, "usefulDelegation": false, "justifiedSkip": true, "bestOf2": { "attempted": false, "disagreement": 0, "selected": false }, "remediation": { "required": false, "performed": false }, "incidents": { "race": 0, "schema": 0, "gate": 0, "authorization": 0 }, "checks": { "passed": 1, "failed": 0, "candidateInvalidated": false }, "journal": [{ "at": 1, "type": "skip", "outcome": "accepted" }, { "at": 2, "type": "check", "outcome": "passed" }] }
+    },
+    {
+      "id": "cross-boundary",
+      "scenario": "cross-boundary",
+      "budget": { "maxPeakConcurrency": 2, "maxElapsedMs": 20000, "maxChildCount": 2 },
+      "rubric": { "usefulDelegationRequired": true, "justifiedSkipRequired": false, "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false }, "remediationRequired": false, "checks": { "minimumPassed": 2, "maximumFailed": 0, "candidateValid": true } },
+      "capturedRun": { "mode": "auto", "elapsedMs": 200, "childCount": 1, "peakConcurrency": 1, "usefulDelegation": true, "justifiedSkip": false, "bestOf2": { "attempted": false, "disagreement": 0, "selected": false }, "remediation": { "required": false, "performed": false }, "incidents": { "race": 0, "schema": 0, "gate": 0, "authorization": 0 }, "checks": { "passed": 2, "failed": 0, "candidateInvalidated": false }, "journal": [{ "at": 1, "type": "delegation", "outcome": "accepted" }, { "at": 2, "type": "check", "outcome": "passed" }] }
+    },
+    {
+      "id": "ambiguous-best-of2",
+      "scenario": "ambiguous-best-of2",
+      "budget": { "maxPeakConcurrency": 2, "maxElapsedMs": 20000, "maxChildCount": 2 },
+      "rubric": { "usefulDelegationRequired": true, "justifiedSkipRequired": false, "bestOf2": { "required": true, "maxDisagreement": 1, "selectionRequired": true }, "remediationRequired": false, "checks": { "minimumPassed": 1, "maximumFailed": 0, "candidateValid": true } },
+      "capturedRun": { "mode": "thorough", "elapsedMs": 300, "childCount": 2, "peakConcurrency": 2, "usefulDelegation": true, "justifiedSkip": false, "bestOf2": { "attempted": true, "disagreement": 1, "selected": true }, "remediation": { "required": false, "performed": false }, "incidents": { "race": 0, "schema": 0, "gate": 0, "authorization": 0 }, "checks": { "passed": 1, "failed": 0, "candidateInvalidated": false }, "journal": [{ "at": 1, "type": "best-of-2", "outcome": "selected" }] }
+    },
+    {
+      "id": "rolling-refill",
+      "scenario": "rolling-refill",
+      "budget": { "maxPeakConcurrency": 2, "maxElapsedMs": 20000, "maxChildCount": 4 },
+      "rubric": { "usefulDelegationRequired": true, "justifiedSkipRequired": false, "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false }, "remediationRequired": false, "checks": { "minimumPassed": 1, "maximumFailed": 0, "candidateValid": true } },
+      "capturedRun": { "mode": "auto", "elapsedMs": 400, "childCount": 3, "peakConcurrency": 2, "usefulDelegation": true, "justifiedSkip": false, "bestOf2": { "attempted": false, "disagreement": 0, "selected": false }, "remediation": { "required": false, "performed": false }, "incidents": { "race": 0, "schema": 0, "gate": 0, "authorization": 0 }, "checks": { "passed": 1, "failed": 0, "candidateInvalidated": false }, "journal": [{ "at": 1, "type": "admission", "outcome": "accepted" }, { "at": 2, "type": "transition", "outcome": "completed" }] }
+    },
+    {
+      "id": "claim-conflict",
+      "scenario": "claim-conflict",
+      "budget": { "maxPeakConcurrency": 2, "maxElapsedMs": 20000, "maxChildCount": 2 },
+      "rubric": { "usefulDelegationRequired": false, "justifiedSkipRequired": true, "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false }, "remediationRequired": false, "checks": { "minimumPassed": 1, "maximumFailed": 0, "candidateValid": true } },
+      "capturedRun": { "mode": "auto", "elapsedMs": 250, "childCount": 1, "peakConcurrency": 1, "usefulDelegation": false, "justifiedSkip": true, "bestOf2": { "attempted": false, "disagreement": 0, "selected": false }, "remediation": { "required": false, "performed": false }, "incidents": { "race": 0, "schema": 0, "gate": 1, "authorization": 0 }, "checks": { "passed": 1, "failed": 0, "candidateInvalidated": false }, "journal": [{ "at": 1, "type": "admission", "outcome": "rejected" }] }
+    },
+    {
+      "id": "stale-evidence",
+      "scenario": "stale-evidence",
+      "budget": { "maxPeakConcurrency": 1, "maxElapsedMs": 20000, "maxChildCount": 1 },
+      "rubric": { "usefulDelegationRequired": false, "justifiedSkipRequired": false, "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false }, "remediationRequired": true, "checks": { "minimumPassed": 1, "maximumFailed": 1, "candidateValid": false } },
+      "capturedRun": { "mode": "auto", "elapsedMs": 250, "childCount": 0, "peakConcurrency": 0, "usefulDelegation": false, "justifiedSkip": false, "bestOf2": { "attempted": false, "disagreement": 0, "selected": false }, "remediation": { "required": true, "performed": true }, "incidents": { "race": 1, "schema": 0, "gate": 0, "authorization": 0 }, "checks": { "passed": 1, "failed": 1, "candidateInvalidated": true }, "journal": [{ "at": 1, "type": "candidate", "outcome": "invalidated" }, { "at": 2, "type": "remediation", "outcome": "completed" }] }
+    },
+    {
+      "id": "token-replay",
+      "scenario": "token-replay",
+      "budget": { "maxPeakConcurrency": 1, "maxElapsedMs": 10000, "maxChildCount": 1 },
+      "rubric": { "usefulDelegationRequired": false, "justifiedSkipRequired": true, "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false }, "remediationRequired": false, "checks": { "minimumPassed": 1, "maximumFailed": 0, "candidateValid": true } },
+      "capturedRun": { "mode": "off", "elapsedMs": 100, "childCount": 0, "peakConcurrency": 0, "usefulDelegation": false, "justifiedSkip": true, "bestOf2": { "attempted": false, "disagreement": 0, "selected": false }, "remediation": { "required": false, "performed": false }, "incidents": { "race": 0, "schema": 0, "gate": 0, "authorization": 1 }, "checks": { "passed": 1, "failed": 0, "candidateInvalidated": false }, "journal": [{ "at": 1, "type": "admission", "outcome": "rejected" }] }
+    },
+    {
+      "id": "reordered-lifecycle",
+      "scenario": "reordered-lifecycle",
+      "budget": { "maxPeakConcurrency": 1, "maxElapsedMs": 10000, "maxChildCount": 1 },
+      "rubric": { "usefulDelegationRequired": false, "justifiedSkipRequired": true, "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false }, "remediationRequired": false, "checks": { "minimumPassed": 1, "maximumFailed": 0, "candidateValid": true } },
+      "capturedRun": { "mode": "off", "elapsedMs": 100, "childCount": 0, "peakConcurrency": 0, "usefulDelegation": false, "justifiedSkip": true, "bestOf2": { "attempted": false, "disagreement": 0, "selected": false }, "remediation": { "required": false, "performed": false }, "incidents": { "race": 0, "schema": 1, "gate": 0, "authorization": 0 }, "checks": { "passed": 1, "failed": 0, "candidateInvalidated": false }, "journal": [{ "at": 1, "type": "transition", "outcome": "rejected" }] }
+    },
+    {
+      "id": "verification-after-mutation",
+      "scenario": "verification-after-mutation",
+      "budget": { "maxPeakConcurrency": 1, "maxElapsedMs": 10000, "maxChildCount": 1 },
+      "rubric": { "usefulDelegationRequired": false, "justifiedSkipRequired": false, "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false }, "remediationRequired": true, "checks": { "minimumPassed": 1, "maximumFailed": 1, "candidateValid": false } },
+      "capturedRun": { "mode": "foreground", "elapsedMs": 300, "childCount": 0, "peakConcurrency": 0, "usefulDelegation": false, "justifiedSkip": false, "bestOf2": { "attempted": false, "disagreement": 0, "selected": false }, "remediation": { "required": true, "performed": true }, "incidents": { "race": 1, "schema": 0, "gate": 0, "authorization": 0 }, "checks": { "passed": 1, "failed": 1, "candidateInvalidated": true }, "journal": [{ "at": 1, "type": "check", "outcome": "invalidated" }, { "at": 2, "type": "candidate", "outcome": "invalidated" }] }
+    },
+    {
+      "id": "budget-exhaustion",
+      "scenario": "budget-exhaustion",
+      "budget": { "maxPeakConcurrency": 2, "maxElapsedMs": 10000, "maxChildCount": 2 },
+      "rubric": { "usefulDelegationRequired": true, "justifiedSkipRequired": false, "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false }, "remediationRequired": false, "checks": { "minimumPassed": 1, "maximumFailed": 0, "candidateValid": true } },
+      "capturedRun": { "mode": "auto", "elapsedMs": 200, "childCount": 2, "peakConcurrency": 2, "usefulDelegation": true, "justifiedSkip": false, "bestOf2": { "attempted": false, "disagreement": 0, "selected": false }, "remediation": { "required": false, "performed": false }, "incidents": { "race": 0, "schema": 0, "gate": 1, "authorization": 0 }, "checks": { "passed": 1, "failed": 0, "candidateInvalidated": false }, "journal": [{ "at": 1, "type": "admission", "outcome": "rejected" }] }
+    },
+    {
+      "id": "mode-overrides",
+      "scenario": "mode-overrides",
+      "budget": { "maxPeakConcurrency": 1, "maxElapsedMs": 10000, "maxChildCount": 1 },
+      "rubric": { "usefulDelegationRequired": false, "justifiedSkipRequired": true, "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false }, "remediationRequired": false, "checks": { "minimumPassed": 1, "maximumFailed": 0, "candidateValid": true } },
+      "capturedRun": { "mode": "off", "elapsedMs": 100, "childCount": 0, "peakConcurrency": 0, "usefulDelegation": false, "justifiedSkip": true, "bestOf2": { "attempted": false, "disagreement": 0, "selected": false }, "remediation": { "required": false, "performed": false }, "incidents": { "race": 0, "schema": 0, "gate": 0, "authorization": 0 }, "checks": { "passed": 1, "failed": 0, "candidateInvalidated": false }, "journal": [{ "at": 1, "type": "skip", "outcome": "accepted" }] }
+    }
+  ]
+}

@@ -83,6 +83,12 @@ Before and after checks, require the observed candidate identity/state to match 
 
 An explicitly labeled `mode: preparation` packet is the only exception to waiting for quiescence. It is not verification and cannot satisfy a covered check. While writers are active, preparation may only inspect a future scope, manifest or target, unaffected dependency, or terminal report and produce a check plan; it cannot run final checks against the moving workspace. Report `evidenceId`, `observedPaths`, `basisIdentity`, `validityKeys`, and `invalidationKeys`; any changed observed path invalidates that evidence.
 
+## Protocol 3 Correlation
+
+When the packet uses `schedulingProtocol: 3`, require predeclared `runId`, `reportId`, `expectedArtifactId`, `admissionTokenId`, and the `read-only` lane. A preparation packet also predeclares `evidenceId`; a candidate shard packet also predeclares `shardId`, `candidateArtifactId`, `candidateIdentity`, and `candidateStateDigest`. Echo every value exactly in the report. Do not call `naru-scheduler`, alter its marker, invent IDs, append an artifact, or treat IDs and digests as evidence that the workspace matches.
+
+The orchestrator correlates a preparation report to an `evidence` artifact and a final verification report to a `shard` artifact. Source and check evidence still determines validity. Under Protocol 2, set `schedulerCorrelation` to `null`, emit the compatibility marker `"schedulingProtocol": 2`, and preserve the candidate-shard compatibility workflow.
+
 ## Output
 
 Do not implement fixes, edit files, or run broad test suites. Return only this structured report:
@@ -90,7 +96,7 @@ Do not implement fixes, edit files, or run broad test suites. Return only this s
 ```json
 {
   "agent": "naru-minion-verify",
-  "schedulingProtocol": 2,
+  "schedulingProtocol": "Exact packet scheduling protocol, 2 or 3.",
   "mode": "candidate-shard|preparation",
   "cohortId": "Verified cohort identifier, or single when no cohort is used.",
   "shardId": "Unique verification shard identifier.",
@@ -100,6 +106,14 @@ Do not implement fixes, edit files, or run broad test suites. Return only this s
   "coveredChecks": ["Checks assigned to this shard."],
   "observedPaths": ["Paths observed by this shard."],
   "mutableResourceClaims": ["Mutable resources exclusively claimed by this shard."],
+  "schedulerCorrelation": {
+    "runId": "Predeclared Protocol 3 run ID.",
+    "reportId": "Predeclared verification report ID.",
+    "admissionTokenId": "Read-only admission token ID from the packet.",
+    "expectedArtifactId": "Predeclared evidence or shard artifact ID.",
+    "candidateArtifactId": "Exact candidate artifact ID, or null for preparation.",
+    "candidateStateDigest": "Exact candidate state digest, or null for preparation."
+  },
   "candidateValidity": "exact-match|invalidated|blocked",
   "preparationEvidence": {
     "evidenceId": "Preparation evidence identifier, or null for a candidate shard.",

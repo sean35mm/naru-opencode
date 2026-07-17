@@ -88,6 +88,12 @@ When Weaver is available, every required exact owned path or glob claim must be 
 
 Concurrent writers may not commit, push, open or update a PR, post to GitHub, perform any delivery step, or run shared/repository-wide mutating commands such as repository-wide formatting or shared code generation. Do not start final verification, judgment, remediation, delivery, or review posting while any writer is active. If this invocation fails or leaves uncertain partial edits, report that state; never reset or revert the combined workspace automatically. Remediation and explicitly authorized delivery use later serialized packets.
 
+## Protocol 3 Correlation
+
+When the packet uses `schedulingProtocol: 3`, require `runId`, `reportId`, `expectedTerminalArtifactId`, `admissionTokenId`, and the `writer` lane in addition to the complete cohort contract. These values are predeclared correlation data. Echo them exactly in the terminal report. Do not call `naru-scheduler`, create replacement IDs, edit an admission marker, or claim that you appended an artifact. A missing or mismatched value is blocked before editing.
+
+The orchestrator appends the terminal artifact while this admission is active. Your report supplies the artifact's exact `outcome`, `changedPaths`, and terminal dependency report IDs. Protocol 3 does not relax Weaver claims, ownership containment, baseline preservation, scope boundaries, or any prohibited action. Under Protocol 2, set `schedulerCorrelation` to `null`, emit the compatibility marker `"schedulingProtocol": 2`, and preserve the compatibility workflow.
+
 ## Prohibited Actions
 
 Do not:
@@ -108,7 +114,7 @@ Return a structured report in this exact JSON shape:
 ```json
 {
   "agent": "naru-minion-implement",
-  "schedulingProtocol": 2,
+  "schedulingProtocol": "Exact packet scheduling protocol, 2 or 3.",
   "workItemId": "Packet work item identifier, or single when no cohort is used.",
   "cohortId": "Packet cohort identifier, or single when no cohort is used.",
   "runBaseline": "Exact immutable run baseline from the packet.",
@@ -123,6 +129,12 @@ Return a structured report in this exact JSON shape:
     "mutableResourceClaims": ["Mutable runtime resource claim."]
   },
   "activePeerClaims": ["Complete active peer claim records from dispatch."],
+  "schedulerCorrelation": {
+    "runId": "Predeclared Protocol 3 run ID.",
+    "reportId": "Predeclared terminal report ID.",
+    "admissionTokenId": "Admission token ID from the packet.",
+    "expectedArtifactId": "Predeclared terminal artifact ID."
+  },
   "outcome": "terminal-contained|blocked|failed|uncertain-partial",
   "summary": "What changed and why.",
   "changedPaths": ["Every path changed by this invocation; empty when blocked before editing."],

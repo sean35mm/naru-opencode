@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "scheduler": {
+    "mode": "off",
+    "maxConcurrentWriters": 2,
+    "maxConcurrentReadOnly": 2,
+    "maxTotalChildren": 4,
+    "maxJudgePasses": 3,
+    "maxWorkItems": 256,
+    "maxManifestBytes": 262144,
+    "maxArtifactBytes": 65536,
+    "admissionTokenTtlMs": 300000,
+    "transitionTokenTtlMs": 300000,
+    "legacyProtocol2": "reject"
+  }
+}
