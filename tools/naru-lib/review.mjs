@@ -32,6 +32,7 @@ const CONFIDENCE = ['High', 'Medium', 'Low'];
 const WORKFLOW_STATUSES = ['complete', 'partial', 'incomplete'];
 const SNAPSHOT_ID = /^naru-snap-[0-9a-f]{64}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
+const POSTING_AGENTS = new Set(['naru-review-post', 'naru-orchestrator']);
 
 function hash(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -218,6 +219,10 @@ async function currentSnapshot(payload, spawn) {
 }
 
 export async function postReview(rawPayload, context, { spawn } = {}) {
+  if (!context || typeof context !== 'object' || !POSTING_AGENTS.has(context.agent)) {
+    return errEnvelope('naru-github-post-review', 'caller agent identity mismatch');
+  }
+
   let payload;
   try {
     payload = validateReviewPayload(rawPayload);
@@ -225,9 +230,6 @@ export async function postReview(rawPayload, context, { spawn } = {}) {
     return errEnvelope('naru-github-post-review', `invalid input: ${safeError(error)}`);
   }
 
-  if (!context || typeof context !== 'object' || context.agent !== 'naru-review-post') {
-    return errEnvelope('naru-github-post-review', 'caller agent identity mismatch');
-  }
   if (payload.workflow.status === 'incomplete') {
     return errEnvelope('naru-github-post-review', 'review workflow is incomplete; refusing to post');
   }

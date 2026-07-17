@@ -17,6 +17,7 @@ const MAX_CONFIG_BYTES = 64 * 1024
 const MAX_SESSION_METADATA = 512
 const SESSION_METADATA_TTL_MS = 30 * 60 * 1000
 const NARU_AGENTS = new Set(NARU_AGENT_IDS)
+const ROOT_ONLY_NARU_AGENTS = new Set(['naru-orchestrator', 'naru-review-post'])
 const STATE_KEY = Symbol.for('naru.delegate.config-state.v1')
 const shared = globalThis[STATE_KEY] ?? { configs: new WeakMap() }
 shared.sessions ??= new Map()
@@ -270,6 +271,9 @@ export const NaruDelegatePlugin = async ({ client, directory }, options = {}) =>
     'tool.execute.before': async (input, output) => {
       if (input.tool !== 'task' || !output.args || typeof output.args !== 'object') return
       const target = output.args.subagent_type
+      if (ROOT_ONLY_NARU_AGENTS.has(target)) {
+        throw new Error(`${target} is root-only; use direct agent selection or its slash command`)
+      }
       if ((NARU_AGENTS.has(target) || isManagedRoutingAlias(target)) && output.args.task_id) {
         throw new Error('Naru Delegate requires a fresh child session; task_id resume is disabled')
       }

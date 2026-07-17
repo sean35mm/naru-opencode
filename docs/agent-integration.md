@@ -15,6 +15,8 @@ The only supported Task targets for custom-agent integration are these canonical
 
 They are read-only orchestrators that apply their own exact specialist allowlists and return synthesized reports.
 
+This custom-agent integration remains dry-run-only. It does not authorize the posting tool. Users who want to post must invoke `/naru-review-post` or directly select `naru-orchestrator` and make an explicit current post request; arbitrary Build, Plan, General, and custom agents cannot post through Naru.
+
 ## Required exact Task permissions
 
 Add this fragment to the custom agent's frontmatter. Keep the wildcard denial first and do not add Naru wildcards:
@@ -90,4 +92,5 @@ For implementation, select the `naru-orchestrator` primary agent and repeat the 
 - A read-only report does not authorize edits, commands, dependency changes, Git mutations, migrations, database access, posting, or deployment.
 - Custom agents must never invoke Luna, Sol, Sol-xhigh aliases, or minions directly, even if an alias is visible. Their permissions are role-specific and their route gate applies only inside Naru's native Task workflow.
 - Preserve the user's existing approval boundaries. Never convert a recommendation into implementation or a GitHub mutation without the approval required by the calling agent.
+- A custom agent cannot turn a prior dry-run report, pasted payload, or user phrase into a Naru posting call; direct users must switch to a supported root posting path, which acquires a fresh review.
 - Do not imply that a Task call executed a slash command. Report the actual delegated agent and whether it completed, failed, or returned degraded coverage.

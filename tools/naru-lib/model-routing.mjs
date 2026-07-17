@@ -116,6 +116,7 @@ export const NARU_DISPATCH_GRAPH = Object.freeze({
   ]),
   'naru-review-post': Object.freeze(['naru-review']),
   'naru-orchestrator': Object.freeze([
+    'naru-review',
     'naru-minion-scout',
     'naru-minion-investigate',
     'naru-minion-architect',
@@ -125,6 +126,16 @@ export const NARU_DISPATCH_GRAPH = Object.freeze({
     'naru-minion-judge',
   ]),
 });
+
+const ORCHESTRATOR_MODEL_ROUTED_TARGETS = Object.freeze([
+  'naru-minion-scout',
+  'naru-minion-investigate',
+  'naru-minion-architect',
+  'naru-minion-implement',
+  'naru-minion-debug',
+  'naru-minion-verify',
+  'naru-minion-judge',
+]);
 
 const AGENT_ID_SET = new Set(NARU_AGENT_IDS);
 const SOL_FLOOR_SET = new Set(SOL_FLOOR_ROLES);
@@ -279,7 +290,7 @@ export const MANAGED_SOL_ALIASES = Object.freeze(
 );
 
 export const MANAGED_SOL_XHIGH_ALIASES = Object.freeze(
-  NARU_DISPATCH_GRAPH['naru-orchestrator'].map((agent) => solXhighAlias(agent)).sort(),
+  ORCHESTRATOR_MODEL_ROUTED_TARGETS.map((agent) => solXhighAlias(agent)).sort(),
 );
 
 export const LEGACY_DEEP_ALIASES = Object.freeze(
@@ -343,6 +354,9 @@ function setProfile(agent, profile) {
 
 function routingAppendix(caller, policy, overrides) {
   const routes = NARU_DISPATCH_GRAPH[caller].map((target) => {
+    if (caller === 'naru-orchestrator' && target === 'naru-review') {
+      return '- `naru-review`: canonical-only review lane; invoke this exact role with no generated model alias.';
+    }
     const solXhigh = caller === 'naru-orchestrator'
       ? ` Optional Sol xhigh: \`${solXhighAlias(target)}\`.`
       : '';
@@ -416,6 +430,7 @@ export function applyRoutingToConfig(config, overrideValue, { allowExistingAlias
       delete next.permission.task[alias];
     }
     for (const target of targets) {
+      if (caller === 'naru-orchestrator' && target === 'naru-review') continue;
       if (policy.agents[target] !== 'terra') continue;
       if (LUNA_ELIGIBLE_SET.has(target)) next.permission.task[lunaAlias(target)] = 'allow';
       next.permission.task[solAlias(target)] = 'allow';
@@ -449,7 +464,7 @@ export function applyRoutingToConfig(config, overrideValue, { allowExistingAlias
     aliases.set(alias, next);
   }
 
-  for (const target of NARU_DISPATCH_GRAPH['naru-orchestrator']) {
+  for (const target of ORCHESTRATOR_MODEL_ROUTED_TARGETS) {
     const alias = solXhighAlias(target);
     const next = clone(originals.get(target));
     next.name = alias;

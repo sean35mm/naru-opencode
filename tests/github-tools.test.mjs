@@ -13,6 +13,7 @@ import { postReview, validateReviewPayload } from '../tools/naru-lib/review.mjs'
 import gitReadTool from '../tools/naru-git-read.js';
 import githubReadTool from '../tools/naru-github-read.js';
 import githubPostReviewTool from '../tools/naru-github-post-review.js';
+import { LEGACY_DEEP_ALIASES, MANAGED_ROUTING_ALIASES, NARU_AGENT_IDS } from '../tools/naru-lib/model-routing.mjs';
 
 const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -266,8 +267,32 @@ test('strict review payload validates nested schema and rejects unknown fields',
   }), /unknown fields/);
 });
 
-test('post tool rejects wrong caller, incomplete, and degraded reviews before I/O', async () => {
-  assert.match((await postReview(reviewInput(), { agent: 'other' })).error, /identity/);
+test('post tool accepts exactly its two caller identities and rejects all others before I/O', async () => {
+  const denied = [
+    undefined,
+    'other',
+    ...NARU_AGENT_IDS.filter((agent) => !['naru-review-post', 'naru-orchestrator'].includes(agent)),
+    ...MANAGED_ROUTING_ALIASES,
+    ...LEGACY_DEEP_ALIASES,
+  ];
+  for (const agent of denied) {
+    let ioCalls = 0;
+    const result = await postReview(reviewInput(), agent ? { agent } : undefined, {
+      spawn: async () => {
+        ioCalls += 1;
+        throw new Error('unexpected I/O');
+      },
+    });
+    assert.match(result.error, /identity/, String(agent));
+    assert.equal(ioCalls, 0, String(agent));
+  }
+  for (const agent of ['naru-review-post', 'naru-orchestrator']) {
+    const result = await postReview(reviewInput({ status: 'incomplete', degraded: true }), { agent });
+    assert.match(result.error, /incomplete/, agent);
+  }
+});
+
+test('post tool rejects incomplete and degraded reviews before I/O', async () => {
   assert.match((await postReview(reviewInput({ status: 'incomplete', degraded: true }), { agent: 'naru-review-post' })).error, /incomplete/);
   assert.match((await postReview(reviewInput({ status: 'partial', degraded: true }), { agent: 'naru-review-post' })).error, /cannot be posted/);
 });
@@ -292,6 +317,16 @@ test('post tool preserves body, hard-codes COMMENT and commit_id, and posts once
   assert.equal(posted.commit_id, HEAD);
   assert.match(posted.body, /## Verdict/);
   assert.match(posted.body, /^<!-- naru-review:/);
+  assert.equal(calls.filter((call) => call.argv.includes('POST')).length, 1);
+});
+
+test('orchestrator caller posts through the same fixed one-POST path', async () => {
+  const { spawn, calls } = fakeSpawn([
+    ...snapshotHandlers(),
+    { match: (argv) => argv.includes('POST'), reply: response({ id: 100 }) },
+  ]);
+  const result = await postReview(reviewInput(), { agent: 'naru-orchestrator' }, { spawn });
+  assert.equal(result.ok, true, result.error);
   assert.equal(calls.filter((call) => call.argv.includes('POST')).length, 1);
 });
 

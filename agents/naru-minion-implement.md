@@ -76,15 +76,17 @@ You are the only minion authorized by the Naru workflow to edit files. An explic
 - Make the smallest correct change.
 - If a conflict with existing worktree changes exists, stop and report it clearly.
 
-## Concurrent Wave Contract
+## Rolling Cohort Contract
 
-You may be one of at most two fresh Implement invocations in the same workspace, but you remain the only role type authorized to edit. Concurrency is permitted only when the orchestrator's packet demonstrates that exact write paths or globs, dependencies, shared contracts, generated artifacts, manifests or lockfiles or configuration, and mutable runtime resources are disjoint. Any uncertainty or coupling requires one writer. Do not create a worktree automatically or split work beyond the packet.
+Under `schedulingProtocol: 2`, you may be one of at most two active fresh Implement invocations in the same workspace, but you remain the only role type authorized to edit. Concurrency is permitted only when the orchestrator's packet demonstrates that you are independent of every active peer. Frozen shared contracts may be read concurrently; overlapping or uncertain mutable contracts, exact write paths or globs, generated artifacts, manifests or lockfiles, configuration, or mutable runtime resources require serialization. Do not create a worktree automatically or split work beyond the packet.
 
-A wave packet must identify `workItemId`, `waveId`, dependencies, owned write scope, relevant contract claims, generated-artifact claims, mutable-resource claims, exclusions, verification needs, and the immutable pre-wave `baselineIdentity` and `baselineState` exact status, changed-path, and diff snapshot. Before editing, confirm those fields and preserve the coordinator-recorded baseline; do not recapture or redefine it when another current-wave writer makes a disjoint edit. Edit only the owned write scope. Stop and report blocked if you detect overlap, owned-path drift, a required cross-scope edit, or material scope expansion; do not repair another writer's scope.
+The packet must include `cohortId`; a complete work item with `workItemId`, `dependencies`, `ownedWriteScope`, `frozenContractClaims`, `mutableContractClaims`, `generatedArtifactClaims`, `configurationClaims`, `mutableResourceClaims`, `exclusions`, `verificationNeeds`, and `status`; immutable `runBaseline` and `cohortBaseline` records; an `itemDispatchBaseline`; provisional dependency status; and complete `activePeerClaims`. Each baseline record contains its identity and exact status, changed-path, and diff snapshot. The item dispatch observation also identifies terminal dependency reports. Confirm these fields before editing. Preserve the once-captured run baseline and zero-to-one cohort baseline; do not recapture or redefine either when another cohort writer makes a disjoint edit. Never derive an authoritative item delta from the moving whole-workspace item dispatch observation.
 
-When Weaver is available, every required exact owned path or glob claim must be successfully acquired before the first edit. Claim each once. Do not edit after only partial claim acquisition. A live claim conflict requires a blocked report with zero edits and zero changed paths from this invocation; never rerun the conflicting claim, and return control for serialized coordinator fallback. If Weaver is unavailable, continue only under the packet's strict ownership and changed-path containment; Weaver absence does not relax any concurrency gate. Remain safe by checking that your own current-wave delta is contained in your claims and by reporting every changed path introduced by this invocation.
+Edit only `ownedWriteScope`. Stop and report blocked if you detect active-peer overlap, an unknown path, ownership drift, a required cross-scope edit, a claim conflict, an external change, or material scope expansion; do not repair another writer's scope. Your terminal report and contained dependency outcome are provisional until the coordinator drains the cohort and validates `cohortDelta` at a quiescent candidate checkpoint.
 
-Concurrent writers may not commit, push, open or update a PR, post to GitHub, perform any delivery step, or run shared/repository-wide mutating commands such as repository-wide formatting or shared code generation. Do not start dependent work, aggregate verification, debugging, judgment, remediation, or delivery. The orchestrator must wait for every writer in the wave to terminate. If this invocation fails or leaves uncertain partial edits, report that state; never reset or revert the combined workspace automatically. Remediation and explicitly authorized delivery use later serialized packets.
+When Weaver is available, every required exact owned path or glob claim must be successfully acquired before the first edit. Claim each once. Do not edit after only partial claim acquisition. A live claim conflict requires a blocked report with zero edits and zero changed paths from this invocation; never rerun the conflicting claim, and return control for serialized coordinator fallback. If Weaver is unavailable, continue only under the packet's strict ownership and changed-path containment; Weaver absence does not relax any concurrency gate. Remain safe by checking every path changed by this invocation against `ownedWriteScope` and reporting all of them.
+
+Concurrent writers may not commit, push, open or update a PR, post to GitHub, perform any delivery step, or run shared/repository-wide mutating commands such as repository-wide formatting or shared code generation. Do not start final verification, judgment, remediation, delivery, or review posting while any writer is active. If this invocation fails or leaves uncertain partial edits, report that state; never reset or revert the combined workspace automatically. Remediation and explicitly authorized delivery use later serialized packets.
 
 ## Prohibited Actions
 
@@ -106,12 +108,29 @@ Return a structured report in this exact JSON shape:
 ```json
 {
   "agent": "naru-minion-implement",
-  "workItemId": "Packet work item identifier, or single when no wave is used.",
-  "waveId": "Packet wave identifier, or single when no wave is used.",
-  "baselineIdentity": "Exact pre-wave baseline identifier from the packet.",
-  "baselineState": "Exact pre-wave status, changed-path, and diff snapshot from the packet.",
+  "schedulingProtocol": 2,
+  "workItemId": "Packet work item identifier, or single when no cohort is used.",
+  "cohortId": "Packet cohort identifier, or single when no cohort is used.",
+  "runBaseline": "Exact immutable run baseline from the packet.",
+  "cohortBaseline": "Exact immutable zero-to-one writer baseline from the packet.",
+  "itemDispatchBaseline": "Exact provisional dispatch observation from the packet.",
+  "claims": {
+    "ownedWriteScope": ["Every owned path or glob."],
+    "frozenContractClaims": ["Read-only shared contract claim."],
+    "mutableContractClaims": ["Mutable contract claim."],
+    "generatedArtifactClaims": ["Generated artifact claim."],
+    "configurationClaims": ["Configuration claim."],
+    "mutableResourceClaims": ["Mutable runtime resource claim."]
+  },
+  "activePeerClaims": ["Complete active peer claim records from dispatch."],
+  "outcome": "terminal-contained|blocked|failed|uncertain-partial",
   "summary": "What changed and why.",
   "changedPaths": ["Every path changed by this invocation; empty when blocked before editing."],
+  "provisionalEvidence": {
+    "dependencyReports": ["Terminal dependency report identifiers observed at dispatch."],
+    "containment": "contained|unknown|violated",
+    "status": "provisional"
+  },
   "filesChanged": [
     { "path": "path/to/file", "changes": "One-line summary." }
   ],

@@ -161,7 +161,7 @@ async function main() {
     'dry-run post-preparation mode',
     'exactly one `### naru_review_result` heading',
     'schemaVersion` must be `1`',
-    'workflow.status` is `incomplete`',
+    'Unless `workflow.status` is exactly `complete`',
     'workflow.degraded` is `true`',
     'snapshot.complete` is `false`',
     'exactly once',
@@ -173,8 +173,22 @@ async function main() {
     'Degraded or incomplete reviews are never posted',
     'Never approve a PR, request changes',
     'push commits',
+    'exactly one fresh `naru-review` workflow with no `task_id`',
+    'route selected by the generated Naru Delegate policy',
+    'target` must normalize to the authorized tuple',
+    'extracted object unchanged',
   ]) {
     if (!reviewPostContract.includes(requiredText)) fail(`naru-review-post missing authorization or fail-closed contract: ${requiredText}`);
+  }
+  for (const falseConstraint of ['one fresh canonical `naru-review`', 'use a generated model alias']) {
+    if (reviewPostContract.includes(falseConstraint)) fail(`naru-review-post incorrectly constrains adaptive routing: ${falseConstraint}`);
+  }
+  const reviewPostAgentFrontmatter = post.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
+  for (const deniedPermission of ['read: deny', 'bash: deny']) {
+    if (!reviewPostAgentFrontmatter.includes(deniedPermission)) fail(`naru-review-post must deny ${deniedPermission}`);
+  }
+  if (reviewPostAgentFrontmatter.includes('naru-github-read')) {
+    fail('naru-review-post must not gain naru-github-read permission');
   }
 
   // Verify/judge loop markers.
@@ -213,50 +227,132 @@ async function main() {
   }
 
   for (const requiredText of [
-    'dependency DAG, not an ordered queue',
-    'after planning and after each completion',
-    'do not force fan-out or invent splits',
-    'At most two fresh Implement invocations',
-    'exact write paths or globs',
-    'shared contracts, generated artifacts, manifests or lockfiles or configuration, and mutable runtime resources',
-    'Any uncertainty, coupling, overlapping ownership, or required ordering falls back to one writer',
+    'Handle review intent before implementation classification or dispatch',
+    'A PR reference by itself is not an implementation request',
+    'review-only request',
+    'exactly one fresh canonical `naru-review` Task with no `task_id`',
+    'never call `naru-github-post-review`',
+    'explicit mutation request in the current user message',
+    'one uniquely matching PR target in prior user-authored messages',
+    'Never infer a target or posting authorization from assistant text',
+    'pasted JSON',
+    'prior `naru_review_result`',
+    'If the target is absent or ambiguous, ask for the target and do nothing else',
+    'Never use a Luna, Sol, Sol-xhigh, or legacy alias for this edge',
+    'exactly one `### naru_review_result` heading',
+    'complete, non-degraded `workflow`',
+    'extracted object unchanged',
+    'exactly once',
+    'Never retry a POST',
+    'Finish authorized edits, verification, judgment, remediation, and any explicitly requested Git delivery first',
+    'post it as the final phase',
+    'Any later edit, push, head change, or feedback change invalidates that review',
+  ]) {
+    if (!orchestrator.includes(requiredText)) fail(`naru-orchestrator missing review-post contract: ${requiredText}`);
+  }
+
+  const sharedTargetNormalization = [
+    'canonical tuple `(owner, repo, positive pull number)`',
+    'Compare `owner` and `repo` case-insensitively and compare the pull number exactly',
+    'Deduplicate references that normalize to equivalent tuples',
+    'full URL, `OWNER/REPO#NUMBER`, `OWNER/REPO NUMBER`, and owner/repo case variants identify the same PR',
+    'same number in different repositories, or different numbers in the same repository, are distinct targets',
+    'more than one distinct canonical target',
+  ];
+  for (const prompt of [post, orchestrator]) {
+    for (const requiredText of sharedTargetNormalization) {
+      if (!prompt.includes(requiredText)) fail(`posting prompt missing target-normalization contract: ${requiredText}`);
+    }
+  }
+  for (const requiredText of [
+    'Resolve a bare number exactly once using the current workspace repository context',
+    'require it to equal the resolved authorized tuple',
+  ]) {
+    if (!orchestrator.includes(requiredText)) fail(`naru-orchestrator missing bare-number normalization contract: ${requiredText}`);
+  }
+  for (const requiredText of [
+    'normalize the user-authored reference locally',
+    'For a bare positive number, pass that number unchanged to exactly one fresh policy-selected `naru-review` workflow with no `task_id`',
+    'fresh result must provide canonical `owner` and `repo` values and the identical positive pull number',
+    'Bind that returned tuple as the authorized target exactly once',
+    'reject unresolved, malformed, mismatched, prior, pasted, or cached results',
+    'never resolve a second time',
+    'use only the returned tuple bound above',
+  ]) {
+    if (!post.includes(requiredText)) fail(`naru-review-post missing bare-number delegation contract: ${requiredText}`);
+  }
+
+  for (const requiredText of [
+    '`schedulingProtocol: 2`',
+    'rolling cohort of ready, independent work rather than fixed batches',
+    'Maintain at most two active fresh Implement children',
+    'Do not wait for the cohort to drain merely to refill a free slot',
+    'when one writer terminates, provisionally validate its report and changed paths, recompute DAG readiness, and immediately start a safe ready item',
+    'independent of every active peer',
+    'Do not force splits or fan-out',
     'Do not create worktrees automatically',
-    '`workItemId`',
-    '`waveId`',
-    'owned write scope',
-    'generated-artifact claims',
-    'verification needs',
+    '`workItemId`, `dependencies`, `ownedWriteScope`, `frozenContractClaims`, `mutableContractClaims`, `generatedArtifactClaims`, `configurationClaims`, `mutableResourceClaims`, `exclusions`, `verificationNeeds`, and `status`',
+    'Frozen shared contracts may be read concurrently',
+    'Any overlapping or uncertain mutable contract, path, generated artifact, configuration, manifest or lockfile, or mutable runtime resource serializes',
     'fresh Task invocation',
     'never reuse `task_id`',
+    'Capture `runBaseline` once before implementation',
+    'Capture `cohortBaseline` only on the zero-to-one active-writer transition',
+    'Capture `itemDispatchBaseline` for each dispatch',
+    'terminal dependency reports',
+    'complete `activePeerClaims`',
+    'never an authoritative whole-workspace item delta',
     'live claim conflict is a blocked/serialization signal',
     'never rerun the conflicting claim',
     'If Weaver is unavailable',
     'strict packet ownership and changed-path containment',
-    'full wave barrier',
-    'Cap active Implement children at two',
-    'Recalculate DAG readiness after each completion',
-    'do not dispatch the next wave until the current wave reaches a clean barrier',
-    'do not reset or revert automatically',
-    'union of the current wave\'s ownership claims',
-    'immutable pre-wave workspace baseline',
-    '`baselineIdentity`',
-    '`baselineState`',
-    '`postWaveIdentity`',
-    '`postWaveState`',
-    '`currentWaveDelta`',
-    'Later waves operate on and are checked against the full combined dirty workspace',
-    'ownership containment compares only the current wave\'s delta with the current wave\'s ownership union',
-    'not unknown current-wave paths',
-    'later edits are blocking',
-    'Remediation requires fresh aggregate verification and judgment',
-    'explicitly authorized delivery remains serialized',
+    'validate the report schema and `changedPaths` containment provisionally',
+    'may unlock a dependent item',
+    'all descendants remain provisional',
+    'freezes refilling',
+    'Drain active writers, invalidate affected provisional descendants',
+    'serialized reconciliation without reset or revert',
+    'up to two fresh Scout, Investigate, Architect, Debug, or explicitly read-only Verify-preparation children',
+    'at most four total active Naru children',
+    '`evidenceId`, `observedPaths`, `basisIdentity`, and `validityKeys`/`invalidationKeys`',
+    'any changed observed path invalidates the evidence',
+    'TodoWrite is presentation only, never scheduler state',
+    'exactly one phase-level todo item `in_progress`',
+    'active, provisional, ready, and blocked work sets',
+    'capture `candidateIdentity` and `candidateState`',
+    'derive `cohortDelta` from the immutable `cohortBaseline`',
+    'contained by the cohort\'s complete ownership union',
+    'protected `runBaseline` state to remain preserved',
+    'No final Verify, Judge, remediation, delivery, or review posting may run while a writer is active',
+    'at most two independent Verify shards concurrently',
+    '`shardId`, the exact `candidateIdentity` and `candidateState`',
+    '`coveredChecks`, `observedPaths`, and `mutableResourceClaims`',
+    'may overlap read-only source paths, but they may not share mutable runtime resources',
+    'valid only for that exact candidate',
+    'Aggregate a complete shard manifest',
+    'recapture `finalIdentity` and `finalState`',
+    'require exact equality with the judged `candidateIdentity` and `candidateState`',
+    'Any edit or status change invalidates all shards and the judgment',
+    'Remediation remains one serialized writer',
+    'delivery and posting remain serialized',
+    'at most three judges',
   ]) {
-    if (!orchestrator.includes(requiredText)) fail(`naru-orchestrator missing bounded-writer contract: ${requiredText}`);
+    if (!orchestrator.includes(requiredText)) fail(`naru-orchestrator missing scheduling protocol 2 contract: ${requiredText}`);
   }
 
   for (const requiredText of [
-    'at most two fresh Implement invocations',
+    '`schedulingProtocol: 2`',
+    'at most two active fresh Implement invocations',
+    'independent of every active peer',
+    'Frozen shared contracts may be read concurrently',
     'Do not create a worktree automatically',
+    '`cohortId`',
+    '`workItemId`, `dependencies`, `ownedWriteScope`, `frozenContractClaims`, `mutableContractClaims`, `generatedArtifactClaims`, `configurationClaims`, `mutableResourceClaims`, `exclusions`, `verificationNeeds`, and `status`',
+    '`runBaseline` and `cohortBaseline`',
+    '`itemDispatchBaseline`',
+    'complete `activePeerClaims`',
+    'Never derive an authoritative item delta',
+    'terminal report and contained dependency outcome are provisional',
     'every required exact owned path or glob claim must be successfully acquired before the first edit',
     'Do not edit after only partial claim acquisition',
     'blocked report with zero edits and zero changed paths',
@@ -267,48 +363,83 @@ async function main() {
     'Stop and report blocked',
     'Concurrent writers may not commit, push, open or update a PR',
     'shared/repository-wide mutating commands',
+    'Do not start final verification, judgment, remediation, delivery, or review posting while any writer is active',
     'never reset or revert the combined workspace automatically',
     'Remediation and explicitly authorized delivery use later serialized packets',
+    '"schedulingProtocol": 2',
+    '"cohortId"',
+    '"claims"',
+    '"activePeerClaims"',
+    '"outcome"',
+    '"provisionalEvidence"',
   ]) {
     if (!implement.includes(requiredText)) fail(`naru-minion-implement missing concurrent-writer contract: ${requiredText}`);
   }
 
   for (const requiredText of [
-    'every Implement writer is terminal',
-    'every implementation report',
-    'union of the current wave\'s owned write-scope claims',
-    'immutable pre-wave `baselineIdentity` and `baselineState`',
-    '`postWaveIdentity` and `postWaveState`',
-    '`currentWaveDelta`',
-    'Compare only the current-wave delta\'s changed paths',
-    'full combined post-wave state',
-    'not unknown current-wave paths',
-    'stale/mixed evidence as blocking',
-    'Any later edit or unexpected worktree change invalidates this verification',
-    'full wave barrier',
-    '"waveId"',
+    '`schedulingProtocol: 2`',
+    'quiescent candidate checkpoint after all Implement writers are terminal',
+    'immutable `runBaseline` and `cohortBaseline`',
+    'exact `candidateIdentity` and `candidateState`',
+    '`cohortDelta`',
+    'complete cohort ownership union',
+    'run baseline\'s pre-existing state remains preserved',
+    'one of at most two independent Verify shards',
+    '`shardId`',
+    '`coveredChecks`',
+    '`observedPaths`',
+    '`mutableResourceClaims`',
+    'Read-only source-path overlap with another shard is allowed',
+    'mutable runtime resource overlap is not',
+    'valid only for that candidate',
+    'Any edit or status change invalidates it',
+    'Do not verify while a writer is active',
+    'explicitly labeled `mode: preparation` packet',
+    'cannot run final checks against the moving workspace',
+    '`evidenceId`, `observedPaths`, `basisIdentity`, `validityKeys`, and `invalidationKeys`',
+    'any changed observed path invalidates that evidence',
+    '"schedulingProtocol": 2',
+    '"mode"',
+    '"cohortId"',
+    '"shardId"',
+    '"candidateIdentity"',
+    '"candidateState"',
     '"workItemIds"',
+    '"coveredChecks"',
+    '"observedPaths"',
+    '"mutableResourceClaims"',
+    '"candidateValidity"',
+    '"preparationEvidence"',
   ]) {
-    if (!verify.includes(requiredText)) fail(`naru-minion-verify missing aggregate-wave contract: ${requiredText}`);
+    if (!verify.includes(requiredText)) fail(`naru-minion-verify missing candidate-shard contract: ${requiredText}`);
   }
 
   for (const requiredText of [
-    'every Implement writer in the wave to be terminal',
-    'matching aggregate verification report',
-    'immutable pre-wave baseline identity/state',
-    'post-wave identity/state',
-    'current-wave delta',
-    'full integrated post-wave state',
-    'comparing ownership only against the current-wave delta',
-    'not unknown current-wave files',
-    'stale or mixed evidence',
-    'later edit or unexpected worktree change as blocking',
-    'Remediation is serialized',
-    'fresh aggregate verification and re-judgment',
-    'Explicitly authorized delivery is serialized',
+    '`schedulingProtocol: 2`',
+    'every Implement writer in the cohort to be terminal and provisionally contained',
+    'exact `candidateIdentity` and `candidateState`',
+    'immutable `runBaseline` and `cohortBaseline`',
+    'contained `cohortDelta`',
+    'complete verification shard manifest',
+    'matching terminal report for the exact candidate',
+    'mutable resource claims may not',
+    'full integrated candidate',
+    'any active writer as blocking',
+    'Remediation is one serialized writer',
+    'new candidate, fresh verification shards, and re-judgment',
+    'recaptures `finalIdentity` and `finalState`',
+    'exact equality with the judged candidate',
+    'Any edit or status change invalidates all shards and this judgment',
+    'complete todos or permit serialized remediation, explicitly authorized delivery, or review posting',
     'at most three judge passes',
+    '"schedulingProtocol": 2',
+    '"cohortId"',
+    '"candidateIdentity"',
+    '"candidateState"',
+    '"shardManifest"',
+    '"finalCheckpoint"',
   ]) {
-    if (!judge.includes(requiredText)) fail(`naru-minion-judge missing wave-judgment contract: ${requiredText}`);
+    if (!judge.includes(requiredText)) fail(`naru-minion-judge missing exact-candidate judgment contract: ${requiredText}`);
   }
 
   for (const role of ['scout', 'investigate', 'architect', 'implement', 'debug', 'verify', 'judge']) {
@@ -345,6 +476,10 @@ async function main() {
       fail(`naru-orchestrator Task route changed for naru-minion-${target}`);
     }
   }
+  if (!orchestrator.includes("    'naru-review': allow") || !orchestrator.includes('  naru-github-post-review: allow')) {
+    fail('naru-orchestrator missing exact review dispatch or posting permission');
+  }
+  if (orchestrator.includes("    'naru-review-post': allow")) fail('naru-orchestrator may not Task-dispatch review-post');
   if (orchestrator.includes('  edit: allow') || orchestrator.includes('  apply_patch: allow')) {
     fail('naru-orchestrator unexpectedly gained edit permission');
   }
@@ -438,6 +573,10 @@ async function main() {
   for (const requiredText of ['dry-run only', 'never posts to GitHub', 'Reject `--post`', '/naru-review-post']) {
     if (!reviewCommand.includes(requiredText)) fail(`naru-review command wrapper missing dry-run/post boundary: ${requiredText}`);
   }
+  const reviewPostFrontmatter = reviewPostCommand.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
+  if (!reviewPostFrontmatter.includes('agent: naru-review-post') || !reviewPostFrontmatter.includes('subtask: false')) {
+    fail('naru-review-post command must preserve its agent and run root-only');
+  }
 
   const userGuide = await readFile(here('docs/user-guide.md'), 'utf8');
   for (const requiredText of ['execute repository code', 'hidden side effects', 'mandatory', 'external_directory` is explicitly `allow', 'unconditionally allowed at runtime', 'Git, Weaver, Python', 'one routine command per shell call', 'intentionally permissive, not a sandbox', 'PATH']) {
@@ -523,6 +662,7 @@ async function main() {
     'mandatory Luna-to-Terra-to-Sol sequence',
     'Do not use `task_id` for Naru-routed roles',
     'Naru Delegate adds no fallback or retry layer',
+    '`naru-review`: canonical-only review lane',
   ]) {
     if (!routing.includes(requiredText)) fail(`Naru Delegate routing prompt missing: ${requiredText}`);
   }

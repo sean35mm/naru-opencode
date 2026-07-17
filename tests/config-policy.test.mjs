@@ -261,6 +261,10 @@ async function main() {
     if (!(await exists(path))) fail(`missing expected file: ${path}`);
   }
 
+  const reviewPostCommand = readFrontmatter(await readFile(here('commands/naru-review-post.md'), 'utf8'));
+  if (reviewPostCommand?.agent !== 'naru-review-post') fail('review-post command wrapper agent changed');
+  if (reviewPostCommand?.subtask !== 'false') fail('review-post command must execute as a root command');
+
   const actualCommands = (await readdir(here('commands'))).filter(name => name.endsWith('.md')).sort();
   const expectedCommandNames = expectedCommands.map(path => path.split('/')[1]).sort();
   if (JSON.stringify(actualCommands) !== JSON.stringify(expectedCommandNames)) fail('command inventory mismatch');
@@ -376,18 +380,30 @@ async function main() {
   }
 
   const postTool = 'naru-github-post-review';
+  const postingAgents = new Set(['agents/naru-review-post.md', 'agents/naru-orchestrator.md']);
   for (const path of expectedAgents) {
     const text = await readFile(here(path), 'utf8');
     const postPermissions = parsePermissions(text)?.filter(permission => permission.key === postTool) ?? [];
-    if (path === 'agents/naru-review-post.md') {
+    if (postingAgents.has(path)) {
       if (postPermissions.length !== 1 || postPermissions[0].val !== 'allow') {
-        fail(`${path} must exclusively allow the posting tool`);
+        fail(`${path} must allow the posting tool exactly once`);
       }
     } else {
       if (postPermissions.some(permission => permission.val !== 'deny')) {
         fail(`${path} must deny or exclude the posting tool`);
       }
     }
+  }
+  if (postingAgents.size !== 2) fail('exactly two agents must be posting-capable');
+
+  const orchestratorText = await readFile(here('agents/naru-orchestrator.md'), 'utf8');
+  const orchestratorTasks = parseNestedPermission(orchestratorText, 'task');
+  const orchestratorAllows = orchestratorTasks.filter(rule => rule.action === 'allow').map(rule => rule.pattern).sort();
+  if (JSON.stringify(orchestratorAllows) !== JSON.stringify([...NARU_DISPATCH_GRAPH['naru-orchestrator']].sort())) {
+    fail('orchestrator exact Task allowlist mismatch');
+  }
+  if (!orchestratorAllows.includes('naru-review') || orchestratorAllows.includes('naru-review-post')) {
+    fail('orchestrator review Task boundary mismatch');
   }
 
   for (const path of [...expectedCommands, ...expectedAgents]) {

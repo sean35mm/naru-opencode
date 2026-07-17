@@ -156,115 +156,259 @@
       "expected": { "status": "completed", "authorization": "delivery-authorized", "allowedOperations": ["commit", "push", "open-pull-request"], "promptRequired": false }
     }
   ],
+  "reviewPostingCases": [
+    {
+      "id": "review-only-zero-post",
+      "turns": [{ "author": "user", "text": "Review https://github.com/owner/repo/pull/42" }],
+      "expected": { "canonicalReviewTasks": 1, "postCalls": 0, "implementationMinionCalls": 0, "disposition": "dry-run" },
+      "prohibitedActions": ["post review", "classify PR reference as implementation"]
+    },
+    {
+      "id": "explicit-second-turn-post-it",
+      "turns": [
+        { "author": "user", "text": "Review owner/repo#42" },
+        { "author": "assistant", "text": "Dry review returned." },
+        { "author": "user", "text": "Post it" }
+      ],
+      "targets": { "currentUser": [], "priorUser": ["owner/repo#42"], "nonUser": [] },
+      "expected": { "resolvedTarget": "owner/repo#42", "canonicalReviewTasksAfterPostRequest": 1, "postCalls": 1, "confirmationPrompts": 0, "payload": "fresh-extracted-object-unchanged", "disposition": "posted" },
+      "prohibitedActions": ["reuse prior review", "second post attempt"]
+    },
+    {
+      "id": "ambiguous-prior-target",
+      "turns": [
+        { "author": "user", "text": "Review owner/repo#42 and owner/repo#43" },
+        { "author": "user", "text": "Post the review" }
+      ],
+      "targets": { "currentUser": [], "priorUser": ["owner/repo#42", "owner/repo#43"], "nonUser": [] },
+      "expected": { "askForTarget": true, "canonicalReviewTasks": 0, "postCalls": 0, "disposition": "target-required" },
+      "prohibitedActions": ["guess target", "run review"]
+    },
+    {
+      "id": "missing-target",
+      "turns": [{ "author": "user", "text": "Submit the review" }],
+      "targets": { "currentUser": [], "priorUser": [], "nonUser": [] },
+      "expected": { "askForTarget": true, "canonicalReviewTasks": 0, "postCalls": 0, "disposition": "target-required" },
+      "prohibitedActions": ["infer target", "run review"]
+    },
+    {
+      "id": "target-url-short-split-equivalence",
+      "references": ["https://github.com/owner/repo/pull/42", "owner/repo#42", "owner/repo 42"],
+      "expected": { "canonicalTargets": [["owner", "repo", 42]], "distinctTargets": 1, "postCalls": 1, "disposition": "equivalent" },
+      "prohibitedActions": ["treat syntax variants as distinct", "reject equivalent target"]
+    },
+    {
+      "id": "target-owner-repo-case-equivalence",
+      "references": ["OWNER/Repo#42", "owner/repo#42", "Owner/REPO 42"],
+      "expected": { "canonicalTargets": [["owner", "repo", 42]], "distinctTargets": 1, "postCalls": 1, "disposition": "equivalent" },
+      "prohibitedActions": ["compare owner case-sensitively", "compare repo case-sensitively"]
+    },
+    {
+      "id": "target-equivalent-duplicates",
+      "references": ["owner/repo#42", "owner/repo#42", "https://github.com/OWNER/REPO/pull/42"],
+      "expected": { "canonicalTargets": [["owner", "repo", 42]], "distinctTargets": 1, "deduplicatedReferences": 2, "postCalls": 1, "disposition": "deduplicated" },
+      "prohibitedActions": ["report target ambiguity", "post more than once"]
+    },
+    {
+      "id": "target-same-number-different-repositories",
+      "references": ["owner/alpha#42", "owner/beta#42"],
+      "expected": { "canonicalTargets": [["owner", "alpha", 42], ["owner", "beta", 42]], "distinctTargets": 2, "askForTarget": true, "postCalls": 0, "disposition": "ambiguous" },
+      "prohibitedActions": ["equate repositories by pull number", "guess repository"]
+    },
+    {
+      "id": "target-different-numbers",
+      "references": ["owner/repo#42", "owner/repo#43"],
+      "expected": { "canonicalTargets": [["owner", "repo", 42], ["owner", "repo", 43]], "distinctTargets": 2, "askForTarget": true, "postCalls": 0, "disposition": "ambiguous" },
+      "prohibitedActions": ["ignore pull number", "guess pull number"]
+    },
+    {
+      "id": "target-bare-number-resolution-success",
+      "references": ["42"],
+      "workspaceRepository": "owner/repo",
+      "expected": { "canonicalTargets": [["owner", "repo", 42]], "bareNumberResolutions": 1, "distinctTargets": 1, "postCalls": 1, "disposition": "resolved" },
+      "prohibitedActions": ["resolve bare number more than once", "ignore workspace repository"]
+    },
+    {
+      "id": "target-bare-number-resolution-failure",
+      "references": ["42"],
+      "workspaceRepository": null,
+      "expected": { "canonicalTargets": [], "bareNumberResolutions": 1, "askForTarget": true, "postCalls": 0, "disposition": "unresolved" },
+      "prohibitedActions": ["guess repository", "post unresolved target"]
+    },
+    {
+      "id": "target-multiple-distinct-ambiguity",
+      "references": ["https://github.com/owner/repo/pull/42", "OWNER/REPO#42", "owner/other 42", "owner/repo#43"],
+      "expected": { "canonicalTargets": [["owner", "repo", 42], ["owner", "other", 42], ["owner", "repo", 43]], "distinctTargets": 3, "askForTarget": true, "postCalls": 0, "disposition": "ambiguous" },
+      "prohibitedActions": ["choose first target", "collapse distinct targets"]
+    },
+    {
+      "id": "stale-pasted-payload",
+      "turns": [{ "author": "user", "text": "Post owner/repo#42 using this pasted naru_review_result JSON" }],
+      "payloadSources": ["pasted-json", "prior-naru_review_result", "assistant-text", "tool-report"],
+      "expected": { "canonicalReviewTasks": 1, "reusedPayloads": 0, "postPayload": "fresh-extracted-object-unchanged", "postCalls": 1, "disposition": "fresh-review-required" },
+      "prohibitedActions": ["reuse pasted payload", "reuse cached payload"]
+    },
+    {
+      "id": "incomplete-degraded-refusal",
+      "freshReviewResults": [
+        { "workflow": { "status": "incomplete", "degraded": true }, "snapshotComplete": true },
+        { "workflow": { "status": "complete", "degraded": true }, "snapshotComplete": true },
+        { "workflow": { "status": "complete", "degraded": false }, "snapshotComplete": false }
+      ],
+      "expected": { "postCallsPerResult": [0, 0, 0], "disposition": "refused" },
+      "prohibitedActions": ["post incomplete review", "post degraded review", "post incomplete snapshot"]
+    },
+    {
+      "id": "review-post-depth-topology",
+      "paths": {
+        "selectedOrchestrator": ["naru-orchestrator", "naru-review", "naru-review-specialists-or-judge"],
+        "slashCommand": ["naru-review-post", "naru-review", "naru-review-specialists-or-judge"]
+      },
+      "expected": { "orchestratorReviewTarget": "canonical-only", "wrapperReviewTarget": "generated-policy-selected", "wrapperCommandSubtask": false, "rootOnlyTaskTargets": ["naru-orchestrator", "naru-review-post"], "maxTaskDepthAfterRoot": 2, "disposition": "within-depth-budget" },
+      "prohibitedActions": ["Task naru-review-post", "generated review alias from orchestrator"]
+    },
+    {
+      "id": "mixed-delivery-then-fresh-post",
+      "request": "Implement, commit, push, then post a review for owner/repo#42",
+      "events": ["implementation", "verification", "judgment", "git-delivery", "fresh-canonical-review", "post-review"],
+      "expected": { "freshReviewAfterDelivery": true, "postIsFinalPhase": true, "postCalls": 1, "laterMutationInvalidatesReview": true, "disposition": "serialized" },
+      "prohibitedActions": ["review before delivery", "post stale review", "concurrent post"]
+    }
+  ],
   "implementationSchedulingCases": [
     {
-      "id": "scheduler-single-writer",
-      "scenario": "One ready implementation item does not create artificial fan-out.",
-      "readyWorkItems": ["a"],
-      "prohibitedActions": ["invent split"],
-      "expected": { "implementWaves": [["a"]], "maxConcurrentImplement": 1, "disposition": "single-writer" }
-    },
-    {
-      "id": "scheduler-safe-two-writer-wave",
-      "scenario": "Two ready items have demonstrably disjoint ownership and claims.",
-      "workItems": [
-        { "workItemId": "a", "waveId": "wave-1", "baselineIdentity": "wave-1-pre", "baselineState": { "status": "clean", "changedPaths": [], "diffSnapshot": "empty" }, "dependencies": [], "ownedWriteScope": ["src/a.js"], "contractClaims": ["contract-a"], "generatedArtifactClaims": [], "mutableResourceClaims": ["resource-a"], "exclusions": ["src/b.js"], "verificationNeeds": ["check-a"] },
-        { "workItemId": "b", "waveId": "wave-1", "baselineIdentity": "wave-1-pre", "baselineState": { "status": "clean", "changedPaths": [], "diffSnapshot": "empty" }, "dependencies": [], "ownedWriteScope": ["src/b.js"], "contractClaims": ["contract-b"], "generatedArtifactClaims": [], "mutableResourceClaims": ["resource-b"], "exclusions": ["src/a.js"], "verificationNeeds": ["check-b"] }
+      "id": "scheduler-rolling-refill-timeline",
+      "scenario": "A rolling cohort refills a free writer slot without waiting for the other writer to terminate.",
+      "timeline": [
+        { "at": 0, "event": "start", "workItemId": "a", "activeImplement": ["a"] },
+        { "at": 1, "event": "start", "workItemId": "b", "activeImplement": ["a", "b"] },
+        { "at": 2, "event": "finish-contained", "workItemId": "a", "activeImplement": ["b"] },
+        { "at": 3, "event": "start", "workItemId": "c", "activeImplement": ["b", "c"], "activePeer": "b" },
+        { "at": 4, "event": "finish-contained", "workItemId": "b", "activeImplement": ["c"] },
+        { "at": 5, "event": "finish-contained", "workItemId": "c", "activeImplement": [] }
       ],
-      "prohibitedActions": ["shared mutation"],
-      "expected": { "implementWaves": [["a", "b"]], "maxConcurrentImplement": 2, "disposition": "concurrent" }
+      "independence": { "cFromActivePeersAtDispatch": true },
+      "prohibitedActions": ["wait for cohort drain before starting c", "force split"],
+      "expected": { "startOrder": ["a", "b", "c"], "cStartsWhileBActive": true, "maxConcurrentImplement": 2, "cohortId": "cohort-1", "disposition": "rolling-refill" }
     },
     {
-      "id": "scheduler-cap-two",
-      "scenario": "Three independent ready items are bounded to two active writers.",
-      "readyWorkItems": ["a", "b", "c"],
-      "disjointAcross": ["writeScope", "dependencies", "contracts", "generatedArtifacts", "configuration", "resources"],
+      "id": "scheduler-work-item-contract",
+      "scenario": "Protocol 2 work items expose every scheduler-owned claim and state field.",
+      "workItems": [
+        { "workItemId": "a", "dependencies": [], "ownedWriteScope": ["src/a.js"], "frozenContractClaims": ["api-v1"], "mutableContractClaims": ["contract-a"], "generatedArtifactClaims": [], "configurationClaims": [], "mutableResourceClaims": ["resource-a"], "exclusions": ["src/b.js"], "verificationNeeds": ["check-a"], "status": "ready" },
+        { "workItemId": "b", "dependencies": [], "ownedWriteScope": ["src/b.js"], "frozenContractClaims": ["api-v1"], "mutableContractClaims": ["contract-b"], "generatedArtifactClaims": [], "configurationClaims": [], "mutableResourceClaims": ["resource-b"], "exclusions": ["src/a.js"], "verificationNeeds": ["check-b"], "status": "ready" }
+      ],
+      "prohibitedActions": ["treat TodoWrite as scheduler state", "omit status"],
+      "expected": { "schedulingProtocol": 2, "sharedFrozenContractConcurrent": true, "mutableUncertaintySerializes": true, "disposition": "complete-work-items" }
+    },
+    {
+      "id": "scheduler-cap-two-timeline",
+      "scenario": "Three independent ready items never exceed two active Implement children.",
+      "timeline": [
+        { "at": 0, "event": "start", "workItemId": "a", "activeImplement": ["a"] },
+        { "at": 1, "event": "start", "workItemId": "b", "activeImplement": ["a", "b"] },
+        { "at": 2, "event": "defer-cap", "workItemId": "c", "activeImplement": ["a", "b"] },
+        { "at": 3, "event": "finish-contained", "workItemId": "a", "activeImplement": ["b"] },
+        { "at": 4, "event": "start", "workItemId": "c", "activeImplement": ["b", "c"] }
+      ],
       "prohibitedActions": ["three concurrent writers"],
-      "expected": { "implementWaves": [["a", "b"], ["c"]], "maxConcurrentImplement": 2, "disposition": "bounded" }
+      "expected": { "maxConcurrentImplement": 2, "deferredByCap": ["c"], "disposition": "bounded" }
     },
     {
-      "id": "scheduler-same-file-serialization",
-      "scenario": "Ready items claim the same file.",
-      "overlap": { "ownedWriteScope": ["src/shared.js"] },
-      "prohibitedActions": ["concurrent same-file edit"],
-      "expected": { "implementWaves": [["a"], ["b"]], "maxConcurrentImplement": 1, "disposition": "serialize" }
+      "id": "scheduler-active-peer-conflict-defers",
+      "scenario": "A free slot is not refilled by an item that conflicts with the remaining active peer.",
+      "timeline": [
+        { "at": 0, "event": "start", "workItemId": "a", "activeImplement": ["a"] },
+        { "at": 1, "event": "start", "workItemId": "b", "activeImplement": ["a", "b"] },
+        { "at": 2, "event": "finish-contained", "workItemId": "a", "activeImplement": ["b"] },
+        { "at": 3, "event": "defer-active-peer-conflict", "workItemId": "c", "activeImplement": ["b"], "conflictsWith": "b" },
+        { "at": 4, "event": "finish-contained", "workItemId": "b", "activeImplement": [] },
+        { "at": 5, "event": "start", "workItemId": "c", "activeImplement": ["c"] }
+      ],
+      "conflict": { "configurationClaims": ["tsconfig.json"] },
+      "prohibitedActions": ["start c beside conflicting b", "ignore uncertain claim"],
+      "expected": { "cStartsAfterBFinishes": true, "disposition": "defer-until-independent" }
     },
     {
-      "id": "scheduler-shared-contract-serialization",
-      "scenario": "Ready items claim one shared interface contract.",
-      "overlap": { "contractClaims": ["public-api-v1"] },
-      "prohibitedActions": ["concurrent shared-contract edit"],
-      "expected": { "implementWaves": [["a"], ["b"]], "maxConcurrentImplement": 1, "disposition": "serialize" }
-    },
-    {
-      "id": "scheduler-shared-resource-serialization",
-      "scenario": "Ready items claim one mutable runtime resource.",
-      "overlap": { "mutableResourceClaims": ["dev-server:3000"] },
-      "prohibitedActions": ["concurrent shared-resource use"],
-      "expected": { "implementWaves": [["a"], ["b"]], "maxConcurrentImplement": 1, "disposition": "serialize" }
-    },
-    {
-      "id": "scheduler-dependency-serialization",
-      "scenario": "Item b depends on item a.",
-      "dependencies": { "a": [], "b": ["a"] },
-      "prohibitedActions": ["start dependent item early"],
-      "expected": { "implementWaves": [["a"], ["b"]], "maxConcurrentImplement": 1, "disposition": "serialize" }
-    },
-    {
-      "id": "scheduler-weaver-conflict",
-      "scenario": "A live Weaver claim conflicts before item b can make its first edit.",
-      "weaver": { "available": true, "conflictOn": "b", "requiredClaims": ["src/b.js"], "successfulClaims": [], "claimTiming": "before-first-edit", "claimRetries": 0 },
-      "prohibitedActions": ["edit before all claims succeed", "rerun conflicting claim"],
-      "expected": { "implementWaves": [["a"], ["b"]], "maxConcurrentImplement": 1, "editsBeforeConflict": 0, "reportChangedPaths": [], "coordinatorFallback": "serialized", "disposition": "blocked-then-serialize" }
-    },
-    {
-      "id": "scheduler-weaver-unavailable-internal-gates",
-      "scenario": "Weaver is unavailable but packet claims are strictly disjoint.",
-      "weaver": { "available": false, "fallback": "strict-packet-ownership-and-changed-path-containment" },
-      "prohibitedActions": ["relax ownership gates"],
-      "expected": { "implementWaves": [["a", "b"]], "maxConcurrentImplement": 2, "disposition": "concurrent-with-internal-gates" }
-    },
-    {
-      "id": "scheduler-aggregate-verification-barrier",
-      "scenario": "Aggregate verification waits for both wave writers to terminate.",
-      "wave": { "waveId": "wave-1", "writers": ["a", "b"] },
-      "prohibitedActions": ["verify partial wave"],
-      "expected": { "verificationStarts": "after-all-writers-terminal", "implementationReports": ["a", "b"], "claimComparison": "current-wave-delta-vs-current-wave-ownership-union" }
-    },
-    {
-      "id": "scheduler-second-wave-baseline-delta",
-      "scenario": "A second wave starts from a dirty baseline containing successful first-wave paths and verifies only its own delta while checking the full integrated state.",
-      "wave": {
-        "waveId": "wave-2",
-        "workItemIds": ["c"],
-        "baselineIdentity": "wave-2-pre",
-        "baselineState": { "status": "dirty", "changedPaths": ["src/a.js", "src/b.js"], "diffSnapshot": "wave-1-diff" },
-        "postWaveIdentity": "wave-2-post",
-        "postWaveState": { "status": "dirty", "changedPaths": ["src/a.js", "src/b.js", "src/c.js"], "diffSnapshot": "wave-1-plus-wave-2-diff" },
-        "currentWaveDelta": { "changedPaths": ["src/c.js"], "diffSnapshot": "wave-2-only-diff" },
-        "ownershipUnion": ["src/c.js"]
+      "id": "scheduler-baseline-lifecycle",
+      "scenario": "Run, cohort, and item dispatch baselines have distinct authority during rolling overlap.",
+      "baselines": {
+        "runBaseline": { "identity": "run-0", "state": { "status": "dirty", "changedPaths": ["pre-existing.md"], "diffSnapshot": "pre-existing-diff" }, "captureCount": 1 },
+        "cohortBaseline": { "identity": "cohort-0", "state": { "status": "dirty", "changedPaths": ["pre-existing.md"], "diffSnapshot": "pre-existing-diff" }, "capturedOn": "zero-to-one-writer", "captureCount": 1 },
+        "itemDispatchBaselines": [
+          { "workItemId": "a", "identity": "dispatch-a", "terminalDependencyReports": [], "activePeerClaims": [] },
+          { "workItemId": "b", "identity": "dispatch-b", "terminalDependencyReports": [], "activePeerClaims": [{ "workItemId": "a", "ownedWriteScope": ["src/a.js"] }] },
+          { "workItemId": "c", "identity": "dispatch-c", "terminalDependencyReports": ["report-a"], "activePeerClaims": [{ "workItemId": "b", "ownedWriteScope": ["src/b.js"] }], "provisionalWhilePeerWrites": true }
+        ]
       },
-      "prohibitedActions": ["compare full dirty path set with current ownership", "classify earlier-wave paths as unknown"],
-      "expected": { "verificationState": "full-integrated-post-wave-state", "claimComparison": "current-wave-delta-vs-current-wave-ownership-union", "earlierWavePaths": "valid-baseline-state", "disposition": "verified" }
+      "candidate": { "identity": "candidate-1", "state": { "status": "dirty", "changedPaths": ["pre-existing.md", "src/a.js", "src/b.js", "src/c.js"], "diffSnapshot": "integrated-diff" }, "cohortDelta": { "changedPaths": ["src/a.js", "src/b.js", "src/c.js"], "diffSnapshot": "cohort-only-diff" }, "ownershipUnion": ["src/a.js", "src/b.js", "src/c.js"] },
+      "prohibitedActions": ["recapture cohort baseline on refill", "derive authoritative item delta from item dispatch baseline", "lose pre-existing run state"],
+      "expected": { "authoritativeDeltaBasis": "cohortBaseline", "runBaselinePreserved": true, "cohortDeltaContained": true, "disposition": "candidate-valid" }
     },
     {
-      "id": "scheduler-scope-drift-invalidates-evidence",
-      "scenario": "Owned-path drift and a later edit occur after aggregate verification.",
-      "events": ["owned-path-drift", "later-edit"],
-      "prohibitedActions": ["reuse stale verification", "reuse stale judgment"],
-      "expected": { "evidenceStatus": "invalid", "invalidated": ["verification", "judgment"], "disposition": "block-and-reverify" }
+      "id": "scheduler-provisional-dependency-invalidation",
+      "scenario": "A contained terminal dependency can unlock provisional descendants, but a later fault invalidates them.",
+      "dependencies": { "a": [], "b": [], "c": ["a"], "d": ["c"] },
+      "timeline": [
+        { "at": 0, "event": "start", "workItemId": "a", "activeImplement": ["a"] },
+        { "at": 1, "event": "start", "workItemId": "b", "activeImplement": ["a", "b"] },
+        { "at": 2, "event": "finish-contained", "workItemId": "a", "activeImplement": ["b"] },
+        { "at": 3, "event": "start-provisional", "workItemId": "c", "activeImplement": ["b", "c"] },
+        { "at": 4, "event": "external-change", "activeImplement": ["b", "c"] },
+        { "at": 5, "event": "freeze-refill-and-drain", "activeImplement": ["b", "c"] }
+      ],
+      "prohibitedActions": ["treat c as final", "refill after external change", "reset or revert combined workspace"],
+      "expected": { "provisionalItems": ["c", "d"], "invalidatedDescendants": ["c", "d"], "reconciliation": "serialized", "disposition": "freeze-drain-reconcile" }
+    },
+    {
+      "id": "scheduler-read-only-work-stealing",
+      "scenario": "Useful preparation work may fill read-only capacity without checking a moving candidate.",
+      "active": { "implement": ["a", "b"], "readOnly": ["prep-manifest", "prep-report"], "totalNaruChildren": 4 },
+      "allowedKinds": ["future-scope discovery", "manifest or target inspection", "check-plan preparation", "unaffected dependency inspection", "terminal-report static review"],
+      "evidence": { "evidenceId": "evidence-1", "observedPaths": ["package.json", "src/future.js"], "basisIdentity": "dispatch-b", "validityKeys": ["package.json@dispatch-b"], "invalidationKeys": ["package.json changed", "src/future.js changed"] },
+      "prohibitedActions": ["edit from preparation child", "run final checks against moving workspace", "exceed two read-only children", "exceed four total Naru children"],
+      "expected": { "maxConcurrentReadOnly": 2, "maxTotalNaruChildren": 4, "changedObservedPathInvalidatesEvidence": true, "disposition": "bounded-preparation" }
+    },
+    {
+      "id": "scheduler-todo-phase-semantics",
+      "scenario": "TodoWrite presents phase state but never replaces the scheduler DAG.",
+      "todo": { "inProgressCount": 1, "level": "phase", "contentSets": { "active": ["b", "c"], "provisional": ["c", "d"], "ready": ["e"], "blocked": ["f"] }, "completedBeforeFinalCheckpoint": [] },
+      "prohibitedActions": ["one todo per work item in progress", "complete todo from terminal writer report", "use TodoWrite as scheduler state"],
+      "expected": { "exactlyOnePhaseInProgress": true, "completionPoint": "unchanged-final-checkpoint", "disposition": "presentation-only" }
+    },
+    {
+      "id": "scheduler-quiescent-two-shard-verification",
+      "scenario": "Two independent verification shards run only against one exact quiescent candidate.",
+      "candidate": { "candidateIdentity": "candidate-1", "candidateState": { "status": "dirty", "changedPaths": ["src/a.js", "src/b.js"], "diffSnapshot": "candidate-diff" }, "activeImplement": [] },
+      "shards": [
+        { "shardId": "verify-1", "candidateIdentity": "candidate-1", "workItemIds": ["a"], "coveredChecks": ["check-a"], "observedPaths": ["src/a.js", "src/shared.js"], "mutableResourceClaims": ["test-cache-a"] },
+        { "shardId": "verify-2", "candidateIdentity": "candidate-1", "workItemIds": ["b"], "coveredChecks": ["check-b"], "observedPaths": ["src/b.js", "src/shared.js"], "mutableResourceClaims": ["test-cache-b"] }
+      ],
+      "prohibitedActions": ["verify while writer active", "share mutable verification resource", "accept shard for another candidate"],
+      "expected": { "maxConcurrentVerify": 2, "readOnlyPathOverlapAllowed": true, "completeShardManifestRequired": true, "reportsValidOnlyForExactCandidate": true, "disposition": "verified-shards" }
+    },
+    {
+      "id": "scheduler-final-identity-equality",
+      "scenario": "Completion requires the post-judgment final checkpoint to exactly equal the judged candidate.",
+      "checkpoints": [
+        { "candidateIdentity": "candidate-1", "candidateState": "state-1", "finalIdentity": "candidate-1", "finalState": "state-1", "result": "complete" },
+        { "candidateIdentity": "candidate-1", "candidateState": "state-1", "finalIdentity": "candidate-2", "finalState": "state-2", "result": "invalidate" }
+      ],
+      "prohibitedActions": ["complete todo before equality check", "reuse shards after edit", "deliver from changed state"],
+      "expected": { "exactEqualityRequired": true, "invalidatedOnStatusChange": ["verification-shards", "judgment"], "disposition": "fail-closed" }
     },
     {
       "id": "scheduler-remediation-delivery-serialized",
-      "scenario": "Remediation and authorized delivery follow a completed writer wave.",
-      "prohibitedActions": ["concurrent remediation", "delivery inside writer wave"],
-      "expected": { "phases": ["implementation-wave", "aggregate-verification", "judgment", "serialized-remediation", "reverification", "rejudgment", "serialized-delivery"], "remediationConcurrency": 1, "deliveryConcurrency": 1 }
+      "scenario": "Remediation, authorized delivery, and review posting remain serialized after an unchanged final checkpoint.",
+      "phases": ["rolling-implementation", "quiescent-candidate", "verification-shards", "single-judgment", "final-identity-equality", "serialized-remediation", "new-candidate", "reverification", "rejudgment", "serialized-delivery", "serialized-review-posting"],
+      "prohibitedActions": ["remediation while writer active", "delivery while writer active", "posting while writer active", "more than three judges"],
+      "expected": { "remediationConcurrency": 1, "deliveryConcurrency": 1, "postingConcurrency": 1, "maxJudges": 3, "disposition": "serialized" }
     },
     {
       "id": "scheduler-no-automatic-worktrees",
-      "scenario": "Concurrency remains in the current workspace without automatic worktree creation.",
+      "scenario": "Rolling concurrency remains in the current workspace without automatic worktree creation.",
       "prohibitedActions": ["automatic worktree"],
-      "expected": { "automaticWorktreeCreation": false, "workspaceMode": "current-workspace" }
+      "expected": { "automaticWorktreeCreation": false, "workspaceMode": "current-workspace", "disposition": "no-worktrees" }
     }
   ]
 }

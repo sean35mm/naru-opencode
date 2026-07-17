@@ -87,11 +87,11 @@ Naru exposes five Core commands and one optional dashboard command:
 | `/naru-review-post <PR>` | Validated, idempotent, comment-only review post | GitHub comment only |
 | `/naru-minions` | Optional child-session activity view | No |
 
-There are no `/naru/*` aliases. `/naru-review` does not accept `--post`; posting always requires `/naru-review-post` explicitly.
+There are no `/naru/*` aliases. `/naru-review` does not accept `--post`. Use `/naru-review-post` for the dedicated command path, or select `naru-orchestrator` and explicitly ask it to post a review.
 
 ### Select `naru-orchestrator` for implementation
 
-`naru-orchestrator` is a visible primary agent, not a slash command. Select it in the OpenCode UI when you want the Naru Minions implementation workflow. It coordinates investigation, architecture, implementation, debugging, verification, and judgment while remaining unable to edit files itself.
+`naru-orchestrator` is a visible primary agent, not a slash command. Select it in the OpenCode UI when you want the Naru Minions implementation workflow or natural-language PR review posting. It coordinates investigation, architecture, implementation, debugging, verification, and judgment while remaining unable to edit files itself.
 
 You can make it the OpenCode default in your applicable configuration:
 
@@ -109,9 +109,21 @@ opencode --agent naru-orchestrator
 
 Do not use `naru-orchestrator` as a Task target from custom agents. See the [agent integration guide](agent-integration.md) for supported read-only delegation.
 
+For review-only language, the orchestrator runs one fresh canonical `naru-review` dry run and never posts. An explicit current request such as “post the review” authorizes one posting attempt without another confirmation. The target must be in that message or uniquely identified by prior user-authored PR context; ambiguous or missing targets stop for clarification. Every post request runs a fresh review, rejects stale, pasted, incomplete, or degraded results, and passes the validated result unchanged to the dedicated tool once. Mixed implementation or Git delivery completes first; the fresh review and post are the final phase.
+
+Both posting paths normalize every accepted user-authored URL, `OWNER/REPO#NUMBER`, split, case-variant, or bare-number reference to one `(owner, repo, positive pull number)` tuple. A bare number is resolved once from the current workspace repository. Equivalent duplicates identify one target; unresolved references or multiple distinct targets stop, including the same number in different repositories or different numbers in one repository. The wrapper uses the route selected by its generated Naru Delegate policy, while the orchestrator review edge remains canonical-only.
+
 ### Conditional specialist coverage
 
 Core workflows select specialists by relevant surface rather than launching every specialist. Plan always includes minimal-change and tests; Impact always includes topology and tests/CI; Triage always includes reproduction and codepath; Review always includes its judge and at least one relevant domain specialist. Selected specialists are required. Unselected specialists are recorded as `skipped-not-relevant`, are not retried, and do not degrade the final status. A failed selected specialist can produce a partial or incomplete result; review and review-post retain their immutable snapshot and validated posting boundaries.
+
+### Full Ultra implementation scheduling
+
+Full Ultra is the orchestrator's implementation scheduling protocol. It uses rolling cohorts with at most two independent writers in the current workspace; when a writer safely finishes, the orchestrator can refill that slot immediately. It can also run up to two useful read-only preparation tasks, for no more than four children at once. It does not force fan-out, create worktrees automatically, claim runtime scheduler enforcement, or promise a measured speedup.
+
+Every run, cohort, and item carries its baseline. Active-peer claims identify isolated writer scope. A writer's terminal result is provisional until its evidence remains valid; conflicting evidence, a changed baseline, scope uncertainty, or ownership uncertainty freezes and drains the cohort rather than starting more work.
+
+After writers are finished, the candidate must be writer-free. The orchestrator may run up to two safe Verify shards, records a complete shard manifest, then asks Judge to assess the combined evidence and confirms an unchanged final checkpoint. Remediation, delivery, and review posting stay serialized. Todo status is phase-level presentation, while dashboard rows and Task descriptions report child activity; a terminal writer does not mean the overall implementation is complete.
 
 ## Activity dashboard
 
@@ -125,14 +137,14 @@ The installer copies `plugins/naru-minions-dashboard.tsx` and its state helper, 
 
 In OpenCode's full terminal TUI, the dashboard provides:
 
-- A compact **Naru Activity** section in the standard session sidebar, showing up to four active or recently completed recognized Naru children for the current workflow root.
-- `/naru-minions`, which lists all recognized sibling child sessions and lets you navigate into one.
+- A compact **Naru Activity** section in the standard session sidebar, with conservatively bounded status, counts, task, routing, and overflow lines for up to four active or recently completed recognized Naru children for the current workflow root.
+- `/naru-minions`, a compact fixed table-like `DialogSelect` of all recognized sibling child sessions. Its one-line primary row aligns status, agent, age, and task within a fixed bound; labeled secondary metadata shows route, mode, model, and a visible short session ID. Native filtering and keyboard behavior remain available, and selecting a row navigates with its full session ID.
 - Status derived from native session and Task state, age since the latest child update, and foreground/background mode.
 - Canonical agent name and a `Luna`, `Terra`, `Sol`, `Sol xhigh`, `Sol floor`, or neutral `Routed` classification.
 - Provider, model, and variant from Task or child-message metadata. The UI shows `resolving` instead of guessing while metadata is unavailable.
 - The delegated Task description. Unrelated OpenCode Task children are omitted.
 
-The persistent card appears only while the standard session sidebar is open. `opencode --mini` does not host full-TUI plugins, so neither the dashboard nor `/naru-minions` is available there.
+The persistent card appears only while the standard session sidebar is open. `opencode --mini` does not host full-TUI plugins, so neither the dashboard nor `/naru-minions` is available there. Dashboard files are copy-pinned: rerun the installer with `--with-dashboard` for every loaded copy and restart OpenCode after dashboard changes.
 
 ## Model profiles and overrides
 
@@ -167,7 +179,7 @@ For example, an implementation minion assigned Terra exposes:
 | `naru-minion-implement` | Terra |
 | `naru-delegate-sol-minion-implement` | Sol |
 
-The five Luna-eligible minions produce five Luna aliases. All delegable non-floor roles assigned Terra produce Sol alternatives, currently seventeen aliases. Sol-floor roles and explicit Sol assignments are invoked canonically and receive no generated alternatives. The aliases are internal runtime details: do not invoke them from custom agents or persist them in integrations.
+The five Luna-eligible minions produce five Luna aliases. All adaptively routed delegable non-floor roles assigned Terra produce Sol alternatives, currently seventeen aliases. Sol-floor roles and explicit Sol assignments are invoked canonically and receive no generated alternatives. The orchestrator's dedicated `naru-review` edge is canonical-only and does not authorize Luna, Sol, or Sol-xhigh review aliases. The aliases are internal runtime details: do not invoke them from custom agents or persist them in integrations.
 
 Naru also creates seven hidden `naru-delegate-sol-xhigh-*` aliases, one for each direct `naru-orchestrator` minion child. They are optional, never required, and are gated by the actual root session: only a direct `naru-orchestrator` root using the configured Sol model at `xhigh` or `max` may invoke them. A normal Sol `high` root cannot use xhigh, and no Max child alias exists. Reinstall all copy-pinned Naru components (including `--with-dashboard` where used) and restart OpenCode before expecting the `Sol xhigh` dashboard label or routes.
 
@@ -271,7 +283,7 @@ For a manual dashboard install, also copy both dashboard files and add `"./plugi
 - Debug, Verify, and Implement allow Bash and `external_directory` for routine Git/GitHub reads, Weaver, targeted lint/typecheck/test commands, and ordinary local builds. For those shell-enabled roles, `external_directory` is explicitly `allow` and these operations are unconditionally allowed at runtime; Scout, Investigate, Architect, and Judge cannot run shell or project commands.
 - Checks execute repository code and can have hidden side effects. Inspect the relevant manifest or Makefile target before every package script or target; use one routine command per shell call. Permission matching does not validate executable identity through `PATH`.
 - A scoped implementation request authorizes local edits and targeted routine verification without another approval question. Local changes are the default stopping point. If the user explicitly requests commit, push, or PR delivery, perform that requested delivery without reconfirmation; do not perform unrequested delivery.
-- An explicit `/naru-review-post` invocation likewise authorizes its one validated GitHub review posting call without reconfirmation; it does not authorize any other GitHub posting.
+- An explicit `/naru-review-post` invocation, or an explicit current natural-language post request to the selected orchestrator, authorizes one validated GitHub review posting call without reconfirmation; it does not authorize any other GitHub posting.
 - Persistent database writes or migration execution, dependency changes not explicitly requested, destructive or irreversible work, external global configuration outside an exact approved path, billing/security-posture changes, and material scope expansion still require the applicable approval boundary.
 
 ### Permission limitations
@@ -283,7 +295,7 @@ For a manual dashboard install, also copy both dashboard files and add `"./plugi
 
 - Validated Naru tools invoke authenticated `gh` without exposing a general shell surface.
 - `/naru-review` is dry-run only.
-- `/naru-review-post` can post at most one `COMMENT` review for a complete validated snapshot. Identical reruns return `alreadyPosted`; degraded reviews are never posted. It cannot approve, request changes, merge, or create an ordinary issue comment.
+- `/naru-review-post` and the selected `naru-orchestrator` can each post at most one `COMMENT` review per explicit request, always after a fresh complete review. Identical reruns return `alreadyPosted`; degraded reviews are never posted. Arbitrary and custom agents remain dry-run-only. The tool cannot approve, request changes, merge, or create an ordinary issue comment.
 
 ### Auto mode
 
@@ -322,6 +334,8 @@ Only Debug, Verify, and Implement have Bash and external-directory allows. Rerun
 ### Review commands cannot resolve a pull request
 
 Authenticate `gh` and provide a full PR URL or `OWNER/REPO#NUMBER`. A bare PR number requires the current workspace to resolve to the intended GitHub repository.
+
+After updating Naru review-posting behavior, rerun the installer for every loaded copy and restart OpenCode. Tools, plugins, and routing helpers are copy-pinned even when Markdown is symlinked.
 
 ### The dashboard is missing
 

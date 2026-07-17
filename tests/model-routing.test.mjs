@@ -291,6 +291,14 @@ test('config routing exposes Luna, canonical Terra, and Sol routes only where el
   assert.equal(config.agent[implementSol].variant, 'high');
   assert.equal(config.agent['naru-orchestrator'].permission.task[implementLuna], 'allow');
   assert.equal(config.agent['naru-orchestrator'].permission.task[implementSol], 'allow');
+  assert.equal(config.agent['naru-orchestrator'].permission.task['naru-review'], 'allow');
+  assert.equal(config.agent['naru-orchestrator'].permission.task[lunaAlias('naru-review')], undefined);
+  assert.equal(config.agent['naru-orchestrator'].permission.task[solAlias('naru-review')], undefined);
+  assert.equal(config.agent['naru-orchestrator'].permission.task[solXhighAlias('naru-review')], undefined);
+  assert.equal(config.agent['naru-review-post'].permission.task['naru-review'], 'allow');
+  assert.equal(config.agent['naru-review-post'].permission.task[lunaAlias('naru-review')], undefined);
+  assert.equal(config.agent['naru-review-post'].permission.task[solAlias('naru-review')], 'allow');
+  assert.equal(config.agent['naru-review-post'].permission.task[solXhighAlias('naru-review')], undefined);
   assert.equal(config.agent[lunaAlias('naru-minion-architect')], undefined);
   assert.equal(config.agent[solAlias('naru-minion-architect')], undefined);
   assert.equal(config.agent[solAlias('naru-review-security')], undefined);
@@ -299,7 +307,7 @@ test('config routing exposes Luna, canonical Terra, and Sol routes only where el
     config.agent['naru-minion-scout'].permission,
     config.agent['naru-minion-implement'].permission,
   );
-  for (const target of NARU_DISPATCH_GRAPH['naru-orchestrator']) {
+  for (const target of NARU_DISPATCH_GRAPH['naru-orchestrator'].filter((value) => value.startsWith('naru-minion-'))) {
     const sourcePermission = config.agent[target].permission;
     assert.deepEqual(sourcePermission, MINION_PERMISSIONS[target]);
     for (const alias of [lunaAlias(target), solAlias(target), solXhighAlias(target)]) {
@@ -310,7 +318,7 @@ test('config routing exposes Luna, canonical Terra, and Sol routes only where el
     }
   }
 
-  for (const target of NARU_DISPATCH_GRAPH['naru-orchestrator']) {
+  for (const target of NARU_DISPATCH_GRAPH['naru-orchestrator'].filter((value) => value.startsWith('naru-minion-'))) {
     const alias = solXhighAlias(target);
     assert.equal(config.agent[alias].name, alias);
     assert.equal(config.agent[alias].model, 'openai/gpt-5.6-sol-fast');
@@ -323,6 +331,8 @@ test('config routing exposes Luna, canonical Terra, and Sol routes only where el
     }
   }
   assert.match(config.agent['naru-orchestrator'].prompt, /Sol xhigh routes are optional/);
+  assert.match(config.agent['naru-orchestrator'].prompt, /`naru-review`: canonical-only review lane/);
+  assert.match(config.agent['naru-review-post'].prompt, /`naru-review`: Terra\. Sol: `naru-delegate-sol-review`\./);
   assert.equal(Object.keys(config.agent).some((agent) => agent.includes('sol-max')), false);
   assert.equal(config.agent['naru-plan'].permission.task[leakedXhigh], undefined);
 });
@@ -337,6 +347,7 @@ test('orchestrator default Sol assignment is overrideable to Terra without chang
   assert.equal(config.agent['naru-orchestrator'].variant, 'high');
   assert.equal(config.agent[solAlias('naru-orchestrator')], undefined);
   assert.deepEqual(NARU_DISPATCH_GRAPH['naru-orchestrator'], [
+    'naru-review',
     'naru-minion-scout',
     'naru-minion-investigate',
     'naru-minion-architect',
@@ -458,6 +469,29 @@ test('plugin rejects task_id resume only for Naru routes', async () => {
       { args: { subagent_type: lunaAlias('naru-minion-scout'), task_id: 'session-id' } },
     ),
     /fresh child session/,
+  );
+  await plugin['tool.execute.before'](
+    { tool: 'task' },
+    { args: { subagent_type: 'explore', task_id: 'session-id' } },
+  );
+});
+
+test('plugin rejects root-only Naru Task targets without affecting native targets or canonical review', async () => {
+  const plugin = await NaruDelegatePlugin({
+    client: { app: { log: async () => ({ data: true }) } },
+  });
+  for (const target of ['naru-orchestrator', 'naru-review-post']) {
+    await assert.rejects(
+      plugin['tool.execute.before'](
+        { tool: 'task' },
+        { args: { subagent_type: target } },
+      ),
+      /root-only; use direct agent selection or its slash command/,
+    );
+  }
+  await plugin['tool.execute.before'](
+    { tool: 'task' },
+    { args: { subagent_type: 'naru-review' } },
   );
   await plugin['tool.execute.before'](
     { tool: 'task' },

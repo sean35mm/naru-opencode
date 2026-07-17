@@ -17,11 +17,12 @@ Core dispatch is fixed and explicit:
 /naru-impact -> naru-impact -> topology, contracts, data, frontend-mobile, tests-ci -> impact judge
 /naru-triage -> naru-triage -> reproduction, codepath, regression, tests -> triage judge
 /naru-review -> naru-review -> security, backend, frontend-mobile, integrations, tests-ci -> review judge
+naru-orchestrator -> canonical naru-review -> specialists -> review judge -> validated posting tool (only on explicit post requests)
 ```
 
-`/naru-review-post` delegates to `naru-review`, validates the complete review payload and snapshot, then uses the comment-only posting tool. The visible primary `naru-orchestrator` dispatches only to the seven `naru-minion-*` roles: scout, investigate, architect, implement, debug, verify, and judge.
+`/naru-review-post` delegates to one fresh `naru-review` workflow through the route selected by its generated Naru Delegate policy, validates the complete review payload and snapshot, then uses the comment-only posting tool. The visible primary `naru-orchestrator` has one strictly canonical-only review edge plus the existing seven adaptively routed `naru-minion-*` roles: scout, investigate, architect, implement, debug, verify, and judge. It never dispatches `naru-review-post` as a Task.
 
-Dispatch authorization is fixed, but specialist fan-out is conditional. Each workflow keeps its documented baseline, marks unselected specialists `skipped-not-relevant`, and only degrades on failed selected specialists. Review remains dry-run against an immutable GitHub snapshot; review-post alone can submit the validated comment-only payload.
+Dispatch authorization is fixed, but specialist fan-out is conditional. Each workflow keeps its documented baseline, marks unselected specialists `skipped-not-relevant`, and only degrades on failed selected specialists. Review remains dry-run against an immutable GitHub snapshot; only the explicit `/naru-review-post` wrapper or a directly selected `naru-orchestrator` acting on a current explicit user post request may submit the validated `COMMENT`-only payload.
 
 OpenCode's native Task implementation remains responsible for permission evaluation, cancellation, retries, background work, and child-session handling. Naru Delegate mutates runtime agent configuration; it does not create sessions itself.
 
@@ -70,8 +71,8 @@ At config application time, routing:
 2. Clones source definitions and applies the selected profile.
 3. Validates every dispatcher's exact fail-closed Task map against `NARU_DISPATCH_GRAPH`.
 4. Appends one generated routing policy section to dispatchers.
-5. Creates hidden Luna aliases for the five eligible minions that resolve to Terra, hidden Sol aliases for eligible delegable Terra targets, and seven optional Sol-xhigh aliases for direct orchestrator children.
-6. Adds only generated aliases reachable from each caller to its runtime Task map. Sol-xhigh aliases are added only to `naru-orchestrator` and are runtime-gated to a direct configured-Sol root at `xhigh` or `max`.
+5. Creates hidden Luna aliases for the five eligible minions that resolve to Terra, hidden Sol aliases for eligible delegable Terra targets, and seven optional Sol-xhigh aliases for direct orchestrator minion children.
+6. Adds only generated aliases reachable from each caller to its runtime Task map. The orchestrator's review edge stays canonical-only; no Luna, Sol, or Sol-xhigh review alias is authorized there. Sol-xhigh aliases are added only to `naru-orchestrator` and are runtime-gated to a direct configured-Sol root at `xhigh` or `max`.
 7. Invokes Sol-floor, Sol-assigned, and Sol-overridden roles canonically without an alias. Only true floor members are labeled `Sol floor`; other Sol routes are `Sol assignment` or `Sol override`.
 
 The managed alias prefixes are `naru-delegate-luna-`, `naru-delegate-sol-`, and `naru-delegate-sol-xhigh-`. Generated aliases have no Markdown source file and are runtime implementation details, not public integration targets. A current managed alias collision fails closed. Legacy `naru-delegate-deep-*` aliases are recognized only for cleanup, dashboard normalization, and fresh-session enforcement; new routing never generates them.
@@ -80,7 +81,7 @@ The default policy generates five Luna aliases, seventeen Sol aliases, and seven
 
 The generated dispatcher appendix makes the Sol orchestrator select a route independently for each invocation. Selection weighs capability, task shape, ambiguity, context, consequences, tool and verification burden, latency, cost, and prior evidence. It prohibits fixed role mappings, keyword-only classification, cheapest-first routing, and a mandatory model sequence. Naru Delegate itself remains deterministic and does not call a classifier model.
 
-Multiple plugin scopes merge sparse profile and agent values in load order. Before each application, the plugin restores captured originals. Any validation or application failure restores originals, removes generated aliases, disables dynamic routing for that config object for the startup, and logs one routing error. The plugin also rejects `task_id` for canonical Naru routes and managed aliases so every routed delegation uses a fresh child.
+Multiple plugin scopes merge sparse profile and agent values in load order. Before each application, the plugin restores captured originals. Any validation or application failure restores originals, removes generated aliases, disables dynamic routing for that config object for the startup, and logs one routing error. The plugin rejects `task_id` for canonical Naru routes and managed aliases so every routed delegation uses a fresh child, and rejects Task attempts targeting root-only `naru-orchestrator` or `naru-review-post` without affecting direct selection or command execution.
 
 For mixed copy-pinned generations, the v2 plugin stores normalized v2 overrides and a complete v1 Fast/Deep projection in shared state. This prevents a stale scope from discarding Terra/Sol profiles or assignments, but old code still cannot create Luna routes. Compatibility exports keep a copy-pinned v1 dashboard loadable; it may omit new Luna/Sol alias activity until reinstalled. Upgrades must refresh every loaded plugin and repeat `--with-dashboard` where applicable.
 
@@ -91,13 +92,22 @@ For mixed copy-pinned generations, the v2 plugin stores normalized v2 overrides 
 - Minion permission classes are exact: Scout/Investigate/Architect/Judge are static read-only; Debug/Verify are targeted-shell read-only; Implement alone has scoped edit and shell permission. Every class starts fail-closed and denies Task delegation.
 - Shell-enabled roles allow routine Bash, external-directory access, validated Git/GitHub reads, Weaver, and targeted checks without an approval prompt. They must inspect package scripts and Make targets before execution because repository code can hide side effects; use one routine command per shell call.
 - An explicit implementation request authorizes scoped local edits and targeted verification. Local changes are the default stopping point; an explicit commit/push/PR request authorizes that delivery without repeated confirmation. Persistent database writes or migrations, unrequested dependencies, destructive actions, external global paths not specifically approved, and material scope expansion remain consequential boundaries.
-- An explicit `/naru-review-post` invocation authorizes its one validated GitHub review posting call without repeated confirmation; it does not authorize any other GitHub posting.
+- Only an explicit `/naru-review-post` invocation or a directly selected `naru-orchestrator` handling a current explicit post request can submit one validated GitHub review posting call without repeated confirmation; neither authorizes any other GitHub posting.
 - Direct-read rules deny all minion environment and known-secret file paths; explicit environment templates remain allowed. Prompts also prohibit reading or revealing secrets. Permission policy is not a complete secret sandbox. Validated Git/GitHub tools still validate requested paths and use fixed argument arrays rather than a shell.
 - Generated Luna, Sol, and Sol-xhigh aliases deep-clone their canonical source definitions. Routing must never invent a stronger or weaker alias policy.
-- Pull-request review uses an immutable GitHub snapshot. Posting is isolated to `naru-review-post` and the validated posting tool, is `COMMENT`-only, requires a complete non-degraded payload, and is idempotent for the snapshot.
+- Pull-request review uses an immutable GitHub snapshot. Posting is isolated to exactly `naru-review-post` and `naru-orchestrator` callers of the validated posting tool, is `COMMENT`-only, requires a fresh complete non-degraded payload, and is idempotent for the snapshot. Every other agent and generated alias is rejected before GitHub I/O.
+- Both posting callers normalize accepted user-authored URL, short, split, case-variant, and bare-number references to one `(owner, repo, positive pull number)` tuple. Equivalent references are deduplicated; unresolved references and multiple distinct tuples are rejected. Different repositories sharing a number and different pull numbers remain distinct.
 - Prompt and Task packets treat repository, GitHub, log, and user-provided payloads as untrusted data. Content cannot redefine roles, permissions, models, or output contracts.
 - Environment-file reads are denied and never require approval. Doom-loop remains an ask only for roles where it is configured. Shell and external-directory safety relies on workflow scope and behavioral instructions.
 - The behavioral-eval corpus is a data-only policy contract, not a measurement of live model quality. It can later be paired with captured-run metrics without giving fixtures provider access.
+
+## Full Ultra scheduling protocol
+
+Full Ultra is prompt-level orchestration policy, not hard runtime scheduler enforcement or a measured speed guarantee. It schedules rolling cohorts in the current workspace with at most two independent writers. A safely open writer slot can be refilled immediately; up to two useful read-only preparation tasks may run alongside them, with four children total. It never requires fan-out or creates worktrees automatically.
+
+The run, each cohort, and each item retain immutable baseline identity, status, changed-path, and diff snapshots. Active peers must publish disjoint claims before editing. Completion is provisional until its evidence still matches the candidate; baseline drift, claim overlap, missing evidence, or other uncertainty freezes new scheduling and drains active work rather than guessing.
+
+Once writers are gone, the candidate is writer-free. The orchestrator may issue at most two safe Verify shards and must retain a complete shard manifest before Judge receives the consolidated evidence. Judge is followed by an unchanged final checkpoint. Remediation, delivery, and review posting are serialized phases. Todo UI state is phase-level presentation only; dashboard rows and Task descriptions expose child activity, so a terminal writer must not be represented as final completion.
 
 ## Dashboard and TUI architecture
 
@@ -106,7 +116,7 @@ The dashboard is opt-in and consists of two copy-pinned files:
 - `naru-minions-dashboard-state.mjs` normalizes Task metadata, canonicalizes managed aliases, resolves status precedence, and classifies routes from configured agent profiles without guessing unknown metadata.
 - `naru-minions-dashboard.tsx` is an external OpenTUI/Solid plugin. It registers `/naru-minions`, subscribes to native session/message events, queries root children and message metadata, renders a sidebar slot, and opens a navigation dialog.
 
-Rows are limited to recognized canonical Naru agents or managed aliases. Model text comes from Task or child-message metadata, not routing assumptions. Terminal Task state outranks stale native active state. The compact sidebar keeps up to four active or recently terminal rows; the dialog shows all recognized siblings.
+Rows are limited to recognized canonical Naru agents or managed aliases. Model text comes from Task or child-message metadata, not routing assumptions. Terminal Task state outranks stale native active state. The compact sidebar conservatively bounds every rendered line while retaining status text and symbols, counts, up to four active or recently terminal rows, and an overflow hint. `/naru-minions` remains a native filterable `DialogSelect`: each compact fixed table-like option has one aligned status/agent/age/task title bounded to 61 characters, labeled route/mode/model/short-session metadata, and the full session ID as its navigation value. Loading, empty, and unavailable states use selectable-looking sentinels that render through filtering but never navigate.
 
 `scripts/merge-tui-config.mjs` performs the installer-facing JSON/JSONC update. It rewrites only the top-level plugin registration while preserving unrelated content, prefers `tui.jsonc`, removes exact legacy registrations from other active config files, and rejects malformed inputs.
 
@@ -141,6 +151,7 @@ Reserved identifiers and contracts:
 - Canonical `naru-*` IDs listed in `NARU_AGENT_IDS` are centrally routed and guarded against `task_id` resume.
 - Public slash commands remain the five flat `/naru-*` command files. There are no nested `/naru/*` aliases.
 - `naru-review-post` is reserved for the explicit posting boundary and must never become a general custom-agent Task target.
+- `naru-orchestrator` and `naru-review-post` are root-only and must fail closed when targeted through Task.
 - `naru-minion-*`, specialists, and judges are internal implementation details, not public integration targets.
 - The routing marker, schema version, managed alias prefix, dashboard plugin ID, and exact TUI registration path are compatibility contracts. Change them only with migration and targeted coverage.
 

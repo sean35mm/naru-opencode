@@ -6,12 +6,34 @@ import {
   isManagedRoutingAlias,
   NARU_AGENT_IDS,
 } from "../tools/naru-lib/model-routing.mjs"
-import { parentTasks, routeText, statusText } from "./naru-minions-dashboard-state.mjs"
+import {
+  activityCounts,
+  compactLegend,
+  compactRowMetadata,
+  compactRowTitle,
+  DASHBOARD_SENTINELS,
+  hiddenCount,
+  isSelectableSessionValue,
+  parentTasks,
+  routeText,
+  sanitizeText,
+  shortSessionID,
+  sidebarDividerLine,
+  sidebarHeaderLine,
+  sidebarLine,
+  sidebarMetadataLine,
+  sidebarOverflowLine,
+  sidebarStatusLine,
+  sidebarTaskLine,
+  statusText,
+  truncateText,
+  visibleActivityRows,
+} from "./naru-minions-dashboard-state.mjs"
 
 const COMMAND = "naru.minions"
 const TITLE = "Naru Activity"
 const NARU_AGENTS = new Set(NARU_AGENT_IDS)
-const RECENT_MS = 15 * 60 * 1000
+const SIDEBAR_LIMIT = 4
 
 function responseData(result, fallback) {
   if (!result || typeof result !== "object") return fallback
@@ -53,16 +75,6 @@ function statusRank(status) {
   if (status === "completed") return 5
   if (status === "idle") return 6
   return 7
-}
-
-function age(timestamp) {
-  if (typeof timestamp !== "number") return "resolving"
-  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000))
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  return hours < 48 ? `${hours}h` : `${Math.floor(hours / 24)}d`
 }
 
 function canonicalAgent(value) {
@@ -150,50 +162,56 @@ async function loadRows(api, sessionID) {
   return { rootID, rows }
 }
 
-function compactRows(rows) {
-  const cutoff = Date.now() - RECENT_MS
-  return rows.filter((row) => !["idle", "completed", "error"].includes(row.status) || (row.updated ?? 0) >= cutoff).slice(0, 4)
-}
-
 function showError(api, message) {
   api.ui.toast({ variant: "error", title: TITLE, message, duration: 5000 })
+}
+
+function selectSession(api, item) {
+  if (!isSelectableSessionValue(item?.value)) return
+  api.ui.dialog.clear()
+  api.route.navigate("session", { sessionID: item.value })
 }
 
 async function showMinions(api) {
   const sessionID = currentSessionID(api)
   if (!sessionID) return showError(api, "Open a session before running /naru-minions.")
-  api.ui.dialog.setSize("large")
   api.ui.dialog.replace(() => api.ui.DialogSelect({
-    title: TITLE,
-    options: [{ title: "Loading Naru activity...", value: "loading", disabled: true }],
+    title: `${TITLE} · ${compactLegend()}`,
+    options: [{ title: "Loading Naru activity...", value: DASHBOARD_SENTINELS.loading }],
+    onSelect: (item) => selectSession(api, item),
     skipFilter: true,
   }))
   try {
     const { rootID, rows } = await loadRows(api, sessionID)
     const options = rows.length ? rows.map((row) => ({
-      title: row.task,
+      title: compactRowTitle(row),
       value: row.id,
-      category: `${row.status} · ${age(row.updated)}`,
-      description: `${row.agent} · ${row.route}${row.mode ? ` · ${row.mode}` : ""} · ${row.model}`,
+      description: compactRowMetadata(row),
     })) : [{
       title: "No recognized Naru child sessions",
-      value: "none",
+      value: DASHBOARD_SENTINELS.empty,
       description: "Unrelated Task children are intentionally hidden.",
-      disabled: true,
     }]
     api.ui.dialog.replace(() => api.ui.DialogSelect({
-      title: `${TITLE} for ${rootID.slice(0, 8)} (${rows.length})`,
-      placeholder: "Filter child sessions",
+      title: `${TITLE} (${rows.length}) · ${compactLegend()}`,
+      placeholder: `Filter children of ${shortSessionID(rootID)}`,
       options,
-      onSelect: (item) => {
-        if (!item?.value || item.disabled) return
-        api.ui.dialog.clear()
-        api.route.navigate("session", { sessionID: item.value })
-      },
+      onSelect: (item) => selectSession(api, item),
+      ...(rows.length ? {} : { skipFilter: true }),
     }))
   } catch (error) {
-    api.ui.dialog.clear()
-    showError(api, formatError(error))
+    const message = sanitizeText(formatError(error))
+    api.ui.dialog.replace(() => api.ui.DialogSelect({
+      title: `${TITLE} · ${compactLegend()}`,
+      options: [{
+        title: "Naru activity unavailable",
+        value: DASHBOARD_SENTINELS.unavailable,
+        description: truncateText(message, 100),
+      }],
+      onSelect: (item) => selectSession(api, item),
+      skipFilter: true,
+    }))
+    showError(api, message)
   }
 }
 
@@ -226,22 +244,31 @@ function registerCommand(api) {
 function NaruActivity(props) {
   const [rows, setRows] = createSignal([])
   const [degraded, setDegraded] = createSignal(false)
+  const [loading, setLoading] = createSignal(true)
   let debounce
   let generation = 0
 
   const refresh = async (sessionID) => {
     const current = ++generation
-    if (!sessionID) return setRows([])
+    setLoading(true)
+    if (!sessionID) {
+      setRows([])
+      setDegraded(false)
+      setLoading(false)
+      return
+    }
     try {
       const loaded = await loadRows(props.api, sessionID)
       if (current === generation) {
-        setRows(compactRows(loaded.rows))
+        setRows(loaded.rows)
         setDegraded(false)
+        setLoading(false)
       }
     } catch {
       if (current === generation) {
         setRows([])
         setDegraded(true)
+        setLoading(false)
       }
     }
   }
@@ -262,16 +289,23 @@ function NaruActivity(props) {
     for (const dispose of disposers) dispose()
   })
 
+  const visibleRows = () => visibleActivityRows(rows(), SIDEBAR_LIMIT)
+  const counts = () => activityCounts(rows())
+  const omitted = () => hiddenCount(counts().active + counts().recent, visibleRows().length)
+
   return <box flexDirection="column" paddingTop={1}>
-    <text><b>Naru Activity</b></text>
-    <For each={rows()} fallback={<text>{degraded() ? "Unavailable" : "No active minions"}</text>}>
-      {(row) => <box flexDirection="column" paddingTop={1}>
-        <text>{row.status} · {age(row.updated)} · {row.route}{row.mode ? ` · ${row.mode}` : ""}</text>
-        <text>{row.agent}</text>
-        <text>{row.task}</text>
-        <text>{row.model}</text>
-      </box>}
+    <text><b>{sidebarHeaderLine(counts().active, counts().recent)}</b></text>
+    <text>{sidebarDividerLine()}</text>
+    <For each={visibleRows()} fallback={<text>{sidebarLine(loading() ? "Loading activity..." : degraded() ? "Activity unavailable" : rows().length ? "No active or recent minions" : "No recognized Naru sessions")}</text>}>
+      {(row) => {
+        return <box flexDirection="column" paddingTop={1}>
+          <text>{sidebarStatusLine(row)}</text>
+          <text>{sidebarTaskLine(row)}</text>
+          <text>{sidebarMetadataLine(row)}</text>
+        </box>
+      }}
     </For>
+    {omitted() > 0 ? <text>{sidebarOverflowLine(omitted())}</text> : null}
   </box>
 }
 

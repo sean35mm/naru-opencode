@@ -6,7 +6,7 @@ import { postReview } from './naru-lib/review.mjs';
 export default {
   description:
     'Post a single comment-only PR review from a validated naru_review_result payload. ' +
-    'Requires context.agent === "naru-review-post". Hard-coded event COMMENT. ' +
+    'Requires context.agent to be exactly "naru-review-post" or "naru-orchestrator". Hard-coded event COMMENT. ' +
     'Rejects incomplete or degraded reviews. ' +
     'Deduplicates via a hidden marker digest and never retries a POST.',
   args: {

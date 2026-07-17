@@ -27,6 +27,12 @@ function schedulingCaseByID(id) {
   return item;
 }
 
+function reviewPostingCaseByID(id) {
+  const item = fixture.reviewPostingCases.find((entry) => entry.id === id);
+  assert.ok(item, `missing review posting fixture case: ${id}`);
+  return item;
+}
+
 test('behavioral contract corpus has a stable, canonical shape', () => {
   assert.equal(fixture.schemaVersion, 1);
   assert.match(fixture.purpose, /not a live model-quality benchmark/i);
@@ -55,18 +61,16 @@ test('implementation scheduling corpus keeps schema v1 and covers bounded concur
   assert.equal(fixture.schemaVersion, 1);
   assert.ok(Array.isArray(fixture.implementationSchedulingCases));
   const requiredIDs = [
-    'scheduler-single-writer',
-    'scheduler-safe-two-writer-wave',
-    'scheduler-cap-two',
-    'scheduler-same-file-serialization',
-    'scheduler-shared-contract-serialization',
-    'scheduler-shared-resource-serialization',
-    'scheduler-dependency-serialization',
-    'scheduler-weaver-conflict',
-    'scheduler-weaver-unavailable-internal-gates',
-    'scheduler-aggregate-verification-barrier',
-    'scheduler-second-wave-baseline-delta',
-    'scheduler-scope-drift-invalidates-evidence',
+    'scheduler-rolling-refill-timeline',
+    'scheduler-work-item-contract',
+    'scheduler-cap-two-timeline',
+    'scheduler-active-peer-conflict-defers',
+    'scheduler-baseline-lifecycle',
+    'scheduler-provisional-dependency-invalidation',
+    'scheduler-read-only-work-stealing',
+    'scheduler-todo-phase-semantics',
+    'scheduler-quiescent-two-shard-verification',
+    'scheduler-final-identity-equality',
     'scheduler-remediation-delivery-serialized',
     'scheduler-no-automatic-worktrees',
   ];
@@ -81,86 +85,258 @@ test('implementation scheduling corpus keeps schema v1 and covers bounded concur
   }
 });
 
-test('DAG readiness chooses one writer or a safe wave without forced fan-out and caps at two', () => {
-  const single = schedulingCaseByID('scheduler-single-writer');
-  assert.deepEqual(single.expected.implementWaves, [['a']]);
-  assert.equal(single.expected.disposition, 'single-writer');
-
-  const safe = schedulingCaseByID('scheduler-safe-two-writer-wave');
-  assert.deepEqual(safe.expected.implementWaves, [['a', 'b']]);
-  assert.equal(safe.expected.maxConcurrentImplement, 2);
-  const packetFields = [
-    'baselineIdentity', 'baselineState', 'contractClaims', 'dependencies', 'exclusions', 'generatedArtifactClaims', 'mutableResourceClaims',
-    'ownedWriteScope', 'verificationNeeds', 'waveId', 'workItemId',
+test('review posting corpus keeps schema v1 and covers authorization, freshness, and topology', () => {
+  assert.equal(fixture.schemaVersion, 1);
+  const requiredIDs = [
+    'review-only-zero-post',
+    'explicit-second-turn-post-it',
+    'ambiguous-prior-target',
+    'missing-target',
+    'target-url-short-split-equivalence',
+    'target-owner-repo-case-equivalence',
+    'target-equivalent-duplicates',
+    'target-same-number-different-repositories',
+    'target-different-numbers',
+    'target-bare-number-resolution-success',
+    'target-bare-number-resolution-failure',
+    'target-multiple-distinct-ambiguity',
+    'stale-pasted-payload',
+    'incomplete-degraded-refusal',
+    'review-post-depth-topology',
+    'mixed-delivery-then-fresh-post',
   ];
-  for (const item of safe.workItems) assert.deepEqual(Object.keys(item).sort(), packetFields);
-
-  const capped = schedulingCaseByID('scheduler-cap-two');
-  assert.deepEqual(capped.expected.implementWaves, [['a', 'b'], ['c']]);
-  assert.equal(capped.expected.maxConcurrentImplement, 2);
-});
-
-test('overlap, coupling, and dependencies deterministically serialize implementation writers', () => {
-  for (const id of [
-    'scheduler-same-file-serialization',
-    'scheduler-shared-contract-serialization',
-    'scheduler-shared-resource-serialization',
-    'scheduler-dependency-serialization',
-  ]) {
-    const entry = schedulingCaseByID(id);
-    assert.deepEqual(entry.expected.implementWaves, [['a'], ['b']], id);
-    assert.equal(entry.expected.maxConcurrentImplement, 1, id);
-    assert.equal(entry.expected.disposition, 'serialize', id);
+  assert.deepEqual(fixture.reviewPostingCases.map((entry) => entry.id), requiredIDs);
+  for (const entry of fixture.reviewPostingCases) {
+    assert.ok(Array.isArray(entry.prohibitedActions) && entry.prohibitedActions.length);
+    assert.equal(typeof entry.expected.disposition, 'string');
   }
 });
 
-test('Weaver conflict serializes without retry while unavailable Weaver preserves strict internal gates', () => {
-  const conflict = schedulingCaseByID('scheduler-weaver-conflict');
-  assert.equal(conflict.weaver.available, true);
-  assert.equal(conflict.weaver.claimRetries, 0);
-  assert.equal(conflict.weaver.claimTiming, 'before-first-edit');
-  assert.deepEqual(conflict.weaver.successfulClaims, []);
-  assert.equal(conflict.expected.editsBeforeConflict, 0);
-  assert.deepEqual(conflict.expected.reportChangedPaths, []);
-  assert.equal(conflict.expected.coordinatorFallback, 'serialized');
-  assert.equal(conflict.expected.disposition, 'blocked-then-serialize');
+test('review-only and explicit second-turn posting remain distinct', () => {
+  const dry = reviewPostingCaseByID('review-only-zero-post');
+  assert.equal(dry.expected.canonicalReviewTasks, 1);
+  assert.equal(dry.expected.postCalls, 0);
+  assert.equal(dry.expected.implementationMinionCalls, 0);
 
-  const unavailable = schedulingCaseByID('scheduler-weaver-unavailable-internal-gates');
-  assert.equal(unavailable.weaver.available, false);
-  assert.equal(unavailable.weaver.fallback, 'strict-packet-ownership-and-changed-path-containment');
-  assert.deepEqual(unavailable.expected.implementWaves, [['a', 'b']]);
-  assert.equal(unavailable.expected.maxConcurrentImplement, 2);
+  const post = reviewPostingCaseByID('explicit-second-turn-post-it');
+  assert.deepEqual(post.targets.priorUser, ['owner/repo#42']);
+  assert.equal(post.expected.resolvedTarget, 'owner/repo#42');
+  assert.equal(post.expected.canonicalReviewTasksAfterPostRequest, 1);
+  assert.equal(post.expected.postCalls, 1);
+  assert.equal(post.expected.confirmationPrompts, 0);
+  assert.equal(post.expected.payload, 'fresh-extracted-object-unchanged');
 });
 
-test('wave barriers, stale evidence, remediation, delivery, and worktree behavior fail closed', () => {
-  const barrier = schedulingCaseByID('scheduler-aggregate-verification-barrier');
-  assert.equal(barrier.expected.verificationStarts, 'after-all-writers-terminal');
-  assert.deepEqual(barrier.expected.implementationReports, ['a', 'b']);
-  assert.equal(barrier.expected.claimComparison, 'current-wave-delta-vs-current-wave-ownership-union');
+test('missing or ambiguous user-authored targets stop before review or posting', () => {
+  for (const id of ['ambiguous-prior-target', 'missing-target']) {
+    const entry = reviewPostingCaseByID(id);
+    assert.equal(entry.expected.askForTarget, true, id);
+    assert.equal(entry.expected.canonicalReviewTasks, 0, id);
+    assert.equal(entry.expected.postCalls, 0, id);
+  }
+});
 
-  const secondWave = schedulingCaseByID('scheduler-second-wave-baseline-delta');
-  assert.equal(secondWave.wave.waveId, 'wave-2');
-  assert.deepEqual(secondWave.wave.workItemIds, ['c']);
-  assert.equal(secondWave.wave.baselineIdentity, 'wave-2-pre');
-  assert.equal(secondWave.wave.postWaveIdentity, 'wave-2-post');
-  assert.deepEqual(secondWave.wave.baselineState.changedPaths, ['src/a.js', 'src/b.js']);
-  assert.deepEqual(secondWave.wave.postWaveState.changedPaths, ['src/a.js', 'src/b.js', 'src/c.js']);
-  assert.deepEqual(secondWave.wave.currentWaveDelta.changedPaths, ['src/c.js']);
-  assert.deepEqual(secondWave.wave.ownershipUnion, ['src/c.js']);
-  assert.equal(secondWave.expected.verificationState, 'full-integrated-post-wave-state');
-  assert.equal(secondWave.expected.claimComparison, 'current-wave-delta-vs-current-wave-ownership-union');
-  assert.equal(secondWave.expected.earlierWavePaths, 'valid-baseline-state');
-  assert.equal(secondWave.expected.disposition, 'verified');
+test('target syntax, case variants, and duplicate references normalize to one tuple', () => {
+  for (const id of [
+    'target-url-short-split-equivalence',
+    'target-owner-repo-case-equivalence',
+    'target-equivalent-duplicates',
+  ]) {
+    const entry = reviewPostingCaseByID(id);
+    assert.deepEqual(entry.expected.canonicalTargets, [['owner', 'repo', 42]], id);
+    assert.equal(entry.expected.distinctTargets, 1, id);
+    assert.equal(entry.expected.postCalls, 1, id);
+  }
+  assert.equal(reviewPostingCaseByID('target-equivalent-duplicates').expected.deduplicatedReferences, 2);
+});
 
-  const stale = schedulingCaseByID('scheduler-scope-drift-invalidates-evidence');
-  assert.deepEqual(stale.events, ['owned-path-drift', 'later-edit']);
-  assert.equal(stale.expected.evidenceStatus, 'invalid');
-  assert.deepEqual(stale.expected.invalidated, ['verification', 'judgment']);
+test('different repositories or pull numbers remain distinct and ambiguous', () => {
+  for (const id of [
+    'target-same-number-different-repositories',
+    'target-different-numbers',
+    'target-multiple-distinct-ambiguity',
+  ]) {
+    const entry = reviewPostingCaseByID(id);
+    assert.ok(entry.expected.distinctTargets > 1, id);
+    assert.equal(entry.expected.askForTarget, true, id);
+    assert.equal(entry.expected.postCalls, 0, id);
+  }
+  assert.deepEqual(
+    reviewPostingCaseByID('target-same-number-different-repositories').expected.canonicalTargets,
+    [['owner', 'alpha', 42], ['owner', 'beta', 42]],
+  );
+  assert.deepEqual(
+    reviewPostingCaseByID('target-different-numbers').expected.canonicalTargets,
+    [['owner', 'repo', 42], ['owner', 'repo', 43]],
+  );
+});
+
+test('bare pull numbers resolve once from workspace context or fail closed', () => {
+  const resolved = reviewPostingCaseByID('target-bare-number-resolution-success');
+  assert.equal(resolved.workspaceRepository, 'owner/repo');
+  assert.equal(resolved.expected.bareNumberResolutions, 1);
+  assert.deepEqual(resolved.expected.canonicalTargets, [['owner', 'repo', 42]]);
+  assert.equal(resolved.expected.postCalls, 1);
+
+  const unresolved = reviewPostingCaseByID('target-bare-number-resolution-failure');
+  assert.equal(unresolved.workspaceRepository, null);
+  assert.equal(unresolved.expected.bareNumberResolutions, 1);
+  assert.equal(unresolved.expected.askForTarget, true);
+  assert.equal(unresolved.expected.postCalls, 0);
+});
+
+test('posting always uses a fresh result and rejects incomplete or degraded output', () => {
+  const stale = reviewPostingCaseByID('stale-pasted-payload');
+  assert.deepEqual(stale.payloadSources, ['pasted-json', 'prior-naru_review_result', 'assistant-text', 'tool-report']);
+  assert.equal(stale.expected.canonicalReviewTasks, 1);
+  assert.equal(stale.expected.reusedPayloads, 0);
+  assert.equal(stale.expected.postPayload, 'fresh-extracted-object-unchanged');
+  assert.equal(stale.expected.postCalls, 1);
+
+  const refusal = reviewPostingCaseByID('incomplete-degraded-refusal');
+  assert.deepEqual(refusal.expected.postCallsPerResult, [0, 0, 0]);
+  assert.ok(refusal.freshReviewResults.some((result) => result.workflow.status === 'incomplete'));
+  assert.ok(refusal.freshReviewResults.some((result) => result.workflow.degraded));
+  assert.ok(refusal.freshReviewResults.some((result) => !result.snapshotComplete));
+});
+
+test('review posting topology stays within depth and mixed delivery posts last', () => {
+  const topology = reviewPostingCaseByID('review-post-depth-topology');
+  assert.equal(topology.expected.orchestratorReviewTarget, 'canonical-only');
+  assert.equal(topology.expected.wrapperReviewTarget, 'generated-policy-selected');
+  assert.equal(topology.expected.wrapperCommandSubtask, false);
+  assert.deepEqual(topology.expected.rootOnlyTaskTargets, ['naru-orchestrator', 'naru-review-post']);
+  assert.equal(topology.expected.maxTaskDepthAfterRoot, 2);
+
+  const mixed = reviewPostingCaseByID('mixed-delivery-then-fresh-post');
+  assert.deepEqual(mixed.events.slice(-3), ['git-delivery', 'fresh-canonical-review', 'post-review']);
+  assert.equal(mixed.expected.freshReviewAfterDelivery, true);
+  assert.equal(mixed.expected.postIsFinalPhase, true);
+  assert.equal(mixed.expected.postCalls, 1);
+  assert.equal(mixed.expected.laterMutationInvalidatesReview, true);
+});
+
+test('rolling cohorts refill immediately after a contained finish and never exceed two writers', () => {
+  const rolling = schedulingCaseByID('scheduler-rolling-refill-timeline');
+  assert.deepEqual(rolling.timeline.map(({ event, workItemId }) => [event, workItemId]), [
+    ['start', 'a'],
+    ['start', 'b'],
+    ['finish-contained', 'a'],
+    ['start', 'c'],
+    ['finish-contained', 'b'],
+    ['finish-contained', 'c'],
+  ]);
+  assert.equal(rolling.timeline[3].activePeer, 'b');
+  assert.deepEqual(rolling.timeline[3].activeImplement, ['b', 'c']);
+  assert.equal(rolling.expected.cStartsWhileBActive, true);
+  assert.ok(rolling.timeline.every((event) => event.activeImplement.length <= 2));
+
+  const capped = schedulingCaseByID('scheduler-cap-two-timeline');
+  assert.equal(capped.timeline[2].event, 'defer-cap');
+  assert.deepEqual(capped.timeline[2].activeImplement, ['a', 'b']);
+  assert.deepEqual(capped.expected.deferredByCap, ['c']);
+  assert.ok(capped.timeline.every((event) => event.activeImplement.length <= 2));
+});
+
+test('protocol 2 work items separate frozen reads from every mutable scheduling claim', () => {
+  const contract = schedulingCaseByID('scheduler-work-item-contract');
+  const itemFields = [
+    'configurationClaims', 'dependencies', 'exclusions', 'frozenContractClaims', 'generatedArtifactClaims',
+    'mutableContractClaims', 'mutableResourceClaims', 'ownedWriteScope', 'status', 'verificationNeeds', 'workItemId',
+  ];
+  for (const item of contract.workItems) assert.deepEqual(Object.keys(item).sort(), itemFields);
+  assert.deepEqual(contract.workItems[0].frozenContractClaims, contract.workItems[1].frozenContractClaims);
+  assert.equal(contract.expected.schedulingProtocol, 2);
+  assert.equal(contract.expected.sharedFrozenContractConcurrent, true);
+  assert.equal(contract.expected.mutableUncertaintySerializes, true);
+});
+
+test('active-peer conflicts defer refill until the remaining writer terminates', () => {
+  const conflict = schedulingCaseByID('scheduler-active-peer-conflict-defers');
+  assert.deepEqual(conflict.conflict.configurationClaims, ['tsconfig.json']);
+  assert.equal(conflict.timeline[3].event, 'defer-active-peer-conflict');
+  assert.equal(conflict.timeline[3].conflictsWith, 'b');
+  assert.deepEqual(conflict.timeline[3].activeImplement, ['b']);
+  assert.equal(conflict.timeline[5].event, 'start');
+  assert.equal(conflict.timeline[5].workItemId, 'c');
+  assert.equal(conflict.expected.cStartsAfterBFinishes, true);
+});
+
+test('run and cohort baselines remain immutable while item dispatch observations stay provisional', () => {
+  const lifecycle = schedulingCaseByID('scheduler-baseline-lifecycle');
+  assert.equal(lifecycle.baselines.runBaseline.captureCount, 1);
+  assert.equal(lifecycle.baselines.cohortBaseline.captureCount, 1);
+  assert.equal(lifecycle.baselines.cohortBaseline.capturedOn, 'zero-to-one-writer');
+  assert.deepEqual(lifecycle.baselines.itemDispatchBaselines[1].activePeerClaims, [
+    { workItemId: 'a', ownedWriteScope: ['src/a.js'] },
+  ]);
+  assert.deepEqual(lifecycle.baselines.itemDispatchBaselines[2].terminalDependencyReports, ['report-a']);
+  assert.equal(lifecycle.baselines.itemDispatchBaselines[2].provisionalWhilePeerWrites, true);
+  assert.equal(lifecycle.expected.authoritativeDeltaBasis, 'cohortBaseline');
+  assert.deepEqual(lifecycle.candidate.cohortDelta.changedPaths, lifecycle.candidate.ownershipUnion);
+  assert.equal(lifecycle.expected.runBaselinePreserved, true);
+});
+
+test('terminal dependency reports unlock provisionally and faults freeze refill and invalidate descendants', () => {
+  const provisional = schedulingCaseByID('scheduler-provisional-dependency-invalidation');
+  assert.equal(provisional.timeline[2].event, 'finish-contained');
+  assert.equal(provisional.timeline[3].event, 'start-provisional');
+  assert.equal(provisional.timeline[4].event, 'external-change');
+  assert.equal(provisional.timeline[5].event, 'freeze-refill-and-drain');
+  assert.deepEqual(provisional.expected.provisionalItems, ['c', 'd']);
+  assert.deepEqual(provisional.expected.invalidatedDescendants, ['c', 'd']);
+  assert.equal(provisional.expected.reconciliation, 'serialized');
+});
+
+test('read-only work stealing is bounded, evidence-keyed, and invalidated by observed-path changes', () => {
+  const stealing = schedulingCaseByID('scheduler-read-only-work-stealing');
+  assert.equal(stealing.active.implement.length, 2);
+  assert.equal(stealing.active.readOnly.length, 2);
+  assert.equal(stealing.active.totalNaruChildren, 4);
+  assert.deepEqual(Object.keys(stealing.evidence).sort(), [
+    'basisIdentity', 'evidenceId', 'invalidationKeys', 'observedPaths', 'validityKeys',
+  ]);
+  assert.equal(stealing.expected.maxConcurrentReadOnly, 2);
+  assert.equal(stealing.expected.maxTotalNaruChildren, 4);
+  assert.equal(stealing.expected.changedObservedPathInvalidatesEvidence, true);
+});
+
+test('TodoWrite exposes one phase summary and completes only at the unchanged final checkpoint', () => {
+  const todo = schedulingCaseByID('scheduler-todo-phase-semantics');
+  assert.equal(todo.todo.inProgressCount, 1);
+  assert.equal(todo.todo.level, 'phase');
+  assert.deepEqual(Object.keys(todo.todo.contentSets).sort(), ['active', 'blocked', 'provisional', 'ready']);
+  assert.deepEqual(todo.todo.completedBeforeFinalCheckpoint, []);
+  assert.equal(todo.expected.completionPoint, 'unchanged-final-checkpoint');
+});
+
+test('quiescent verification uses at most two exact-candidate shards with disjoint mutable resources', () => {
+  const verification = schedulingCaseByID('scheduler-quiescent-two-shard-verification');
+  assert.deepEqual(verification.candidate.activeImplement, []);
+  assert.equal(verification.shards.length, 2);
+  assert.ok(verification.shards.every((shard) => shard.candidateIdentity === verification.candidate.candidateIdentity));
+  assert.deepEqual(verification.shards[0].observedPaths.slice(-1), verification.shards[1].observedPaths.slice(-1));
+  assert.notDeepEqual(verification.shards[0].mutableResourceClaims, verification.shards[1].mutableResourceClaims);
+  assert.equal(verification.expected.maxConcurrentVerify, 2);
+  assert.equal(verification.expected.completeShardManifestRequired, true);
+  assert.equal(verification.expected.reportsValidOnlyForExactCandidate, true);
+});
+
+test('final identity equality gates todos, serialized remediation and delivery, and worktree behavior', () => {
+  const equality = schedulingCaseByID('scheduler-final-identity-equality');
+  assert.equal(equality.checkpoints[0].result, 'complete');
+  assert.equal(equality.checkpoints[0].candidateIdentity, equality.checkpoints[0].finalIdentity);
+  assert.equal(equality.checkpoints[0].candidateState, equality.checkpoints[0].finalState);
+  assert.equal(equality.checkpoints[1].result, 'invalidate');
+  assert.notEqual(equality.checkpoints[1].candidateIdentity, equality.checkpoints[1].finalIdentity);
+  assert.deepEqual(equality.expected.invalidatedOnStatusChange, ['verification-shards', 'judgment']);
 
   const serialized = schedulingCaseByID('scheduler-remediation-delivery-serialized');
   assert.equal(serialized.expected.remediationConcurrency, 1);
   assert.equal(serialized.expected.deliveryConcurrency, 1);
-  assert.deepEqual(serialized.expected.phases.slice(-4), ['serialized-remediation', 'reverification', 'rejudgment', 'serialized-delivery']);
+  assert.equal(serialized.expected.postingConcurrency, 1);
+  assert.equal(serialized.expected.maxJudges, 3);
+  assert.deepEqual(serialized.phases.slice(-3), ['rejudgment', 'serialized-delivery', 'serialized-review-posting']);
 
   const worktrees = schedulingCaseByID('scheduler-no-automatic-worktrees');
   assert.equal(worktrees.expected.automaticWorktreeCreation, false);
@@ -200,7 +376,10 @@ test('xhigh is optional and only reachable from direct Sol xhigh or max orchestr
 test('conditional fan-out keeps workflow baselines, selected sets, and skipped-not-relevant semantics', () => {
   for (const entry of fixture.cases.filter((item) => item.selection)) {
     const { selected, skipped, baseline, skippedStatus } = entry.selection;
-    const targets = NARU_DISPATCH_GRAPH[entry.rootAgent] ?? [];
+    const rootTargets = NARU_DISPATCH_GRAPH[entry.rootAgent] ?? [];
+    const targets = entry.workflow === 'implementation'
+      ? rootTargets.filter((target) => target.startsWith('naru-minion-'))
+      : rootTargets;
     assert.deepEqual(baseline, workflowBaselines[entry.workflow] ?? baseline, `${entry.id} baseline`);
     assert.equal(skippedStatus, 'skipped-not-relevant');
     for (const specialist of [...selected, ...skipped, ...baseline]) {
