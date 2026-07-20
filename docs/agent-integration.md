@@ -1,3 +1,8 @@
+---
+title: Agent integration guide
+description: Detailed rules for safely delegating read-only Naru workflows from custom agents.
+---
+
 # Integrate Naru with your own agent
 
 Naru supports a narrow, read-only integration surface for custom OpenCode agents. The safe boundary is an exact fail-closed Task allowlist, not agent visibility or naming conventions.

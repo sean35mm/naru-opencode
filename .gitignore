@@ -4,3 +4,6 @@
 .naru-backups/
 node_modules/
 coverage/
+docs/node_modules/
+docs/dist/
+docs/.astro/

@@ -1,3 +1,8 @@
+---
+title: Naru user guide
+description: Detailed installation, operation, routing, dashboard, and safety reference.
+---
+
 # Naru user guide
 
 This guide covers installation, day-to-day use, model routing, the optional dashboard, upgrades, migration, troubleshooting, and Naru's safety boundaries.
@@ -107,7 +112,7 @@ Or launch OpenCode with it for one invocation:
 opencode --agent naru-orchestrator
 ```
 
-Do not use `naru-orchestrator` as a Task target from custom agents. See the [agent integration guide](agent-integration.md) for supported read-only delegation.
+Do not use `naru-orchestrator` as a Task target from custom agents. See the [agent integration guide](https://sean35mm.github.io/naru-opencode/agent-integration/) for supported read-only delegation.
 
 For review-only language, the orchestrator runs one fresh canonical `naru-review` dry run and never posts. An explicit current request such as “post the review” authorizes one posting attempt without another confirmation. The target must be in that message or uniquely identified by prior user-authored PR context; ambiguous or missing targets stop for clarification. Every post request runs a fresh review, rejects stale, pasted, incomplete, or degraded results, and passes the validated result unchanged to the dedicated tool once. Mixed implementation or Git delivery completes first; the fresh review and post are the final phase.
 

@@ -50,9 +50,21 @@ async function main() {
   if (missing.length) fail(`missing required prompt files: ${missing.join(', ')}`);
 
   const docs = (await readdir(here('docs'))).sort();
-  const expectedDocs = ['agent-integration.md', 'development.md', 'user-guide.md'];
-  if (JSON.stringify(docs) !== JSON.stringify(expectedDocs)) {
-    fail(`docs inventory mismatch: got ${JSON.stringify(docs)} expected ${JSON.stringify(expectedDocs)}`);
+  const canonicalDocs = ['agent-integration.md', 'development.md', 'user-guide.md'];
+  const requiredDocs = [
+    ...canonicalDocs,
+    'astro.config.mjs',
+    'package-lock.json',
+    'package.json',
+    'public',
+    'src',
+    'tsconfig.json',
+  ];
+  const allowedDocs = new Set([...requiredDocs, '.astro', 'dist', 'node_modules']);
+  const missingDocs = requiredDocs.filter(p => !docs.includes(p));
+  const unexpectedDocs = docs.filter(p => !allowedDocs.has(p));
+  if (missingDocs.length || unexpectedDocs.length) {
+    fail(`docs inventory mismatch: missing ${JSON.stringify(missingDocs)} unexpected ${JSON.stringify(unexpectedDocs)}`);
   }
 
   // Core orchestrators: conditional coverage, status semantics, early stop, and packet scoping.

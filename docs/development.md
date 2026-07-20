@@ -1,3 +1,8 @@
+---
+title: Naru development guide
+description: Detailed architecture, invariants, extension, testing, and release reference.
+---
+
 # Naru development guide
 
 This guide describes the repository architecture, sources of truth, security invariants, extension rules, targeted checks, and release process.

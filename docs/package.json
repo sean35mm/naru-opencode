@@ -1,0 +1,17 @@
+{
+  "name": "naru-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "astro build",
+    "dev": "astro dev",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.41.3",
+    "astro": "7.1.2",
+    "astro-mermaid": "2.1.0",
+    "mermaid": "11.16.0",
+    "starlight-llms-txt": "0.11.0"
+  }
+}

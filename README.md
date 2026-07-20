@@ -9,6 +9,8 @@ Multi-agent workflows for [OpenCode](https://opencode.ai).
 
 Built by [Naru Labs](https://github.com/sean35mm).
 
+**Documentation site:** [sean35mm.github.io/naru-opencode](https://sean35mm.github.io/naru-opencode/)
+
 ## Public entry points
 
 ```text
@@ -99,6 +101,7 @@ Copy the exact permission fragment and full integration rules from the [Agent in
 
 ## Documentation
 
+- **[Documentation site](https://sean35mm.github.io/naru-opencode/)** — concise guides, runtime concepts, and reference material.
 - [User guide](docs/user-guide.md) — install, commands, agent selection, routing, dashboard, migration, troubleshooting, and safety.
 - [Agent integration guide](docs/agent-integration.md) — safe delegation from your own OpenCode agents.
 - [Development guide](docs/development.md) — architecture, invariants, extension rules, tests, and releases.

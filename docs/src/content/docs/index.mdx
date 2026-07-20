@@ -1,0 +1,37 @@
+---
+title: Naru for OpenCode
+description: A disciplined multi-agent workflow for OpenCode.
+---
+
+Naru adds read-only analysis, scoped implementation, verification, judgment, optional local scheduler gates, and a terminal activity view to [OpenCode](https://opencode.ai).
+
+Start with the [quickstart](https://sean35mm.github.io/naru-opencode/getting-started/quickstart/) or the detailed [user guide](https://sean35mm.github.io/naru-opencode/user-guide/). For a safety-first view of the runtime, read [scheduler modes](https://sean35mm.github.io/naru-opencode/runtime/scheduler-modes/) and [limitations](https://sean35mm.github.io/naru-opencode/reference/limitations/).
+
+## How the pieces fit
+
+```mermaid
+flowchart TD
+  U[User] --> C[Core commands]
+  U --> O[naru-orchestrator]
+  C --> R[Read-only workflows]
+  O --> A[Adaptive analysis]
+  A --> I[Scoped Implement minion]
+  I --> V[Verify shards]
+  V --> J[Judge]
+  O --> S[Optional local scheduler]
+  S --> T[Dashboard telemetry]
+  R --> G[Advisory report]
+  J --> G
+```
+
+**Walkthrough:** Core commands produce read-only plans, impact analysis, triage, or dry-run review. For implementation, the selected orchestrator chooses useful analysis, sends scoped edits only to Implement, then waits for a writer-free candidate before Verify and Judge. The optional scheduler observes or gates declared Task admissions; the dashboard displays local activity and telemetry.
+
+## Choose a path
+
+- **Install Naru:** [installation](https://sean35mm.github.io/naru-opencode/getting-started/installation/)
+- **Understand delegation:** [adaptive delegation](https://sean35mm.github.io/naru-opencode/concepts/adaptive-delegation/) and [protocols](https://sean35mm.github.io/naru-opencode/concepts/protocols/)
+- **Configure the runtime:** [scheduler modes](https://sean35mm.github.io/naru-opencode/runtime/scheduler-modes/) and [runtime configuration](https://sean35mm.github.io/naru-opencode/reference/runtime-config/)
+- **Use a review safely:** [review lane](https://sean35mm.github.io/naru-opencode/workflows/review-lane/)
+- **Integrate another agent:** [agent workflows](https://sean35mm.github.io/naru-opencode/workflows/agents/) and the canonical [integration guide](https://sean35mm.github.io/naru-opencode/agent-integration/)
+
+The detailed [user guide](https://sean35mm.github.io/naru-opencode/user-guide/), [development guide](https://sean35mm.github.io/naru-opencode/development/), and [agent integration guide](https://sean35mm.github.io/naru-opencode/agent-integration/) remain the canonical references.
