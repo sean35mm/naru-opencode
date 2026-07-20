@@ -11,6 +11,8 @@ description: A compact integration and safety checklist for agents working with 
 4. Keep reports advisory. A report never grants edit, command, dependency, Git, database, posting, or deployment authority.
 5. For implementation, ask the user to select `naru-orchestrator`; only its scoped Implement minion edits.
 6. Treat scheduler artifacts as correlation data, not proof that reports or workspace state are correct.
+7. Require OpenCode 1.18.4+ with effective top-level `subagent_depth >= 2`; recommend exactly `2`, accept higher explicit values, and restart after global/project config changes.
+8. Do not claim the installer changes OpenCode config by default. Only explicit `--configure-subagent-depth` authorizes its bounded transactional merge; `--project` uses the project root and `--dir` must actually be loaded by OpenCode.
 
 ## Useful links
 

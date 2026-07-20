@@ -9,9 +9,9 @@ This guide covers installation, day-to-day use, model routing, the optional dash
 
 ## Requirements
 
-- [OpenCode](https://opencode.ai) >= 1.17.19.
+- [OpenCode](https://opencode.ai) >= 1.18.4, with an effective top-level `subagent_depth` of at least `2`.
 - [GitHub CLI](https://cli.github.com/) (`gh`), authenticated, for pull-request review workflows.
-- Node.js or Bun for every installation that uses `--with-dashboard`; the installer needs one of them to create or merge TUI configuration safely.
+- Node.js or Bun for every installation that uses `--with-dashboard` or `--configure-subagent-depth`; the installer needs one of them to merge configuration safely.
 - `codebase-memory` and LSP support are optional. Read-only workflows fall back to literal file search when they are unavailable or stale.
 
 ## Install and update
@@ -25,6 +25,8 @@ cd naru-opencode
 ```
 
 The installer preflights and stages the complete release before replacing loader paths. Replaced content is retained in a timestamped `.naru-backups/` directory and restored if installation fails. It copies the scheduler tool/plugin, runtime libraries, `naru-runtime.example.json`, and local evaluation script/fixture, but does not create an active runtime configuration or enable scheduling.
+
+OpenCode 1.18.4 defaults `subagent_depth` to `1` when the top-level key is omitted. Naru requires an effective value of at least `2`, which is the maximum depth used by the current Naru topology. Exactly `2` is recommended: larger values do not enable additional Naru behavior and can allow unrelated agents to recurse further, increasing cost. Explicit integer values above `2` remain valid and are preserved.
 
 ### Global install
 
@@ -50,6 +52,8 @@ Run the installer from the project that should receive `.opencode` configuration
 
 `--project` targets `$PWD/.opencode`, where `$PWD` is the directory from which the installer is invoked.
 
+When depth configuration is explicitly requested, project mode reads or creates `$PWD/opencode.jsonc` or `$PWD/opencode.json`, not a file under `.opencode`. OpenCode merges global configuration first and project configuration later, so a project top-level `subagent_depth` overrides the global value for that project.
+
 ### Custom config path
 
 Use an absolute or relative custom directory:
@@ -60,13 +64,18 @@ Use an absolute or relative custom directory:
 
 The source checkout and target cannot contain one another. The target and its managed loader directories must not be symlinks.
 
+`--dir` identifies an installation/config root but cannot make OpenCode load that path. Use `--configure-subagent-depth` with `--dir` only when the same directory is actually part of your OpenCode configuration lookup.
+
 ### Optional flags
 
 - `--copy` — copy command and agent Markdown instead of symlinking it.
 - `--project` — install into `$PWD/.opencode`.
 - `--dir PATH` — install into a custom OpenCode config directory.
 - `--with-dashboard` — copy and register the optional TUI dashboard.
+- `--configure-subagent-depth` — transactionally create or merge the applicable `opencode.jsonc` or `opencode.json`, setting an absent, `0`, or `1` top-level `subagent_depth` to `2` while preserving values of `2` or more.
 - `--migrate-orchestrator` — back up legacy `agents/orchestrator.md`, `agents/minion`, and `plugins/orchestrator-dashboard.js` paths. Without this flag, those paths are untouched.
+
+Without `--configure-subagent-depth`, the installer never changes either OpenCode config file; existing bytes remain untouched. With the flag, it refuses ambiguous `opencode.json` plus `opencode.jsonc`, symlinks, non-regular or oversized files, malformed JSON/JSONC, duplicate `subagent_depth` keys, non-object roots, and invalid depth values before replacing anything. Comments, CRLF, trailing commas, indentation, unrelated keys, and final-newline state are preserved. The prepared config participates in the normal staging, timestamped backup, and rollback transaction. The explicit flag is the authorization; there is no runtime prompt.
 
 ### Updating
 
@@ -77,7 +86,7 @@ git pull
 ./install.sh --with-dashboard
 ```
 
-Even a symlink install must be rerun because tools, helpers, runtime/evaluation assets, and plugins are copy-pinned. A `--copy` install is entirely stale until reinstalled. Restart OpenCode after reinstalling so active sessions reload routing and permissions.
+Even a symlink install must be rerun because tools, helpers, runtime/evaluation assets, and plugins are copy-pinned. A `--copy` install is entirely stale until reinstalled. Restart OpenCode after reinstalling or changing `subagent_depth` so active sessions reload routing, permissions, and delegation limits.
 
 ## Commands and primary agent
 
@@ -357,13 +366,17 @@ From an installed config root, use the copy-pinned sample at `scripts/live-evals
 
 ## What Naru does not manage
 
-Naru does not modify your personal `AGENTS.md`, `opencode.json`, optional `naru-models.json` or `naru-runtime.json`, unrelated OpenCode tools or plugins, or external agent-state systems. The installer supplies examples and managed runtime files only.
+Naru does not modify your personal `AGENTS.md`, optional `naru-models.json` or `naru-runtime.json`, unrelated OpenCode tools or plugins, or external agent-state systems. By default it also never modifies `opencode.json` or `opencode.jsonc`; only the explicit `--configure-subagent-depth` flag authorizes the bounded transactional merge described above.
 
 ## Troubleshooting
 
 ### Commands or agents are stale
 
 Rerun `install.sh` after every update. Plugins, tools, and helpers are copy-pinned even when Markdown is symlinked. Restart OpenCode after reinstalling.
+
+### A Naru child fails at the subagent depth limit
+
+Confirm OpenCode is 1.18.4 or newer and inspect the effective top-level `subagent_depth` after global and project precedence is applied. It must be an integer of at least `2`; exactly `2` is recommended. Run the installer for the loaded scope with `--configure-subagent-depth`, or update the applicable config manually, then restart OpenCode. In project mode the file is `opencode.jsonc` or `opencode.json` in the project root, not `.opencode`. For `--dir`, first verify OpenCode actually loads that path. If both JSON and JSONC files exist, remove the ambiguity deliberately before rerunning the installer.
 
 ### Duplicate or unexpected agent IDs appear
 
@@ -379,7 +392,7 @@ Check every loaded global and project `naru-models.json` in plugin load order. A
 
 ### A Luna route is missing
 
-Luna routes exist only for scout, investigate, implement, debug, and verify while the canonical role resolves to Terra. An explicit Sol assignment removes both generated alternatives. If an eligible Terra role still has no Luna route, update OpenCode to at least 1.17.19, reinstall every loaded Naru copy, and restart OpenCode. A stale schema-v1 plugin can preserve Terra/Sol policy but cannot generate Luna aliases.
+Luna routes exist only for scout, investigate, implement, debug, and verify while the canonical role resolves to Terra. An explicit Sol assignment removes both generated alternatives. If an eligible Terra role still has no Luna route, update OpenCode to at least 1.18.4, reinstall every loaded Naru copy, and restart OpenCode. A stale schema-v1 plugin can preserve Terra/Sol policy but cannot generate Luna aliases.
 
 ### A minion still asks before Git, Weaver, Python, or another shell command
 

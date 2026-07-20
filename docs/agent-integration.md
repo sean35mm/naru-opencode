@@ -7,6 +7,8 @@ description: Detailed rules for safely delegating read-only Naru workflows from 
 
 Naru supports a narrow, read-only integration surface for custom OpenCode agents. The safe boundary is an exact fail-closed Task allowlist, not agent visibility or naming conventions.
 
+Naru requires OpenCode 1.18.4 or newer and an effective top-level `subagent_depth` of at least `2`. Exactly `2` is recommended because the current Naru topology reaches no deeper; larger values do not help Naru and can broaden unrelated recursion and cost. Values above `2` remain accepted.
+
 ## Human commands are not Task names
 
 The flat slash commands `/naru-plan`, `/naru-impact`, `/naru-triage`, and `/naru-review` are human-facing command entry points. A Task call does not run a slash command and must not use a slash-command string as `subagent_type`.
@@ -79,6 +81,8 @@ The selected orchestrator delegates through OpenCode's native Task implementatio
 ## Global/project and child permission layers
 
 OpenCode may load Naru definitions from global and project configuration, and policy applies to both the root and its delegated child sessions. Verify all four effective contexts after combining installations: root/global, root/project, delegated/global, and delegated/project. Project configuration should remain scoped to the current workspace. Changing an external global configuration requires the user's explicit approval.
+
+Project `opencode.jsonc` or `opencode.json` takes precedence over the global value for top-level `subagent_depth`. The Naru installer changes neither by default; its explicit `--configure-subagent-depth` flag merges only the applicable config and preserves values of `2` or more. Restart OpenCode after a depth change. If a custom `--dir` installation is used, verify that OpenCode actually loads that path.
 
 In every context, only the directly selected `naru-orchestrator` may have the exact `naru-scheduler` tool allow. Minions, generated aliases, and custom callers must not gain it. Scheduler admissions and quality artifacts are internal Protocol 3 correlation, not a public API and not proof that a report or workspace is correct. Observe is fail-open; enforce is fail-closed only at the compatible process-local synchronous native Task hook. Neither is durable, cross-process, an authoritative background-completion signal, or a provider/global concurrency boundary.
 

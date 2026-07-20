@@ -49,6 +49,7 @@ OpenCode's native Task implementation remains responsible for permission evaluat
 | Dashboard state classification | `plugins/naru-minions-dashboard-state.mjs` |
 | Dashboard UI and command registration | `plugins/naru-minions-dashboard.tsx` |
 | TUI config rewrite | `scripts/merge-tui-config.mjs` |
+| OpenCode depth config rewrite | `scripts/merge-opencode-config.mjs` |
 | Runtime mode parsing and bounded defaults | `tools/naru-lib/scheduler-config.mjs`, `naru-runtime.example.json` |
 | Protocol 3 schemas, state reduction, tokens, journal, and telemetry | `tools/naru-lib/scheduler-*.mjs` |
 | Scheduler tool operations and native Task admission hook | `tools/naru-scheduler.js`, `plugins/naru-scheduler.js` |
@@ -148,7 +149,9 @@ When scheduler telemetry exists for the same process-local root, the dashboard a
 - Existing managed destinations and migrations move to timestamped backups. A failed transaction removes newly installed paths and restores backups.
 - Nested legacy Core loaders are always migrated. Legacy general-orchestrator paths require `--migrate-orchestrator`.
 - Dashboard registration requires Node.js or Bun, rejects symlinked or malformed TUI config, and is idempotent.
-- The installer preserves `naru-models.json` and unrelated OpenCode content.
+- OpenCode 1.18.4+ must resolve an effective top-level `subagent_depth` of at least `2`; exactly `2` matches Naru's maximum topology depth, while higher valid integers are accepted and preserved.
+- The installer preserves `naru-models.json` and unrelated OpenCode content. It never changes `opencode.json` or `opencode.jsonc` unless `--configure-subagent-depth` is explicit.
+- The depth flag safely selects one JSON/JSONC config, uses the project root rather than `.opencode` in project mode, rejects unsafe or ambiguous input, and includes the prepared config in staging, backup, and rollback.
 
 When changing installed inventory, update the install plan and its fixture inventory together.
 
@@ -194,13 +197,14 @@ node --test tests/scheduler-runtime.test.mjs
 node --test tests/scheduler-telemetry.test.mjs
 node --test tests/dashboard-contract.test.mjs
 node --test tests/merge-tui-config.test.mjs
+node --test tests/merge-opencode-config.test.mjs
 node --test tests/github-tools.test.mjs
 node --test tests/bun-transport.test.mjs
 sh tests/install.test.sh
 git diff --check
 ```
 
-Routing changes normally require the model-routing, config-policy, and prompt-contract checks. Scheduler changes require the narrow protocol/runtime/telemetry checks. Dashboard changes require dashboard and merge-config checks. Installer inventory or migration changes require `tests/install.test.sh`. Evaluation changes require `tests/evaluation.test.mjs`. Tool changes require the relevant Node tool tests.
+Routing changes normally require the model-routing, config-policy, and prompt-contract checks. Scheduler changes require the narrow protocol/runtime/telemetry checks. Dashboard changes require dashboard and merge-config checks. Installer depth changes require the OpenCode merge-helper test and `tests/install.test.sh`; other installer inventory or migration changes require `tests/install.test.sh`. Evaluation changes require `tests/evaluation.test.mjs`. Tool changes require the relevant Node tool tests.
 
 Inspect any script or target before execution and do not run database-connected or mutation-capable checks merely because a command name appears routine.
 

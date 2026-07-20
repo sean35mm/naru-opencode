@@ -3,7 +3,13 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { MANAGED_SOL_XHIGH_ALIASES, NARU_AGENT_IDS, NARU_DISPATCH_GRAPH } from '../tools/naru-lib/model-routing.mjs';
+import {
+  MANAGED_SOL_XHIGH_ALIASES,
+  NARU_AGENT_IDS,
+  NARU_DISPATCH_GRAPH,
+  NARU_MINIMUM_SUBAGENT_DEPTH,
+  NARU_REQUIRED_SUBAGENT_DEPTH,
+} from '../tools/naru-lib/model-routing.mjs';
 
 const fixturePath = fileURLToPath(new URL('./fixtures/behavioral-evals.json', import.meta.url));
 const fixture = JSON.parse(await readFile(fixturePath, 'utf8'));
@@ -356,13 +362,16 @@ test('posting always uses a fresh result and rejects incomplete or degraded outp
   assert.ok(refusal.freshReviewResults.some((result) => !result.snapshotComplete));
 });
 
-test('review posting topology stays within depth and mixed delivery posts last', () => {
+test('review posting topology requires configured two-level dispatch and mixed delivery posts last', () => {
   const topology = reviewPostingCaseByID('review-post-depth-topology');
   assert.equal(topology.expected.orchestratorReviewTarget, 'canonical-only');
   assert.equal(topology.expected.wrapperReviewTarget, 'generated-policy-selected');
   assert.equal(topology.expected.wrapperCommandSubtask, false);
   assert.deepEqual(topology.expected.rootOnlyTaskTargets, ['naru-orchestrator', 'naru-review-post']);
   assert.equal(topology.expected.maxTaskDepthAfterRoot, 2);
+  assert.equal(topology.expected.minimumSubagentDepth, NARU_MINIMUM_SUBAGENT_DEPTH);
+  assert.equal(topology.expected.openCodeDefaultCompatible, false);
+  assert.equal(topology.expected.disposition, 'requires-compatible-depth-config');
 
   const mixed = reviewPostingCaseByID('mixed-delivery-then-fresh-post');
   assert.deepEqual(mixed.events.slice(-3), ['git-delivery', 'fresh-canonical-review', 'post-review']);
@@ -370,6 +379,19 @@ test('review posting topology stays within depth and mixed delivery posts last',
   assert.equal(mixed.expected.postIsFinalPhase, true);
   assert.equal(mixed.expected.postCalls, 1);
   assert.equal(mixed.expected.laterMutationInvalidatesReview, true);
+});
+
+test('subagent depth compatibility reflects the OpenCode default and current Naru topology', () => {
+  assert.deepEqual(fixture.subagentDepthCompatibility, {
+    openCodeVersion: '1.18.4',
+    openCodeDefault: { value: 1, twoLevelWorkflowsCompatible: false },
+    minimumRequired: 2,
+    recommended: 2,
+    configuredAboveMinimum: { compatible: true, recommendedByNaru: false },
+    maximumCurrentNaruTopology: 2,
+  });
+  assert.equal(NARU_MINIMUM_SUBAGENT_DEPTH, 2);
+  assert.equal(NARU_REQUIRED_SUBAGENT_DEPTH, fixture.subagentDepthCompatibility.maximumCurrentNaruTopology);
 });
 
 test('rolling cohorts refill immediately after a contained finish and never exceed two writers', () => {

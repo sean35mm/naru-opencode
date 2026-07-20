@@ -30,7 +30,7 @@ For implementation work or natural-language review posting, select `naru-orchest
 
 ## Quick install
 
-Requirements: OpenCode >= 1.17.19; authenticated `gh` for review workflows; and Node.js or Bun for every `--with-dashboard` installation.
+Requirements: OpenCode >= 1.18.4; authenticated `gh` for review workflows; and Node.js or Bun for every `--with-dashboard` or `--configure-subagent-depth` installation.
 
 ```sh
 git clone https://github.com/sean35mm/naru-opencode.git
@@ -39,6 +39,8 @@ cd naru-opencode
 ```
 
 The default install targets `~/.config/opencode` and symlinks Markdown files. Use `./install.sh --project` from the target project for `.opencode`, `--dir PATH` for another config directory, `--copy` to copy Markdown, and `--with-dashboard` to install the optional TUI activity view. Rerun the installer with the same flags after updating Naru because tools, runtime helpers, evaluation assets, and plugins are always copy-pinned, then restart OpenCode so active sessions reload routing and permissions. The installer copies `naru-runtime.example.json` but does not create an active `naru-runtime.json`.
+
+Naru requires the effective top-level OpenCode setting `"subagent_depth": 2` or higher. OpenCode's omitted/default value is `1`; Naru's current delegation topology reaches depth `2`. Exactly `2` is recommended because higher values do not help Naru and can broaden unrelated agent recursion and cost, although explicit values above `2` are accepted and never lowered. The default installer does not modify `opencode.json` or `opencode.jsonc`. Opt in explicitly with `./install.sh --configure-subagent-depth`; it transactionally creates or safely merges the applicable global config. With `--project`, it merges `opencode.jsonc` or `opencode.json` in the project root, not `.opencode`; project configuration takes precedence over the global value. With `--dir PATH`, ensure that path is actually loaded by OpenCode. Restart OpenCode after changing the setting.
 
 See the [User guide](docs/user-guide.md) for installation, migration, configuration, dashboard, and troubleshooting details.
 
@@ -113,7 +115,7 @@ commands/   five human-facing Core slash commands
 agents/     Core orchestrators/specialists and Naru Minions agents
 docs/       user-guide.md, agent-integration.md, development.md
 plugins/    central model routing, optional scheduler runtime, and dashboard
-scripts/    safe TUI merge and local evaluation helpers
+scripts/    safe TUI/OpenCode config merge and local evaluation helpers
 tests/      routing, policy, prompt, dashboard, tool, and installer checks
 tools/      validated Git/GitHub/scheduler tools and shared runtime helpers
 install.sh  transactional global, project, or custom-path installer

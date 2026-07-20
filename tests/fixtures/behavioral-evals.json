@@ -1,6 +1,14 @@
 {
   "schemaVersion": 1,
   "purpose": "Deterministic Naru behavioral contract corpus; not a live model-quality benchmark.",
+  "subagentDepthCompatibility": {
+    "openCodeVersion": "1.18.4",
+    "openCodeDefault": { "value": 1, "twoLevelWorkflowsCompatible": false },
+    "minimumRequired": 2,
+    "recommended": 2,
+    "configuredAboveMinimum": { "compatible": true, "recommendedByNaru": false },
+    "maximumCurrentNaruTopology": 2
+  },
   "cases": [
     {
       "id": "narrow-implementation",
@@ -264,7 +272,7 @@
         "selectedOrchestrator": ["naru-orchestrator", "naru-review", "naru-review-specialists-or-judge"],
         "slashCommand": ["naru-review-post", "naru-review", "naru-review-specialists-or-judge"]
       },
-      "expected": { "orchestratorReviewTarget": "canonical-only", "wrapperReviewTarget": "generated-policy-selected", "wrapperCommandSubtask": false, "rootOnlyTaskTargets": ["naru-orchestrator", "naru-review-post"], "maxTaskDepthAfterRoot": 2, "disposition": "within-depth-budget" },
+      "expected": { "orchestratorReviewTarget": "canonical-only", "wrapperReviewTarget": "generated-policy-selected", "wrapperCommandSubtask": false, "rootOnlyTaskTargets": ["naru-orchestrator", "naru-review-post"], "maxTaskDepthAfterRoot": 2, "minimumSubagentDepth": 2, "openCodeDefaultCompatible": false, "disposition": "requires-compatible-depth-config" },
       "prohibitedActions": ["Task naru-review-post", "generated review alias from orchestrator"]
     },
     {

@@ -4,10 +4,13 @@ import { fileURLToPath } from 'node:url'
 
 import {
   applyRoutingToConfig,
+  canonicalAgentForRoute,
   isManagedRoutingAlias,
   isSolXhighAlias,
   mergeRoutingOverrides,
   NARU_AGENT_IDS,
+  NARU_DISPATCH_GRAPH,
+  NARU_MINIMUM_SUBAGENT_DEPTH,
   parseRoutingOverrides,
   resolveRoutingPolicy,
 } from '../tools/naru-lib/model-routing.mjs'
@@ -18,6 +21,7 @@ const MAX_SESSION_METADATA = 512
 const SESSION_METADATA_TTL_MS = 30 * 60 * 1000
 const NARU_AGENTS = new Set(NARU_AGENT_IDS)
 const ROOT_ONLY_NARU_AGENTS = new Set(['naru-orchestrator', 'naru-review-post'])
+const OPENCODE_DEFAULT_SUBAGENT_DEPTH = 1
 const STATE_KEY = Symbol.for('naru.delegate.config-state.v1')
 const shared = globalThis[STATE_KEY] ?? { configs: new WeakMap() }
 shared.sessions ??= new Map()
@@ -71,8 +75,46 @@ async function logFailure(client, error) {
   }
 }
 
+async function logDepthIncompatibility(client, compatibility) {
+  const message = `Naru dispatcher launches are blocked: ${compatibility.description}; required minimum is ${NARU_MINIMUM_SUBAGENT_DEPTH}. Set top-level subagent_depth: 2 in OpenCode config, then restart OpenCode. Leaf Naru routes remain available.`
+  try {
+    await client.app.log({
+      body: {
+        service: 'naru-delegate',
+        level: 'error',
+        message,
+      },
+    })
+  } catch {
+    console.warn(`[naru-delegate] ${message}`)
+  }
+}
+
 function clone(value) {
   return structuredClone(value)
+}
+
+function subagentDepthCompatibility(configuredDepth) {
+  if (configuredDepth === undefined) {
+    return {
+      compatible: false,
+      description: `top-level subagent_depth is omitted (OpenCode 1.18.4 default ${OPENCODE_DEFAULT_SUBAGENT_DEPTH})`,
+      effectiveDepth: OPENCODE_DEFAULT_SUBAGENT_DEPTH,
+    }
+  }
+  const display = typeof configuredDepth === 'string'
+    ? JSON.stringify(configuredDepth)
+    : String(configuredDepth)
+  return {
+    compatible: Number.isInteger(configuredDepth) && configuredDepth >= NARU_MINIMUM_SUBAGENT_DEPTH,
+    description: `found top-level subagent_depth value ${display}`,
+    effectiveDepth: configuredDepth,
+  }
+}
+
+function isNaruDispatcherTarget(target) {
+  const canonical = NARU_AGENTS.has(target) ? target : canonicalAgentForRoute(target)
+  return typeof canonical === 'string' && (NARU_DISPATCH_GRAPH[canonical]?.length ?? 0) > 0
 }
 
 function responseData(result) {
@@ -222,9 +264,16 @@ function restoreOriginals(config, state) {
 
 export const NaruDelegatePlugin = async ({ client, directory }, options = {}) => {
   const scope = typeof directory === 'string' ? directory : ''
+  let depthCompatibility = subagentDepthCompatibility(undefined)
   return {
     config: async (config) => {
       const state = stateFor(config)
+      depthCompatibility = subagentDepthCompatibility(config?.subagent_depth)
+      state.depthCompatibility = depthCompatibility
+      if (!depthCompatibility.compatible && !state.depthWarningLogged) {
+        state.depthWarningLogged = true
+        await logDepthIncompatibility(client, depthCompatibility)
+      }
       if (state.disabled) return
       try {
         const legacyOverrides = parseRoutingOverrides(state.overrides)
@@ -276,6 +325,9 @@ export const NaruDelegatePlugin = async ({ client, directory }, options = {}) =>
       }
       if ((NARU_AGENTS.has(target) || isManagedRoutingAlias(target)) && output.args.task_id) {
         throw new Error('Naru Delegate requires a fresh child session; task_id resume is disabled')
+      }
+      if (!depthCompatibility.compatible && isNaruDispatcherTarget(target)) {
+        throw new Error(`Cannot launch Naru dispatcher ${target}: ${depthCompatibility.description}; required minimum is ${NARU_MINIMUM_SUBAGENT_DEPTH}. Set top-level subagent_depth: 2 in OpenCode config, then restart OpenCode.`)
       }
       if (isSolXhighAlias(target)) {
         await assertSolXhighRoot(client, directory, scope, input.sessionID)

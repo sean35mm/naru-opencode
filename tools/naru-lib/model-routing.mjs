@@ -7,6 +7,7 @@ const LEGACY_DEEP_ALIAS_PREFIX = 'naru-delegate-deep-';
 const ROUTING_MARKER = '<!-- naru-delegate-routing:v1 -->';
 
 export const NARU_DELEGATE_PROTOCOL = 2;
+export const NARU_MINIMUM_SUBAGENT_DEPTH = 2;
 
 export const DEFAULT_MODEL_PROFILES = Object.freeze({
   luna: Object.freeze({ model: 'openai/gpt-5.6-luna-fast', variant: 'high' }),
@@ -127,6 +128,11 @@ export const NARU_DISPATCH_GRAPH = Object.freeze({
   ]),
 });
 
+export const NARU_DISPATCH_ENTRY_TOPOLOGY = Object.freeze({
+  root: Object.freeze(['naru-orchestrator', 'naru-review-post']),
+  subtask: Object.freeze(['naru-plan', 'naru-impact', 'naru-triage', 'naru-review']),
+});
+
 const ORCHESTRATOR_MODEL_ROUTED_TARGETS = Object.freeze([
   'naru-minion-scout',
   'naru-minion-investigate',
@@ -147,6 +153,89 @@ function isPlainObject(value) {
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }
+
+export function deriveAndValidateNaruRequiredDepth({
+  agentIDs = NARU_AGENT_IDS,
+  entryTopology = NARU_DISPATCH_ENTRY_TOPOLOGY,
+  expectedDepth,
+  graph = NARU_DISPATCH_GRAPH,
+} = {}) {
+  if (!Array.isArray(agentIDs) || !agentIDs.length) throw new Error('Naru agentIDs must be a non-empty array');
+  const agents = new Set(agentIDs);
+  if (agents.size !== agentIDs.length || agentIDs.some((agent) => typeof agent !== 'string' || !agent)) {
+    throw new Error('Naru agentIDs must contain unique non-empty strings');
+  }
+  if (!isPlainObject(graph)) throw new Error('Naru dispatch graph must be an object');
+  if (!isPlainObject(entryTopology)) throw new Error('Naru dispatch entry topology must be an object');
+  assertAllowedKeys(entryTopology, ['root', 'subtask'], 'Naru dispatch entry topology');
+
+  const entries = {};
+  for (const kind of ['root', 'subtask']) {
+    const values = entryTopology[kind];
+    if (!Array.isArray(values) || values.some((agent) => typeof agent !== 'string' || !agents.has(agent))) {
+      throw new Error(`Naru ${kind} entries must contain only known canonical agents`);
+    }
+    if (new Set(values).size !== values.length) throw new Error(`Naru ${kind} entries contain duplicates`);
+    entries[kind] = values;
+  }
+
+  for (const [caller, targets] of Object.entries(graph)) {
+    if (!agents.has(caller)) throw new Error(`Naru dispatch graph contains unknown caller: ${caller}`);
+    if (!Array.isArray(targets) || !targets.length) {
+      throw new Error(`Naru dispatcher ${caller} must have at least one target`);
+    }
+    if (new Set(targets).size !== targets.length) {
+      throw new Error(`Naru dispatcher ${caller} contains duplicate targets`);
+    }
+    for (const target of targets) {
+      if (typeof target !== 'string' || !agents.has(target)) {
+        throw new Error(`Naru dispatch graph contains unknown target from ${caller}: ${String(target)}`);
+      }
+    }
+  }
+
+  const depths = new Map();
+  const visiting = [];
+  function downstreamDepth(agent) {
+    if (depths.has(agent)) return depths.get(agent);
+    const cycleIndex = visiting.indexOf(agent);
+    if (cycleIndex !== -1) {
+      throw new Error(`Naru dispatch graph contains a cycle: ${[...visiting.slice(cycleIndex), agent].join(' -> ')}`);
+    }
+    visiting.push(agent);
+    const depth = Math.max(0, ...(graph[agent] ?? []).map((target) => 1 + downstreamDepth(target)));
+    visiting.pop();
+    depths.set(agent, depth);
+    return depth;
+  }
+
+  for (const caller of Object.keys(graph)) downstreamDepth(caller);
+
+  const reachable = new Set();
+  function visit(agent) {
+    if (reachable.has(agent)) return;
+    reachable.add(agent);
+    for (const target of graph[agent] ?? []) visit(target);
+  }
+  for (const agent of [...entries.root, ...entries.subtask]) visit(agent);
+  for (const caller of Object.keys(graph)) {
+    if (!reachable.has(caller)) throw new Error(`Naru dispatcher is unreachable from supported entries: ${caller}`);
+  }
+
+  const requiredDepth = Math.max(
+    0,
+    ...entries.root.map((agent) => downstreamDepth(agent)),
+    ...entries.subtask.map((agent) => 1 + downstreamDepth(agent)),
+  );
+  if (expectedDepth !== undefined && requiredDepth !== expectedDepth) {
+    throw new Error(`Naru dispatch topology requires subagent depth ${requiredDepth}; expected ${expectedDepth}`);
+  }
+  return requiredDepth;
+}
+
+export const NARU_REQUIRED_SUBAGENT_DEPTH = deriveAndValidateNaruRequiredDepth({
+  expectedDepth: NARU_MINIMUM_SUBAGENT_DEPTH,
+});
 
 function assertAllowedKeys(value, allowed, label) {
   for (const key of Object.keys(value)) {

@@ -8,10 +8,10 @@ description: Install Naru, select the implementation coordinator, and choose the
 ```sh
 git clone https://github.com/sean35mm/naru-opencode.git
 cd naru-opencode
-./install.sh
+./install.sh --configure-subagent-depth
 ```
 
-The default target is `~/.config/opencode`. Restart OpenCode after installation.
+The default target is `~/.config/opencode`. The explicit flag safely configures Naru's required top-level `subagent_depth`; without it, the installer leaves OpenCode config untouched. Naru requires OpenCode 1.18.4+ and depth `2` or higher. Exactly `2` is recommended and matches the current topology. Restart OpenCode after installation.
 
 ## 2. Pick the workflow
 

@@ -40,7 +40,10 @@ async function main() {
     'docs/user-guide.md',
     'docs/agent-integration.md',
     'docs/development.md',
+    'install.sh',
     'plugins/naru-delegate.js',
+    'scripts/merge-opencode-config.mjs',
+    'tests/merge-opencode-config.test.mjs',
     'tools/naru-lib/model-routing.mjs',
   ];
   const missing = [];
@@ -695,6 +698,44 @@ async function main() {
   }
   for (const command of ['naru-plan', 'naru-impact', 'naru-triage', 'naru-review', 'naru-review-post', 'naru-minions']) {
     if (!readme.includes(`/${command}`)) fail(`README missing public command /${command}`);
+  }
+
+  const depthCanonical = [
+    readme,
+    userGuide,
+    await readFile(here('docs/development.md'), 'utf8'),
+    await readFile(here('docs/agent-integration.md'), 'utf8'),
+  ].join('\n');
+  for (const requiredText of [
+    'OpenCode 1.18.4',
+    'subagent_depth',
+    'at least `2`',
+    'Exactly `2` is recommended',
+    'values above `2`',
+    '--configure-subagent-depth',
+    'project root',
+    'not `.opencode`',
+    'Restart OpenCode',
+    'actually loaded by OpenCode',
+    'backup',
+    'rollback',
+  ]) {
+    if (!depthCanonical.includes(requiredText)) fail(`canonical docs missing depth-config contract: ${requiredText}`);
+  }
+  for (const page of [
+    'docs/src/content/docs/getting-started/installation.md',
+    'docs/src/content/docs/getting-started/quickstart.md',
+    'docs/src/content/docs/reference/limitations.md',
+    'docs/src/content/docs/reference/for-llms.md',
+  ]) {
+    const text = await readFile(here(page), 'utf8');
+    if (!text.includes('1.18.4') || !text.includes('subagent_depth')) {
+      fail(`${page} missing OpenCode depth compatibility`);
+    }
+  }
+  const installer = await readFile(here('install.sh'), 'utf8');
+  if (!installer.includes('--configure-subagent-depth') || !installer.includes('merge-opencode-config.mjs')) {
+    fail('installer missing explicit depth-config path');
   }
 
   const integration = await readFile(here('docs/agent-integration.md'), 'utf8');

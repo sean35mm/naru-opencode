@@ -2,7 +2,7 @@
 # Install Naru for OpenCode.
 #
 # Usage:
-#   ./install.sh [--copy] [--project | --dir PATH] [--with-dashboard] [--migrate-orchestrator]
+#   ./install.sh [--copy] [--project | --dir PATH] [--with-dashboard] [--configure-subagent-depth] [--migrate-orchestrator]
 #
 # Defaults to a global symlinked install into ~/.config/opencode. Markdown
 # command/agent files are symlinked individually so a git pull keeps them
@@ -17,6 +17,8 @@ MODE=symlink
 TARGET="${HOME}/.config/opencode"
 WITH_DASHBOARD=false
 MIGRATE_ORCHESTRATOR=false
+CONFIGURE_SUBAGENT_DEPTH=false
+LOCATION_MODE=global
 
 usage() {
   sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
@@ -25,7 +27,7 @@ usage() {
 while [ $# -gt 0 ]; do
   case "$1" in
     --copy) MODE=copy ;;
-    --project) TARGET="${PWD}/.opencode" ;;
+    --project) TARGET="${PWD}/.opencode"; LOCATION_MODE=project ;;
     --dir)
       if [ $# -lt 2 ]; then
         echo "install.sh: --dir requires a PATH" >&2
@@ -36,9 +38,11 @@ while [ $# -gt 0 ]; do
         -*) echo "install.sh: --dir requires a PATH, got $1" >&2; exit 2 ;;
       esac
       TARGET="$1"
+      LOCATION_MODE=custom
       ;;
     --with-dashboard) WITH_DASHBOARD=true ;;
     --migrate-orchestrator) MIGRATE_ORCHESTRATOR=true ;;
+    --configure-subagent-depth) CONFIGURE_SUBAGENT_DEPTH=true ;;
     -h|--help) usage; exit 0 ;;
     --*) echo "install.sh: unknown option $1" >&2; exit 2 ;;
     *) echo "install.sh: unknown argument $1" >&2; exit 2 ;;
@@ -84,6 +88,15 @@ TARGET=$(canonical_path "$TARGET") || {
   echo "install.sh: could not resolve target path" >&2
   exit 1
 }
+
+if [ "$LOCATION_MODE" = project ]; then
+  CONFIG_ROOT=$(canonical_path "$PWD") || {
+    echo "install.sh: could not resolve project config root" >&2
+    exit 1
+  }
+else
+  CONFIG_ROOT="$TARGET"
+fi
 
 # Reject any canonical overlap between source and target.
 if [ "$SRC_DIR" = "$TARGET" ]; then
@@ -223,6 +236,12 @@ if [ "$WITH_DASHBOARD" = true ]; then
   fi
 fi
 
+if [ "$CONFIGURE_SUBAGENT_DEPTH" = true ] && [ ! -f "${SRC_DIR}/scripts/merge-opencode-config.mjs" ]; then
+  echo "install.sh: missing source: ${SRC_DIR}/scripts/merge-opencode-config.mjs" >&2
+  rm -rf "$TX_DIR"
+  exit 1
+fi
+
 # Preflight every source before touching the target.
 while IFS="$(printf '\t')" read -r method src rel; do
   [ -n "$src" ] || continue
@@ -232,6 +251,51 @@ while IFS="$(printf '\t')" read -r method src rel; do
     exit 1
   fi
 done < "$PLAN"
+
+OPENCODE_CONFIG_REL=""
+OPENCODE_CONFIG_INPUT=""
+OPENCODE_CONFIG_PREPARED="${TX_DIR}/opencode-config"
+if [ "$CONFIGURE_SUBAGENT_DEPTH" = true ]; then
+  for rel in opencode.jsonc opencode.json; do
+    config_path="${CONFIG_ROOT}/${rel}"
+    if [ -L "$config_path" ]; then
+      echo "install.sh: refusing symlinked OpenCode config: $config_path" >&2
+      rm -rf "$TX_DIR"
+      exit 1
+    fi
+    if [ -e "$config_path" ] && [ ! -f "$config_path" ]; then
+      echo "install.sh: OpenCode config is not a regular file: $config_path" >&2
+      rm -rf "$TX_DIR"
+      exit 1
+    fi
+    if [ -f "$config_path" ]; then
+      if [ -n "$OPENCODE_CONFIG_REL" ]; then
+        echo "install.sh: refusing ambiguous OpenCode config: both opencode.jsonc and opencode.json exist in ${CONFIG_ROOT}" >&2
+        rm -rf "$TX_DIR"
+        exit 1
+      fi
+      OPENCODE_CONFIG_REL="$rel"
+      OPENCODE_CONFIG_INPUT="$config_path"
+    fi
+  done
+  if [ -z "$OPENCODE_CONFIG_REL" ]; then
+    OPENCODE_CONFIG_REL="opencode.json"
+    OPENCODE_CONFIG_INPUT="-"
+  fi
+  if command -v node >/dev/null 2>&1; then
+    opencode_config_runtime=node
+  elif command -v bun >/dev/null 2>&1; then
+    opencode_config_runtime=bun
+  else
+    echo "install.sh: --configure-subagent-depth requires node or bun to merge OpenCode config safely" >&2
+    rm -rf "$TX_DIR"
+    exit 1
+  fi
+  if ! "$opencode_config_runtime" "${SRC_DIR}/scripts/merge-opencode-config.mjs" "$OPENCODE_CONFIG_INPUT" "$OPENCODE_CONFIG_PREPARED"; then
+    rm -rf "$TX_DIR"
+    exit 1
+  fi
+fi
 
 TUI_CONFIG_RELS=""
 TUI_REGISTER_REL=""
@@ -271,15 +335,22 @@ LAST_BACKUP_REL=""
 backup_if_present() {
   rel="$1"
   abs="${TARGET}/${rel}"
+  backup_path_if_present "$abs" "$rel" "$rel"
+}
+
+backup_path_if_present() {
+  abs="$1"
+  backup_name="$2"
+  display="$3"
   LAST_BACKUP_REL=""
   if [ -e "$abs" ] || [ -L "$abs" ]; then
-    backup_rel=".naru-backups/${BACKUP_TS}/${rel}"
+    backup_rel=".naru-backups/${BACKUP_TS}/${backup_name}"
     backup_abs="${TARGET}/${backup_rel}"
     mkdir -p "$(dirname "$backup_abs")"
     mv "$abs" "$backup_abs"
-    printf '%s\t%s\n' "$rel" "$backup_rel" >> "$BACKUPS"
+    printf '%s\t%s\n' "$abs" "$backup_rel" >> "$BACKUPS"
     LAST_BACKUP_REL="$backup_rel"
-    echo "  backed up ${rel}"
+    echo "  backed up ${display}"
   fi
 }
 
@@ -302,10 +373,9 @@ rollback() {
     done < "$CREATED"
   fi
   if [ -f "$BACKUPS" ]; then
-    while IFS="$(printf '\t')" read -r rel backup_rel; do
-      [ -n "$rel" ] || continue
+    while IFS="$(printf '\t')" read -r dst backup_rel; do
+      [ -n "$dst" ] || continue
       src="${TARGET}/${backup_rel}"
-      dst="${TARGET}/${rel}"
       if [ -e "$src" ] || [ -L "$src" ]; then
         mkdir -p "$(dirname "$dst")"
         rm -rf "$dst"
@@ -352,6 +422,11 @@ while IFS="$(printf '\t')" read -r method src rel; do
   fi
 done < "$PLAN"
 
+if [ "$CONFIGURE_SUBAGENT_DEPTH" = true ]; then
+  mkdir -p "${STAGE_DIR}/.naru-config"
+  mv "$OPENCODE_CONFIG_PREPARED" "${STAGE_DIR}/.naru-config/${OPENCODE_CONFIG_REL}"
+fi
+
 # Prepare the TUI config before any destination is changed. The dependency-free
 # helper validates JSON/JSONC and rewrites only the top-level plugin array.
 if [ "$WITH_DASHBOARD" = true ]; then
@@ -370,6 +445,18 @@ if [ "$WITH_DASHBOARD" = true ]; then
     [ "$rel" = "$TUI_REGISTER_REL" ] && operation=register
     "$tui_runtime" "${SRC_DIR}/scripts/merge-tui-config.mjs" "$tui_input" "${STAGE_DIR}/${rel}" "./plugins/naru-minions-dashboard.tsx" "$operation"
   done
+fi
+
+if [ "$CONFIGURE_SUBAGENT_DEPTH" = true ]; then
+  config_dst="${CONFIG_ROOT}/${OPENCODE_CONFIG_REL}"
+  if [ "$CONFIG_ROOT" = "$TARGET" ]; then
+    backup_if_present "$OPENCODE_CONFIG_REL"
+  else
+    backup_path_if_present "$config_dst" "opencode-config/${OPENCODE_CONFIG_REL}" "$config_dst"
+  fi
+  mv "${STAGE_DIR}/.naru-config/${OPENCODE_CONFIG_REL}" "$config_dst"
+  printf '%s\n' "$config_dst" >> "$CREATED"
+  echo "  configured ${config_dst} with subagent_depth >= 2"
 fi
 
 # Migrate old Core loader paths out of scanned directories.

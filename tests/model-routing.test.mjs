@@ -7,6 +7,7 @@ import {
   DEEP_FLOOR_ROLES,
   DEFAULT_AGENT_ASSIGNMENTS,
   DEFAULT_MODEL_PROFILES,
+  deriveAndValidateNaruRequiredDepth,
   LEGACY_DEEP_ALIASES,
   isDeepAlias,
   lunaAlias,
@@ -18,7 +19,10 @@ import {
   NARU_AGENT_IDS,
   NARU_DELEGATE_PROTOCOL,
   NARU_DELEGATE_ROUTING_MARKER,
+  NARU_DISPATCH_ENTRY_TOPOLOGY,
   NARU_DISPATCH_GRAPH,
+  NARU_MINIMUM_SUBAGENT_DEPTH,
+  NARU_REQUIRED_SUBAGENT_DEPTH,
   parseRoutingOverrides,
   resolveRoutingPolicy,
   solAlias,
@@ -118,7 +122,7 @@ const MINION_PERMISSIONS = {
 };
 
 function fakeConfig() {
-  const config = { agent: {} };
+  const config = { agent: {}, subagent_depth: 2 };
   for (const agent of NARU_AGENT_IDS) {
     config.agent[agent] = {
       description: `Canonical Naru role ${agent}`,
@@ -198,6 +202,52 @@ test('default policy covers every Naru agent with Luna, Terra, and Sol profiles'
     'naru-minion-debug',
     'naru-minion-verify',
   ]);
+});
+
+test('canonical dispatch topology derives and locks the required subagent depth', () => {
+  assert.equal(NARU_MINIMUM_SUBAGENT_DEPTH, 2);
+  assert.equal(NARU_REQUIRED_SUBAGENT_DEPTH, 2);
+  assert.equal(deriveAndValidateNaruRequiredDepth(), 2);
+  assert.deepEqual(NARU_DISPATCH_ENTRY_TOPOLOGY, {
+    root: ['naru-orchestrator', 'naru-review-post'],
+    subtask: ['naru-plan', 'naru-impact', 'naru-triage', 'naru-review'],
+  });
+
+  const futureGraph = {
+    root: ['middle'],
+    middle: ['dispatcher'],
+    dispatcher: ['leaf'],
+  };
+  assert.equal(deriveAndValidateNaruRequiredDepth({
+    agentIDs: ['root', 'middle', 'dispatcher', 'leaf'],
+    entryTopology: { root: ['root'], subtask: [] },
+    graph: futureGraph,
+  }), 3);
+  assert.throws(
+    () => deriveAndValidateNaruRequiredDepth({
+      agentIDs: ['root', 'middle', 'dispatcher', 'leaf'],
+      entryTopology: { root: ['root'], subtask: [] },
+      expectedDepth: 2,
+      graph: futureGraph,
+    }),
+    /requires subagent depth 3; expected 2/,
+  );
+  assert.throws(
+    () => deriveAndValidateNaruRequiredDepth({
+      agentIDs: ['root', 'middle'],
+      entryTopology: { root: ['root'], subtask: [] },
+      graph: { root: ['middle'], middle: ['root'] },
+    }),
+    /contains a cycle/,
+  );
+  assert.throws(
+    () => deriveAndValidateNaruRequiredDepth({
+      agentIDs: ['root'],
+      entryTopology: { root: ['root'], subtask: [] },
+      graph: { root: ['missing'] },
+    }),
+    /unknown target/,
+  );
 });
 
 test('v2 overrides replace profiles and cannot statically assign Luna or downgrade Sol floors', () => {
@@ -480,6 +530,9 @@ test('plugin rejects root-only Naru Task targets without affecting native target
   const plugin = await NaruDelegatePlugin({
     client: { app: { log: async () => ({ data: true }) } },
   });
+  const config = fakeConfig();
+  config.subagent_depth = 2;
+  await plugin.config(config);
   for (const target of ['naru-orchestrator', 'naru-review-post']) {
     await assert.rejects(
       plugin['tool.execute.before'](
@@ -497,6 +550,66 @@ test('plugin rejects root-only Naru Task targets without affecting native target
     { tool: 'task' },
     { args: { subagent_type: 'explore', task_id: 'session-id' } },
   );
+});
+
+test('plugin guards only Naru dispatcher launches when effective subagent depth is incompatible', async () => {
+  const omittedLogs = [];
+  const omittedPlugin = await NaruDelegatePlugin({
+    client: { app: { log: async (entry) => omittedLogs.push(entry) } },
+    directory: '/depth-omitted',
+  });
+  const omittedConfig = fakeConfig();
+  delete omittedConfig.subagent_depth;
+  await omittedPlugin.config(omittedConfig);
+  await omittedPlugin.config(omittedConfig);
+  assert.equal(Object.hasOwn(omittedConfig, 'subagent_depth'), false);
+  assert.equal(omittedLogs.length, 1);
+  assert.match(omittedLogs[0].body.message, /OpenCode 1\.18\.4 default 1/);
+  await assert.rejects(
+    omittedPlugin['tool.execute.before'](
+      { tool: 'task' },
+      { args: { subagent_type: 'naru-review' } },
+    ),
+    /default 1.*required minimum is 2.*top-level subagent_depth: 2.*restart OpenCode/,
+  );
+  await assert.rejects(
+    omittedPlugin['tool.execute.before'](
+      { tool: 'task' },
+      { args: { subagent_type: solAlias('naru-review') } },
+    ),
+    /required minimum is 2/,
+  );
+  await omittedPlugin['tool.execute.before'](
+    { tool: 'task' },
+    { args: { subagent_type: 'naru-minion-implement' } },
+  );
+  await omittedPlugin['tool.execute.before'](
+    { tool: 'task' },
+    { args: { subagent_type: lunaAlias('naru-minion-implement') } },
+  );
+  await omittedPlugin['tool.execute.before'](
+    { tool: 'task' },
+    { args: { subagent_type: 'explore' } },
+  );
+
+  for (const [value, compatible] of [[1, false], [2, true], [3, true], ['2', false], [2.5, false]]) {
+    const logs = [];
+    const plugin = await NaruDelegatePlugin({
+      client: { app: { log: async (entry) => logs.push(entry) } },
+      directory: `/depth-${String(value)}`,
+    });
+    const config = fakeConfig();
+    config.subagent_depth = value;
+    await plugin.config(config);
+    assert.equal(config.subagent_depth, value);
+    assert.equal(logs.length, compatible ? 0 : 1);
+    const launch = plugin['tool.execute.before'](
+      { tool: 'task' },
+      { args: { subagent_type: 'naru-plan' } },
+    );
+    if (compatible) await launch;
+    else await assert.rejects(launch, /found top-level subagent_depth value .*required minimum is 2/);
+  }
 });
 
 test('Sol xhigh routes authorize only direct Sol orchestrator roots at xhigh or max', async () => {

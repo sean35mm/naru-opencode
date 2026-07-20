@@ -76,6 +76,7 @@ touch "$FIXTURE/plugins/naru-scheduler.js"
 touch "$FIXTURE/plugins/naru-minions-dashboard.tsx"
 cp "$ROOT/plugins/naru-minions-dashboard-state.mjs" "$FIXTURE/plugins/naru-minions-dashboard-state.mjs"
 cp "$ROOT/scripts/merge-tui-config.mjs" "$FIXTURE/scripts/merge-tui-config.mjs"
+cp "$ROOT/scripts/merge-opencode-config.mjs" "$FIXTURE/scripts/merge-opencode-config.mjs"
 touch "$FIXTURE/scripts/naru-live-eval.mjs"
 mkdir -p "$FIXTURE/tests/fixtures"
 touch "$FIXTURE/tests/fixtures/live-evals.json"
@@ -89,6 +90,7 @@ fail() { FAIL=$((FAIL + 1)); echo "  FAIL $1"; }
 is_link() { [ -L "$1" ]; }
 is_file() { [ -f "$1" ] && [ ! -L "$1" ]; }
 is_dir() { [ -d "$1" ] && [ ! -L "$1" ]; }
+has_mode_600() { [ "$(LC_ALL=C ls -ld "$1" | cut -c 2-10)" = "rw-------" ]; }
 
 backup_dir() {
   find "$1/.naru-backups" -mindepth 1 -maxdepth 1 -type d | head -n 1
@@ -319,6 +321,78 @@ if "$FIXTURE/install.sh" --dir "$SOURCE_ALIAS" >/dev/null 2>&1; then
 else
   pass "reject canonical source alias"
 fi
+
+# 12. OpenCode subagent depth configuration is explicit, safe, and transactional.
+T12="$TMP/t12"
+mkdir -p "$T12"
+printf '%s\n' '{"subagent_depth":1,"untouched":"yes"}' > "$T12/opencode.json"
+chmod 600 "$T12/opencode.json"
+cp "$T12/opencode.json" "$TMP/t12-original.json"
+"$FIXTURE/install.sh" --dir "$T12" >/dev/null
+if cmp -s "$T12/opencode.json" "$TMP/t12-original.json"; then pass "default install leaves OpenCode config byte-for-byte untouched"; else fail "default install leaves OpenCode config byte-for-byte untouched"; fi
+if has_mode_600 "$T12/opencode.json"; then pass "default install leaves OpenCode config mode untouched"; else fail "default install leaves OpenCode config mode untouched"; fi
+"$FIXTURE/install.sh" --dir "$T12" --configure-subagent-depth >/dev/null
+if grep -q '"subagent_depth":2' "$T12/opencode.json" && has_mode_600 "$T12/opencode.json"; then pass "explicit depth merge preserves 0600 through transaction"; else fail "explicit depth merge preserves 0600 through transaction"; fi
+
+T12C="$TMP/t12-custom"
+mkdir -p "$T12C"
+(umask 000; "$FIXTURE/install.sh" --dir "$T12C" --configure-subagent-depth >/dev/null)
+if grep -q '"$schema": "https://opencode.ai/config.json"' "$T12C/opencode.json" && grep -q '"subagent_depth": 2' "$T12C/opencode.json"; then pass "custom explicit depth config creates minimal file"; else fail "custom explicit depth config creates minimal file"; fi
+if has_mode_600 "$T12C/opencode.json"; then pass "new explicit depth config uses 0600 under permissive umask"; else fail "new explicit depth config uses 0600 under permissive umask"; fi
+
+T12G_HOME="$TMP/t12-global-home"
+mkdir -p "$T12G_HOME/.config/opencode"
+printf '%s\n' '{"subagent_depth":0,"global":true}' > "$T12G_HOME/.config/opencode/opencode.json"
+HOME="$T12G_HOME" "$FIXTURE/install.sh" --configure-subagent-depth >/dev/null
+if grep -q '"subagent_depth":2' "$T12G_HOME/.config/opencode/opencode.json" && grep -q '"global":true' "$T12G_HOME/.config/opencode/opencode.json"; then pass "global explicit depth merge"; else fail "global explicit depth merge"; fi
+
+T12P="$TMP/t12-project"
+mkdir -p "$T12P"
+printf '%s\n' '{"subagent_depth":1,"project":true}' > "$T12P/opencode.json"
+(cd "$T12P" && "$FIXTURE/install.sh" --project --configure-subagent-depth >/dev/null)
+if grep -q '"subagent_depth":2' "$T12P/opencode.json" && [ ! -e "$T12P/.opencode/opencode.json" ]; then pass "project explicit merge uses project root"; else fail "project explicit merge uses project root"; fi
+
+T12J="$TMP/t12-jsonc"
+mkdir -p "$T12J"
+printf '{\r\n\t// keep\r\n\t"subagent_depth": 1,\r\n\t"other": true,\r\n}\r\n' > "$T12J/opencode.jsonc"
+"$FIXTURE/install.sh" --dir "$T12J" --configure-subagent-depth >/dev/null
+if grep -q '// keep' "$T12J/opencode.jsonc" && grep -q '"other": true,' "$T12J/opencode.jsonc" && ! tr -d '\r' < "$T12J/opencode.jsonc" | cmp -s - "$T12J/opencode.jsonc"; then pass "explicit JSONC merge preserves comments CRLF and trailing comma"; else fail "explicit JSONC merge preserves comments CRLF and trailing comma"; fi
+
+T12H="$TMP/t12-high"
+mkdir -p "$T12H"
+printf '%s\n' '{"subagent_depth":7,"keep":true}' > "$T12H/opencode.json"
+"$FIXTURE/install.sh" --dir "$T12H" --configure-subagent-depth >/dev/null
+cp "$T12H/opencode.json" "$TMP/t12-high-once.json"
+"$FIXTURE/install.sh" --dir "$T12H" --configure-subagent-depth >/dev/null
+if cmp -s "$T12H/opencode.json" "$TMP/t12-high-once.json" && grep -q '"subagent_depth":7' "$T12H/opencode.json"; then pass "explicit depth merge preserves values above two and is idempotent"; else fail "explicit depth merge preserves values above two and is idempotent"; fi
+BD12=$(backup_dir "$T12H")
+if [ -n "$BD12" ] && [ -f "$BD12/opencode.json" ]; then pass "explicit depth merge backs up config"; else fail "explicit depth merge backs up config"; fi
+
+T12M="$TMP/t12-malformed"
+mkdir -p "$T12M"
+printf '%s\n' '{ invalid' > "$T12M/opencode.json"
+if "$FIXTURE/install.sh" --dir "$T12M" --configure-subagent-depth >/dev/null 2>&1; then fail "reject malformed OpenCode config"; else pass "reject malformed OpenCode config"; fi
+if [ ! -e "$T12M/commands/naru-plan.md" ]; then pass "malformed OpenCode config rejects before install mutation"; else fail "malformed OpenCode config rejects before install mutation"; fi
+
+T12S="$TMP/t12-symlink"
+mkdir -p "$T12S" "$TMP/t12-outside"
+printf '%s\n' '{"subagent_depth":1}' > "$TMP/t12-outside/opencode.json"
+ln -s "$TMP/t12-outside/opencode.json" "$T12S/opencode.json"
+if "$FIXTURE/install.sh" --dir "$T12S" --configure-subagent-depth >/dev/null 2>&1; then fail "reject symlinked OpenCode config"; else pass "reject symlinked OpenCode config"; fi
+if grep -q '"subagent_depth":1' "$TMP/t12-outside/opencode.json"; then pass "symlink refusal does not touch external target"; else fail "symlink refusal does not touch external target"; fi
+
+T12B="$TMP/t12-both"
+mkdir -p "$T12B"
+printf '%s\n' '{}' > "$T12B/opencode.json"
+printf '%s\n' '{}' > "$T12B/opencode.jsonc"
+if "$FIXTURE/install.sh" --dir "$T12B" --configure-subagent-depth >/dev/null 2>&1; then fail "reject ambiguous JSON and JSONC config"; else pass "reject ambiguous JSON and JSONC config"; fi
+
+T12R="$TMP/t12-rollback"
+mkdir -p "$T12R"
+printf '%s\n' '{"subagent_depth":1,"rollback":true}' > "$T12R/opencode.json"
+cp "$T12R/opencode.json" "$TMP/t12-rollback-original.json"
+if PATH="$FAKEBIN:$PATH" "$FIXTURE/install.sh" --dir "$T12R" --configure-subagent-depth >/dev/null 2>&1; then fail "injected post-config install failure"; else pass "injected post-config install failure"; fi
+if cmp -s "$T12R/opencode.json" "$TMP/t12-rollback-original.json"; then pass "rollback restores OpenCode config"; else fail "rollback restores OpenCode config"; fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

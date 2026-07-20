@@ -9,6 +9,8 @@ import {
   NARU_AGENT_IDS,
   NARU_DELEGATE_PROTOCOL,
   NARU_DISPATCH_GRAPH,
+  NARU_MINIMUM_SUBAGENT_DEPTH,
+  NARU_REQUIRED_SUBAGENT_DEPTH,
   SOL_FLOOR_ROLES,
 } from '../tools/naru-lib/model-routing.mjs';
 
@@ -290,6 +292,8 @@ async function main() {
   if (JSON.stringify([...NARU_AGENT_IDS].sort()) !== JSON.stringify(expectedIDs)) fail('routing inventory mismatch');
 
   if (NARU_DELEGATE_PROTOCOL !== 2) fail('unexpected Naru Delegate protocol');
+  if (NARU_MINIMUM_SUBAGENT_DEPTH !== 2) fail('unexpected minimum subagent depth');
+  if (NARU_REQUIRED_SUBAGENT_DEPTH !== 2) fail('dispatch topology depth changed without compatibility update');
   if (SOL_FLOOR_ROLES.length !== 13) fail('unexpected Sol-floor role count');
   if (SOL_FLOOR_ROLES.includes('naru-orchestrator')) fail('orchestrator must not be a Sol floor');
   if (DEFAULT_AGENT_ASSIGNMENTS['naru-orchestrator'] !== 'sol') fail('orchestrator must default to Sol');
