@@ -94,9 +94,9 @@ function validateRedaction(value, label) {
 function validateBudget(value, label) {
   assertExactKeys(value, ['maxPeakConcurrency', 'maxElapsedMs', 'maxChildCount'], label);
   return {
-    maxPeakConcurrency: assertInteger(value.maxPeakConcurrency, `${label}.maxPeakConcurrency`, 0, 4),
+    maxPeakConcurrency: assertInteger(value.maxPeakConcurrency, `${label}.maxPeakConcurrency`, 0, 14),
     maxElapsedMs: assertInteger(value.maxElapsedMs, `${label}.maxElapsedMs`, 1, 86_400_000),
-    maxChildCount: assertInteger(value.maxChildCount, `${label}.maxChildCount`, 0, 4),
+    maxChildCount: assertInteger(value.maxChildCount, `${label}.maxChildCount`, 0, 14),
   };
 }
 
@@ -167,8 +167,8 @@ export function validateCapturedRunSummaryV1(value) {
   return {
     mode: value.mode,
     elapsedMs: assertInteger(value.elapsedMs, 'CapturedRunSummaryV1.elapsedMs'),
-    childCount: assertInteger(value.childCount, 'CapturedRunSummaryV1.childCount', 0, 4),
-    peakConcurrency: assertInteger(value.peakConcurrency, 'CapturedRunSummaryV1.peakConcurrency', 0, 4),
+    childCount: assertInteger(value.childCount, 'CapturedRunSummaryV1.childCount', 0, 14),
+    peakConcurrency: assertInteger(value.peakConcurrency, 'CapturedRunSummaryV1.peakConcurrency', 0, 14),
     usefulDelegation: assertBoolean(value.usefulDelegation, 'CapturedRunSummaryV1.usefulDelegation'),
     justifiedSkip: assertBoolean(value.justifiedSkip, 'CapturedRunSummaryV1.justifiedSkip'),
     bestOf2: validateBestOf2(value.bestOf2, 'CapturedRunSummaryV1.bestOf2'),
@@ -243,7 +243,7 @@ function point(name, passed) {
 }
 
 export function scoreEvaluationCase(value) {
-  const entry = value?.capturedRun ? value : { id: 'captured-run', budget: { maxPeakConcurrency: 4, maxElapsedMs: 86_400_000, maxChildCount: 4 }, rubric: value?.rubric, capturedRun: value };
+  const entry = value?.capturedRun ? value : { id: 'captured-run', budget: { maxPeakConcurrency: 14, maxElapsedMs: 86_400_000, maxChildCount: 14 }, rubric: value?.rubric, capturedRun: value };
   const rubric = validateRubric(entry.rubric, 'Evaluation rubric');
   const budget = validateBudget(entry.budget, 'Evaluation budget');
   const capturedRun = validateCapturedRunSummaryV1(entry.capturedRun);

@@ -213,6 +213,7 @@ add_copy "${SRC_DIR}/tools/naru-git-read.js"          "tools/naru-git-read.js"
 add_copy "${SRC_DIR}/tools/naru-github-read.js"       "tools/naru-github-read.js"
 add_copy "${SRC_DIR}/tools/naru-github-post-review.js" "tools/naru-github-post-review.js"
 add_copy "${SRC_DIR}/tools/naru-scheduler.js"         "tools/naru-scheduler.js"
+add_copy "${SRC_DIR}/tools/naru-worktree.js"          "tools/naru-worktree.js"
 add_copy "${SRC_DIR}/tools/naru-lib"                  "tools/naru-lib"
 
 # Runtime plugins (always copy-pinned and installed by default). The scheduler

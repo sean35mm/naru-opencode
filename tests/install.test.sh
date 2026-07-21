@@ -70,6 +70,7 @@ touch "$FIXTURE/tools/naru-git-read.js"
 touch "$FIXTURE/tools/naru-github-read.js"
 touch "$FIXTURE/tools/naru-github-post-review.js"
 touch "$FIXTURE/tools/naru-scheduler.js"
+touch "$FIXTURE/tools/naru-worktree.js"
 touch "$FIXTURE/tools/naru-lib/helper.js"
 touch "$FIXTURE/plugins/naru-delegate.js"
 touch "$FIXTURE/plugins/naru-scheduler.js"
@@ -106,8 +107,9 @@ if is_file "$T1/tools/naru-git-read.js"; then pass "tool copy-pinned"; else fail
 if is_dir "$T1/tools/naru-lib"; then pass "tool helper dir copy-pinned"; else fail "tool helper dir copy-pinned"; fi
 if is_file "$T1/plugins/naru-delegate.js"; then pass "delegate plugin installed by default"; else fail "delegate plugin installed by default"; fi
 if is_file "$T1/tools/naru-scheduler.js" && is_file "$T1/plugins/naru-scheduler.js"; then pass "scheduler runtime copy-pinned"; else fail "scheduler runtime copy-pinned"; fi
+if is_file "$T1/tools/naru-worktree.js"; then pass "worktree runtime copy-pinned"; else fail "worktree runtime copy-pinned"; fi
 if is_file "$T1/naru-runtime.example.json" && is_file "$T1/scripts/naru-live-eval.mjs" && is_file "$T1/scripts/live-evals.example.json"; then pass "runtime example and evaluation assets copy-pinned"; else fail "runtime example and evaluation assets copy-pinned"; fi
-if [ "$(grep -c '^  naru-scheduler: allow$' "$T1/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -q '^  naru-scheduler: allow$' "$T1/agents/naru-minion-implement.md"; then pass "global root and delegated scheduler permissions"; else fail "global root and delegated scheduler permissions"; fi
+if [ "$(grep -c '^  naru-scheduler: allow$' "$T1/agents/naru-orchestrator.md")" -eq 1 ] && [ "$(grep -c '^  naru-worktree: allow$' "$T1/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-(scheduler|worktree): allow$' "$T1/agents/naru-minion-implement.md"; then pass "global root and delegated runtime permissions"; else fail "global root and delegated runtime permissions"; fi
 if [ ! -e "$T1/plugins/naru-minions-dashboard.tsx" ]; then pass "dashboard omitted by default"; else fail "dashboard omitted by default"; fi
 if [ ! -e "$T1/commands/naru" ] && [ ! -e "$T1/agents/naru" ]; then pass "no old loader paths"; else fail "no old loader paths"; fi
 
@@ -125,7 +127,7 @@ PROJECT="$TMP/project"
 mkdir -p "$PROJECT"
 (cd "$PROJECT" && "$FIXTURE/install.sh" --project >/dev/null)
 if is_link "$PROJECT/.opencode/commands/naru-plan.md"; then pass "project install"; else fail "project install"; fi
-if [ "$(grep -c '^  naru-scheduler: allow$' "$PROJECT/.opencode/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -q '^  naru-scheduler: allow$' "$PROJECT/.opencode/agents/naru-minion-implement.md"; then pass "project root and delegated scheduler permissions"; else fail "project root and delegated scheduler permissions"; fi
+if [ "$(grep -c '^  naru-scheduler: allow$' "$PROJECT/.opencode/agents/naru-orchestrator.md")" -eq 1 ] && [ "$(grep -c '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-(scheduler|worktree): allow$' "$PROJECT/.opencode/agents/naru-minion-implement.md"; then pass "project root and delegated runtime permissions"; else fail "project root and delegated runtime permissions"; fi
 
 # 3. Paths with spaces.
 T3="$TMP/path with spaces/target"

@@ -133,7 +133,7 @@ Core workflows select specialists by relevant surface rather than launching ever
 
 ### Full Ultra implementation scheduling
 
-Full Ultra is the orchestrator's implementation scheduling protocol. It uses rolling cohorts with at most two independent writers in the current workspace; when a writer safely finishes, the orchestrator can refill that slot immediately. It can also run up to two useful read-only preparation tasks, for no more than four children at once. It does not force fan-out, create worktrees automatically, claim runtime scheduler enforcement, or promise a measured speedup.
+Full Ultra is the orchestrator's implementation scheduling protocol. A clean Git repository may use one detached Naru-owned worktree per writer, with six concurrent writers by default and up to ten when configured. Dirty or unsupported repositories automatically use at most two independent writers in the current workspace. It can also run up to four useful read-only preparation tasks. It proactively fills capacity with distinct useful work but does not invent irrelevant fan-out, claim complete runtime enforcement, or promise a measured speedup.
 
 Every run, cohort, and item carries its baseline. Active-peer claims identify isolated writer scope. A writer's terminal result is provisional until its evidence remains valid; conflicting evidence, a changed baseline, scope uncertainty, or ownership uncertainty freezes and drains the cohort rather than starting more work.
 
@@ -143,7 +143,7 @@ After writers are finished, the candidate must be writer-free. The orchestrator 
 
 For implementation work, the orchestrator resolves one user preference or defaults to `auto`:
 
-- `auto` selects the smallest useful read-only analysis set and permits one justified best-of-2 comparison.
+- `auto` proactively fills available read-only capacity with distinct useful lenses, refills from a useful deferred queue, and permits one justified best-of-2 comparison.
 - `lean` selects at most one highest-value read-only worker and never uses best-of-2.
 - `thorough` may use complementary relevant lenses and at most one best-of-2 pair within the normal caps; it does not launch every lens.
 - `foreground` applies `auto` selection but waits for that analysis before proceeding.
@@ -165,11 +165,11 @@ The `scheduler.mode` values are:
 - `observe` — use Protocol 3 state and admission markers, but record typed incidents and fail open when runtime admission validation cannot be satisfied. Protocol 2 can be observed only when `legacyProtocol2` is explicitly `observe`.
 - `enforce` — fail closed on incompatible capability, missing or invalid admission, replay, stale revision, claim conflict, expiry, or budget exhaustion. This mode requires `legacyProtocol2: "reject"` and refuses Protocol 2.
 
-Protocol 3 uses strict manifests, compare-and-swap revisions, one-time admission and transition tokens, and correlated `evidence`, `terminal`, `candidate`, `shard`, `judgment`, and `gate` artifacts. Verification, judgment, and completion gates require the declared exact candidate and bounded coverage. Default limits are two writers, two read-only children, four total children, three judge passes, 256 work items, a 256 KiB manifest, 64 KiB artifacts, and five-minute token lifetimes. `maxArtifactBytes` may be configured only from 1 KiB through 256 KiB; runtime configuration itself is limited to 64 KiB and must be regular non-symlinked JSON.
+Protocol 3 uses strict manifests, compare-and-swap revisions, one-time admission and transition tokens, and correlated `evidence`, `terminal`, `candidate`, `shard`, `judgment`, and `gate` artifacts. Verification, judgment, and completion gates require the declared exact candidate and bounded coverage. Shared defaults are two writers, four read-only children, six total children, and three judge passes. Isolated writer budgets may raise writers to ten and total active children to fourteen. Other limits remain 256 work items, a 256 KiB manifest, 64 KiB artifacts, and five-minute token lifetimes. `maxArtifactBytes` may be configured only from 1 KiB through 256 KiB; runtime configuration itself is limited to 64 KiB and must be regular non-symlinked JSON.
 
 The scheduler plugin intercepts the native Task `tool.execute.before` path; it does not replace Task or grant children scheduler authority. Only `naru-orchestrator` has the exact scheduler tool permission. Runtime state and its digest-linked journal are process-local, memory-only, non-durable, and bounded. Journal metadata redacts prompt, diff, path, directory, secret, token, authorization, command/output/content, and model-like fields; it retains at most 64 roots, 256 entries per root, and 4 KiB metadata per entry.
 
-These gates are not a sandbox. They do not create sessions, inspect Git, capture or compare baselines, prove report truth, infer model routes, authoritatively observe background completion, coordinate another process, or impose provider/global hard caps. Prompt-level authorization, routing, Weaver, scope containment, current-workspace ownership, no-worktree behavior, freshness, and final-state checks remain required.
+These gates are not a sandbox. The scheduler does not create sessions, inspect Git, capture or compare baselines, prove report truth, infer model routes, authoritatively observe background completion, coordinate another process, or impose provider/global hard caps. The separate root-only worktree tool performs narrowly validated Git isolation and integration and persists local run metadata for recovery after a process restart. Prompt-level authorization, routing, Weaver, scope containment, workspace ownership, freshness, and final-state checks remain required.
 
 ## Activity dashboard
 
@@ -352,7 +352,7 @@ OpenCode auto mode automatically approves only configured `doom_loop` asks. Envi
 
 ### Permission layers and native Task
 
-Global and project OpenCode configuration can each contribute root-agent and delegated-session policy. Check all four effective contexts after combining installs: root/global, root/project, delegated/global, and delegated/project. In every context, only `naru-orchestrator` should have the exact `naru-scheduler` permission; minions and custom callers must not. Naru still delegates through native Task in the current workspace, and neither scheduler mode nor project configuration creates worktrees automatically.
+Global and project OpenCode configuration can each contribute root-agent and delegated-session policy. Check all four effective contexts after combining installs: root/global, root/project, delegated/global, and delegated/project. In every context, only `naru-orchestrator` should have the exact `naru-scheduler` and `naru-worktree` permissions; minions and custom callers must not. Naru still delegates through native Task; isolated packets bind each writer to an exact external worktree path.
 
 ## Local evaluation
 

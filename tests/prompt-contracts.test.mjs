@@ -226,7 +226,7 @@ async function main() {
     fail('naru-orchestrator missing delegation marker');
   }
   for (const requiredText of [
-    'Run the smallest safe analysis set',
+    'Run the broadest useful independent analysis set that fits the active caps',
     'Skip `naru-minion-scout` when exact files or symbols are known',
     'naru-minion-investigate` only when behavior, a failure path, or root cause remains uncertain',
     'naru-minion-architect` only for structural or high-consequence work',
@@ -246,11 +246,14 @@ async function main() {
     'The modes are `auto`, `lean`, `thorough`, `foreground`, and `off`',
     'use `auto` when none is given',
     'For every material task, dispatch at least one useful read-only worker before the dependent decision or record exactly one typed skip reason',
+    'When two independent useful questions exist, dispatch two workers rather than arbitrarily choosing only one',
     '`mode-off`, `not-material`, `no-useful-independent-lens`, and `safety-blocked`',
     'Capacity is a deferral, not a skip reason',
+    '`auto` is the default proactive mode',
+    'Fill available read-only slots with distinct useful lenses',
     '`lean` selects at most one highest-value read-only worker and never uses best-of-2',
-    '`thorough` may select complementary relevant lenses and at most one independent best-of-2 pair',
-    '`foreground` uses the `auto` selection rules',
+    '`thorough` applies proactive `auto` selection',
+    '`foreground` uses the proactive `auto` selection rules',
     '`off` disables discretionary read-only analysis',
     'Select by exact task shape, not keywords',
     'Unknown files, symbols, ownership, or execution paths: Scout',
@@ -262,10 +265,12 @@ async function main() {
     'Best-of-2 means two fresh read-only children receive the same bounded decision question',
     'Use at most one such pair for the entire request',
     'synthesize rather than vote',
-    'Stop analysis dispatch as soon as the implementation scope and dependent decisions have sufficient evidence',
-    'at most two active Implement writers, at most two active read-only children, and at most four total active Naru children',
-    'a best-of-2 pair consumes both read-only slots',
-    'never force fan-out, Sol xhigh, or worktrees',
+    'Keep useful capacity saturated while unresolved material questions remain',
+    'immediately dispatch the next deferred independent lens',
+    'Shared-workspace mode preserves hard caps of two active Implement writers, four active read-only children, and six total active Naru children',
+    'Isolated-worktree mode permits the configured 1–10 active Implement writers',
+    'A best-of-2 pair consumes two read-only slots',
+    'capacity-seeking, not blind fan-out',
   ]) {
     if (!orchestrator.includes(requiredText)) fail(`naru-orchestrator missing adaptive delegation contract: ${requiredText}`);
   }
@@ -327,14 +332,29 @@ async function main() {
   }
 
   for (const requiredText of [
+    'Treat Weaver as internal scheduling infrastructure, not a user checkpoint',
+    'Never ask the user a question solely because Weaver reports an active session, overlapping intent, or claim conflict',
+    'Keep non-conflicting workers and analysis running',
+    'reassign an unclaimed independent scope when possible',
+    'report that item as blocked in the final result without an intermediate user prompt',
     '`schedulingProtocol: 2`',
-    'rolling cohort of ready, independent work rather than fixed batches',
+    'Run a rolling cohort rather than fixed batches',
     'Maintain at most two active fresh Implement children',
+    'In shared-workspace mode, use two writers whenever concurrency is demonstrably safe',
     'Do not wait for the cohort to drain merely to refill a free slot',
     'when one writer terminates, provisionally validate its report and changed paths, recompute DAG readiness, and immediately start a safe ready item',
-    'independent of every active peer',
-    'Do not force splits or fan-out',
-    'Do not create worktrees automatically',
+    'each newly ready item is independent of every active peer',
+    'Do not force artificial splits or fan-out',
+    'Do not create ad hoc worktrees outside the isolated workflow above',
+    '## Isolated Writer Mode',
+    '`naru-worktree prepare_run`',
+    '`recover_run` with the existing run ID',
+    '`prepare_item` once per ready work item',
+    '`naru-worktree integrate_item`',
+    '`naru-worktree finalize_run`',
+    '`cleanup_run`',
+    'downgrade automatically to shared mode without a user question',
+    'Finalization applies the verified aggregate to the still-clean unchanged user workspace without delivery commits or pushes',
     '`workItemId`, `dependencies`, `ownedWriteScope`, `frozenContractClaims`, `mutableContractClaims`, `generatedArtifactClaims`, `configurationClaims`, `mutableResourceClaims`, `exclusions`, `verificationNeeds`, and `status`',
     'Frozen shared contracts may be read concurrently',
     'Any overlapping or uncertain mutable contract, path, generated artifact, configuration, manifest or lockfile, or mutable runtime resource serializes',
@@ -347,17 +367,21 @@ async function main() {
     'complete `activePeerClaims`',
     'never an authoritative whole-workspace item delta',
     'live claim conflict is a blocked/serialization signal',
+    'not a user checkpoint',
     'never rerun the conflicting claim',
+    'continue independent work',
+    'requeue the affected item for serialized coordinator fallback',
     'If Weaver is unavailable',
     'strict packet ownership and changed-path containment',
     'validate the report schema and `changedPaths` containment provisionally',
     'may unlock a dependent item',
     'all descendants remain provisional',
-    'freezes refilling',
-    'Drain active writers, invalidate affected provisional descendants',
-    'serialized reconciliation without reset or revert',
-    'up to two fresh Scout, Investigate, Architect, Debug, or explicitly read-only Verify-preparation children',
-    'at most four total active Naru children',
+    'freeze all refilling',
+    'freezes only affected work and descendants',
+    'drain affected writers, invalidate affected provisional descendants',
+    'serialized reconciliation without reset, revert, or a Weaver-only user question',
+    'proactively fill free child capacity with up to four fresh Scout, Investigate, Architect, Debug, or explicitly read-only Verify-preparation children',
+    'at most six total active Naru children',
     '`evidenceId`, `observedPaths`, `basisIdentity`, and `validityKeys`/`invalidationKeys`',
     'any changed observed path invalidates the evidence',
     'TodoWrite is presentation only, never scheduler state',
@@ -387,9 +411,12 @@ async function main() {
   for (const requiredText of [
     '`schedulingProtocol: 2`',
     'at most two active fresh Implement invocations',
-    'independent of every active peer',
+    'logical independence from every active peer',
     'Frozen shared contracts may be read concurrently',
-    'Do not create a worktree automatically',
+    'Do not create, integrate, or remove a worktree yourself',
+    'exact `workspacePath`',
+    'use that path as Bash `workdir`',
+    'Never edit `repositoryRoot` or another worktree',
     '`cohortId`',
     '`workItemId`, `dependencies`, `ownedWriteScope`, `frozenContractClaims`, `mutableContractClaims`, `generatedArtifactClaims`, `configurationClaims`, `mutableResourceClaims`, `exclusions`, `verificationNeeds`, and `status`',
     '`runBaseline` and `cohortBaseline`',
@@ -397,9 +424,14 @@ async function main() {
     'complete `activePeerClaims`',
     'Never derive an authoritative item delta',
     'terminal report and contained dependency outcome are provisional',
-    'every required exact owned path or glob claim must be successfully acquired before the first edit',
+    'inspect `weaver status`',
+    'register the packet objective with `weaver task`',
+    'acquire every required exact owned path or glob claim before the first edit',
     'Do not edit after only partial claim acquisition',
     'blocked report with zero edits and zero changed paths',
+    'include the conflicting claim and any safe unclaimed alternative',
+    'never ask the user',
+    'call `weaver done` before the terminal report',
     'serialized coordinator fallback',
     'never rerun the conflicting claim',
     'If Weaver is unavailable',
@@ -510,7 +542,7 @@ async function main() {
     'non-durable',
     'not cross-process',
     'does not create sessions, inspect Git, capture baselines, prove that a report is truthful',
-    'two-writer/two-read-only/four-child limits',
+    'two-writer/four-read-only/six-child limits',
     'three-pass judge budget',
     'never describe Protocol 3 as a general sandbox or complete enforcement boundary',
   ]) {
@@ -518,6 +550,9 @@ async function main() {
   }
   if (!orchestrator.includes('  naru-scheduler: allow')) {
     fail('naru-orchestrator missing exact naru-scheduler permission');
+  }
+  if (!orchestrator.includes('  naru-worktree: allow')) {
+    fail('naru-orchestrator missing exact naru-worktree permission');
   }
   for (const [name, text] of [['implement', implement], ['verify', verify], ['judge', judge]]) {
     for (const requiredText of [
@@ -530,6 +565,7 @@ async function main() {
       if (!text.includes(requiredText)) fail(`naru-minion-${name} missing Protocol 3 report correlation: ${requiredText}`);
     }
     if (text.includes('  naru-scheduler: allow')) fail(`naru-minion-${name} unexpectedly gained scheduler permission`);
+    if (text.includes('  naru-worktree: allow')) fail(`naru-minion-${name} unexpectedly gained worktree permission`);
   }
 
   for (const role of ['scout', 'investigate', 'architect', 'implement', 'debug', 'verify', 'judge']) {

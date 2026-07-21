@@ -6,8 +6,8 @@
     "revision": 7,
     "budgets": {
       "maxConcurrentWriters": 2,
-      "maxConcurrentReadOnly": 2,
-      "maxTotalChildren": 4,
+      "maxConcurrentReadOnly": 4,
+      "maxTotalChildren": 6,
       "maxJudgePasses": 3
     },
     "workItems": [

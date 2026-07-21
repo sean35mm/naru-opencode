@@ -346,7 +346,7 @@
         "skipReason": null
       },
       "prohibitedActions": ["second best-of-2 pair", "best-of-2 writers", "automatic xhigh escalation"],
-      "expected": { "maxBestOf2Pairs": 1, "maxConcurrentReadOnly": 2, "disposition": "single-independent-pair" }
+      "expected": { "maxBestOf2Pairs": 1, "maxConcurrentReadOnly": 4, "disposition": "single-independent-pair" }
     },
     {
       "id": "adaptive-foreground-no-background",
@@ -390,19 +390,20 @@
       "expected": { "disposition": "typed-skip" }
     },
     {
-      "id": "adaptive-early-stop-and-caps",
-      "scenario": "Sufficient first evidence stops further dispatch even when slots remain available.",
-      "policy": { "mode": "auto", "material": true, "taskShape": "discovery" },
+      "id": "adaptive-capacity-seeking-refill",
+      "scenario": "Auto mode fills both useful read-only slots and refills one while a peer remains active.",
+      "policy": { "mode": "auto", "material": true, "taskShape": "mixed-discovery-diagnosis-structure" },
       "timeline": [
-        { "at": 0, "event": "packet-ready" },
-        { "at": 1, "event": "start-background", "selected": ["naru-minion-scout"] },
-        { "at": 2, "event": "sufficient-evidence" },
-        { "at": 3, "event": "stop-dispatch", "selected": [] }
+        { "at": 0, "event": "packet-ready", "deferred": ["naru-minion-architect"] },
+        { "at": 1, "event": "start-background", "selected": ["naru-minion-scout", "naru-minion-investigate", "naru-minion-debug", "naru-minion-verify"], "activeReadOnly": ["naru-minion-scout", "naru-minion-investigate", "naru-minion-debug", "naru-minion-verify"] },
+        { "at": 2, "event": "finish", "selected": ["naru-minion-scout"], "activeReadOnly": ["naru-minion-investigate", "naru-minion-debug", "naru-minion-verify"] },
+        { "at": 3, "event": "refill-background", "selected": ["naru-minion-architect"], "activeReadOnly": ["naru-minion-investigate", "naru-minion-debug", "naru-minion-verify", "naru-minion-architect"] },
+        { "at": 4, "event": "sufficient-evidence", "activeReadOnly": [] }
       ],
-      "decision": { "status": "delegated", "selected": ["naru-minion-scout"], "launch": "background", "skipReason": null },
-      "caps": { "maxConcurrentImplement": 2, "maxConcurrentReadOnly": 2, "maxTotalNaruChildren": 4 },
-      "prohibitedActions": ["fill unused slot", "replacement worker", "forced fan-out", "automatic xhigh escalation", "automatic worktree"],
-      "expected": { "stoppedAfterSufficientEvidence": true, "disposition": "early-stop" }
+      "decision": { "status": "delegated", "selected": ["naru-minion-scout", "naru-minion-investigate", "naru-minion-debug", "naru-minion-verify", "naru-minion-architect"], "launch": "background", "skipReason": null },
+      "caps": { "maxConcurrentImplement": 2, "maxConcurrentReadOnly": 4, "maxTotalNaruChildren": 6 },
+      "prohibitedActions": ["duplicate settled lens", "exceed active cap", "automatic xhigh escalation", "automatic worktree"],
+      "expected": { "initialUsefulSlotsFilled": true, "refilledWhilePeerActive": true, "maxConcurrentReadOnly": 4, "disposition": "capacity-seeking" }
     }
   ],
   "protocol3Cases": [
@@ -436,7 +437,7 @@
       "schedulingProtocol": 3,
       "artifactOrder": ["terminal", "candidate", "shard", "verification-gate", "judgment", "judgment-gate", "completion-gate"],
       "correlation": ["runId", "reportId", "admissionTokenId", "workItemId", "candidateArtifactId", "candidateIdentity", "candidateStateDigest"],
-      "budgets": { "maxConcurrentWriters": 2, "maxConcurrentReadOnly": 2, "maxTotalChildren": 4, "maxJudgePasses": 3 },
+      "budgets": { "maxConcurrentWriters": 2, "maxConcurrentReadOnly": 4, "maxTotalChildren": 6, "maxJudgePasses": 3 },
       "prohibitedActions": ["candidate while writer active", "shared shard mutable resource", "completion without ready judgment", "fourth judge pass"],
       "expected": { "allVerificationNeedsCovered": true, "finalIdentityExact": true, "disposition": "gated" }
     },
@@ -500,8 +501,8 @@
         { "at": 5, "event": "start", "workItemId": "c", "activeImplement": ["c"] }
       ],
       "conflict": { "configurationClaims": ["tsconfig.json"] },
-      "prohibitedActions": ["start c beside conflicting b", "ignore uncertain claim"],
-      "expected": { "cStartsAfterBFinishes": true, "disposition": "defer-until-independent" }
+      "prohibitedActions": ["start c beside conflicting b", "ignore uncertain claim", "ask user about Weaver conflict"],
+      "expected": { "cStartsAfterBFinishes": true, "userPromptRequired": false, "fallback": "serialized-coordinator", "disposition": "defer-until-independent" }
     },
     {
       "id": "scheduler-baseline-lifecycle",
@@ -537,11 +538,11 @@
     {
       "id": "scheduler-read-only-work-stealing",
       "scenario": "Useful preparation work may fill read-only capacity without checking a moving candidate.",
-      "active": { "implement": ["a", "b"], "readOnly": ["prep-manifest", "prep-report"], "totalNaruChildren": 4 },
+      "active": { "implement": ["a", "b"], "readOnly": ["prep-manifest", "prep-report", "prep-future", "prep-dependency"], "totalNaruChildren": 6 },
       "allowedKinds": ["future-scope discovery", "manifest or target inspection", "check-plan preparation", "unaffected dependency inspection", "terminal-report static review"],
       "evidence": { "evidenceId": "evidence-1", "observedPaths": ["package.json", "src/future.js"], "basisIdentity": "dispatch-b", "validityKeys": ["package.json@dispatch-b"], "invalidationKeys": ["package.json changed", "src/future.js changed"] },
-      "prohibitedActions": ["edit from preparation child", "run final checks against moving workspace", "exceed two read-only children", "exceed four total Naru children"],
-      "expected": { "maxConcurrentReadOnly": 2, "maxTotalNaruChildren": 4, "changedObservedPathInvalidatesEvidence": true, "disposition": "bounded-preparation" }
+      "prohibitedActions": ["edit from preparation child", "run final checks against moving workspace", "exceed four read-only children", "exceed six total Naru children"],
+      "expected": { "maxConcurrentReadOnly": 4, "maxTotalNaruChildren": 6, "changedObservedPathInvalidatesEvidence": true, "disposition": "bounded-preparation" }
     },
     {
       "id": "scheduler-todo-phase-semantics",
@@ -579,10 +580,10 @@
       "expected": { "remediationConcurrency": 1, "deliveryConcurrency": 1, "postingConcurrency": 1, "maxJudges": 3, "disposition": "serialized" }
     },
     {
-      "id": "scheduler-no-automatic-worktrees",
-      "scenario": "Rolling concurrency remains in the current workspace without automatic worktree creation.",
-      "prohibitedActions": ["automatic worktree"],
-      "expected": { "automaticWorktreeCreation": false, "workspaceMode": "current-workspace", "disposition": "no-worktrees" }
+      "id": "scheduler-automatic-isolated-worktrees",
+      "scenario": "A clean repository may use one Naru-owned worktree per writer while a dirty repository downgrades without prompting.",
+      "prohibitedActions": ["multiple writers in one isolated worktree", "worktree mode on dirty repository", "cleanup before finalization", "delivery commit"],
+      "expected": { "cleanRepositoryWriterLimit": 10, "defaultConcurrentWriters": 6, "writersPerWorktree": 1, "dirtyRepositoryFallback": "shared-two-writer", "userPromptRequired": false, "disposition": "isolated-worktrees" }
     }
   ]
 }

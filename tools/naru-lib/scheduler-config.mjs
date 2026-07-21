@@ -11,6 +11,7 @@ import {
 const MAX_CONFIG_BYTES = 64 * 1024;
 const MODES = Object.freeze(['off', 'observe', 'enforce']);
 const LEGACY_POLICIES = Object.freeze(['reject', 'observe']);
+const WORKSPACE_MODES = Object.freeze(['auto', 'shared', 'worktree']);
 
 export const DEFAULT_SCHEDULER_CONFIG = Object.freeze({
   mode: 'off',
@@ -26,6 +27,12 @@ export const DEFAULT_SCHEDULER_CONFIG = Object.freeze({
 export const DEFAULT_RUNTIME_CONFIG = Object.freeze({
   schemaVersion: 1,
   scheduler: DEFAULT_SCHEDULER_CONFIG,
+  implementation: Object.freeze({
+    workspaceMode: 'auto',
+    maxConcurrentWriters: 6,
+    maxWritersPerWorktree: 1,
+    cleanWorkspaceRequired: true,
+  }),
 });
 
 function isPlainObject(value) {
@@ -68,19 +75,19 @@ export function parseSchedulerConfig(value) {
       value.maxConcurrentWriters,
       DEFAULT_SCHEDULER_CONFIG.maxConcurrentWriters,
       'scheduler.maxConcurrentWriters',
-      { minimum: 1, maximum: 2 },
+      { minimum: 1, maximum: 10 },
     ),
     maxConcurrentReadOnly: integerOption(
       value.maxConcurrentReadOnly,
       DEFAULT_SCHEDULER_CONFIG.maxConcurrentReadOnly,
       'scheduler.maxConcurrentReadOnly',
-      { minimum: 0, maximum: 2 },
+      { minimum: 0, maximum: 4 },
     ),
     maxTotalChildren: integerOption(
       value.maxTotalChildren,
       DEFAULT_SCHEDULER_CONFIG.maxTotalChildren,
       'scheduler.maxTotalChildren',
-      { minimum: 1, maximum: 4 },
+      { minimum: 1, maximum: 14 },
     ),
     maxJudgePasses: integerOption(
       value.maxJudgePasses,
@@ -139,16 +146,47 @@ export function parseSchedulerConfig(value) {
 
 export function parseRuntimeConfig(value) {
   if (value === undefined || value === null) {
-    return { schemaVersion: 1, scheduler: parseSchedulerConfig() };
+    return {
+      schemaVersion: 1,
+      scheduler: parseSchedulerConfig(),
+      implementation: { ...DEFAULT_RUNTIME_CONFIG.implementation },
+    };
   }
   assertObject(value, 'naru runtime config');
-  assertAllowedKeys(value, ['schemaVersion', 'scheduler'], 'naru runtime config');
+  assertAllowedKeys(value, ['schemaVersion', 'scheduler', 'implementation'], 'naru runtime config');
   if (value.schemaVersion !== undefined && value.schemaVersion !== 1) {
     throw new Error('naru runtime config schemaVersion must be 1');
+  }
+  const implementation = value.implementation ?? {};
+  assertObject(implementation, 'implementation config');
+  assertAllowedKeys(implementation, Object.keys(DEFAULT_RUNTIME_CONFIG.implementation), 'implementation config');
+  if (implementation.cleanWorkspaceRequired !== undefined && implementation.cleanWorkspaceRequired !== true) {
+    throw new Error('implementation.cleanWorkspaceRequired must be true');
   }
   return {
     schemaVersion: 1,
     scheduler: parseSchedulerConfig(value.scheduler),
+    implementation: {
+      workspaceMode: enumOption(
+        implementation.workspaceMode,
+        DEFAULT_RUNTIME_CONFIG.implementation.workspaceMode,
+        WORKSPACE_MODES,
+        'implementation.workspaceMode',
+      ),
+      maxConcurrentWriters: integerOption(
+        implementation.maxConcurrentWriters,
+        DEFAULT_RUNTIME_CONFIG.implementation.maxConcurrentWriters,
+        'implementation.maxConcurrentWriters',
+        { minimum: 1, maximum: 10 },
+      ),
+      maxWritersPerWorktree: integerOption(
+        implementation.maxWritersPerWorktree,
+        DEFAULT_RUNTIME_CONFIG.implementation.maxWritersPerWorktree,
+        'implementation.maxWritersPerWorktree',
+        { minimum: 1, maximum: 1 },
+      ),
+      cleanWorkspaceRequired: true,
+    },
   };
 }
 
@@ -196,3 +234,4 @@ export async function loadSchedulerConfigFile(path) {
 
 export const loadSchedulerConfig = loadSchedulerConfigFile;
 export const SCHEDULER_CONFIG_MODES = MODES;
+export const IMPLEMENTATION_WORKSPACE_MODES = WORKSPACE_MODES;

@@ -114,7 +114,7 @@ For mixed copy-pinned generations, the v2 plugin stores normalized v2 overrides 
 
 ## Full Ultra scheduling protocols
 
-Full Ultra is prompt-level orchestration policy, not hard runtime scheduler enforcement or a measured speed guarantee. It schedules rolling cohorts in the current workspace with at most two independent writers. A safely open writer slot can be refilled immediately; up to two useful read-only preparation tasks may run alongside them, with four children total. It never requires fan-out or creates worktrees automatically.
+Full Ultra is prompt-level orchestration policy, not a measured speed guarantee. Clean repositories may schedule one writer per detached Naru-owned worktree, with six writers by default and ten maximum; dirty or unsupported repositories retain the two-writer shared ceiling. A safely open writer slot can be refilled immediately, and up to four useful read-only preparation tasks may run alongside writers. It proactively fills capacity with distinct useful work and never invents irrelevant fan-out.
 
 The run, each cohort, and each item retain immutable baseline identity, status, changed-path, and diff snapshots. Active peers must publish disjoint claims before editing. Completion is provisional until its evidence still matches the candidate; baseline drift, claim overlap, missing evidence, or other uncertainty freezes new scheduling and drains active work rather than guessing.
 
@@ -122,7 +122,7 @@ Once writers are gone, the candidate is writer-free. The orchestrator may issue 
 
 Protocol 2 is the complete default when runtime mode is `off`. Protocol 3 is selected only for parsed `observe` or `enforce` mode. It validates strict work-item DAGs, compare-and-swap revisions, admission and transition token binding, claim conflicts, configured concurrency budgets, artifact correlation, quiescence, verification coverage, judgment passes, and exact-candidate completion gates. Observe records typed incidents and fails open at Task admission; enforce fails closed and rejects Protocol 2. The mode does not alter authorization, model routing, edit ownership, review, or delivery boundaries.
 
-`tools/naru-scheduler.js` owns declarative operations; `plugins/naru-scheduler.js` consumes exact admission markers at native Task `tool.execute.before`. Neither creates sessions. The shared registry, bounded digest-linked journal, and telemetry are process-local and non-durable. They cannot provide authoritative background completion, cross-process coordination, Git baseline capture, report truth, provider hard caps, or a general sandbox. Prompt-level baseline, Weaver, containment, freshness, no-worktree, and final-state checks therefore remain mandatory.
+`tools/naru-scheduler.js` owns declarative operations; `plugins/naru-scheduler.js` consumes exact admission markers at native Task `tool.execute.before`. Neither creates sessions. `tools/naru-worktree.js` separately owns clean-repository worktree creation, path-contained serial integration, final aggregate application, crash recovery from local run metadata, and post-finalization cleanup. The scheduler registry, bounded digest-linked journal, and telemetry are process-local and non-durable. They cannot provide authoritative background completion, cross-process coordination, report truth, provider hard caps, or a general sandbox. Prompt-level baseline, Weaver, containment, freshness, workspace binding, and final-state checks therefore remain mandatory.
 
 Configuration defaults to `off`; `naru-runtime.example.json` is copied but never activated automatically. Runtime JSON is regular, non-symlinked, at most 64 KiB. Protocol defaults bound manifests at 256 KiB, work items at 32 KiB, tokens at 16 KiB, artifacts at 64 KiB, work items at 256, and admission/transition lifetimes at five minutes. The journal retains 64 roots, 256 entries per root, and 4 KiB sanitized metadata per entry.
 
@@ -159,7 +159,7 @@ When changing installed inventory, update the install plan and its fixture inven
 
 `evaluation.mjs` validates bounded captured summaries and scores only the supplied deterministic fields: useful delegation or justified skip, concurrency/elapsed/child budgets, remediation, best-of-2 behavior, checks, and typed incidents. Evaluation manifests must explicitly state that prompts, code, and diffs are omitted; sensitive or raw source/patch fields are rejected. The manifest is limited to 256 KiB and 128 cases, and each sanitized journal to 128 entries.
 
-`scripts/naru-live-eval.mjs` currently exposes only `--manifest <path> --dry-run`. It does not start OpenCode, call a provider, capture a live session, upload artifacts, or write evaluation results. The fixture is a local data contract, not evidence of live model quality.
+`scripts/naru-live-eval.mjs` supports deterministic `--manifest <path> --dry-run` scoring and an explicit `--live` mode. Live mode requires `--confirm-provider-cost`, starts a localhost OpenCode server, recursively observes descendant sessions, and emits only redacted structural timing, routing, depth, and concurrency results. It does not upload artifacts or persist evaluation results.
 
 ## Extension rules and reserved identifiers
 
@@ -190,6 +190,7 @@ Run the smallest relevant check for the changed area:
 node --test tests/model-routing.test.mjs
 node --test tests/behavioral-evals.test.mjs
 node --test tests/evaluation.test.mjs
+node --test tests/live-evaluation.test.mjs
 node tests/config-policy.test.mjs
 node tests/prompt-contracts.test.mjs
 node --test tests/scheduler-protocol.test.mjs
@@ -200,6 +201,7 @@ node --test tests/merge-tui-config.test.mjs
 node --test tests/merge-opencode-config.test.mjs
 node --test tests/github-tools.test.mjs
 node --test tests/bun-transport.test.mjs
+node --test tests/worktree.test.mjs
 sh tests/install.test.sh
 git diff --check
 ```

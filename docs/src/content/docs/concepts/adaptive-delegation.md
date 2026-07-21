@@ -1,9 +1,9 @@
 ---
 title: Adaptive delegation
-description: How Naru selects the smallest useful read-only analysis before implementation.
+description: How Naru proactively fills bounded read-only capacity before implementation.
 ---
 
-For a material implementation request, `naru-orchestrator` defaults to `auto`: it selects the smallest useful read-only lens, not every available specialist. The choice changes discretionary analysis only; it never changes authorization, edit ownership, verification, judgment, routing, or delivery boundaries.
+For a material implementation request, `naru-orchestrator` defaults to `auto`: it fills available read-only capacity with distinct useful lenses and queues additional useful questions for rolling refill. It does not launch irrelevant or duplicate specialists. The choice changes discretionary analysis only; it never changes authorization, edit ownership, verification, judgment, routing, or delivery boundaries.
 
 ```mermaid
 flowchart TD
@@ -22,4 +22,4 @@ flowchart TD
 
 **Walkthrough:** use Scout when ownership is unknown, Investigate when behavior is uncertain, Architect for consequential structural decisions, and a read-only Verify preparation task when a check plan needs independent review. `lean` permits at most one lens; `thorough` may add complementary evidence or one justified best-of-2 pair. `off` disables only optional analysis.
 
-Naru does not force fan-out. It preserves limits of two active writers, two read-only children, and four total children. Read the canonical [user guide](https://sean35mm.github.io/naru-opencode/user-guide/) for the complete selection rules.
+Naru proactively fills capacity with distinct useful work but does not invent irrelevant fan-out. It preserves limits of two active writers, four read-only children, and six total children. Read the canonical [user guide](https://sean35mm.github.io/naru-opencode/user-guide/) for the complete selection rules.

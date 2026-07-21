@@ -58,7 +58,7 @@ test('scoring is deterministic and depends only on supplied rubric and captured 
   assert.equal(scoreEvaluationCase(fixture.cases[4]).incidentPenalty, 10);
 });
 
-test('dry-run plan is bounded and CLI refuses live execution', () => {
+test('dry-run plan is bounded and live CLI requires an explicit provider-cost gate', () => {
   const plan = createDryRunPlan(fixture);
   assert.equal(plan.dryRun, true);
   assert.equal(plan.cases.length, fixture.cases.length);
@@ -68,7 +68,7 @@ test('dry-run plan is bounded and CLI refuses live execution', () => {
   const dry = spawnSync(process.execPath, [cli, '--manifest', fixturePath, '--dry-run'], { encoding: 'utf8' });
   assert.equal(dry.status, 0, dry.stderr);
   assert.deepEqual(JSON.parse(dry.stdout), plan);
-  const live = spawnSync(process.execPath, [cli, '--manifest', fixturePath], { encoding: 'utf8' });
+  const live = spawnSync(process.execPath, [cli, '--live', '--case', 'plan-fanout', '--dir', '.'], { encoding: 'utf8' });
   assert.equal(live.status, 2);
-  assert.match(live.stderr, /only --dry-run is available/);
+  assert.match(live.stderr, /requires --confirm-provider-cost/);
 });

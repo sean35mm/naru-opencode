@@ -63,23 +63,29 @@ Naru Delegate is deterministic: it configures canonical Terra roles plus hidden 
 
 ## Adaptive analysis and optional runtime gates
 
-For implementation requests, `naru-orchestrator` defaults to adaptive `auto` analysis. Users may request `lean`, `thorough`, `foreground`, or `off`; these choices affect only discretionary read-only analysis, not authorization, required implementation, final verification, judgment, routing, or review posting. `auto` chooses the smallest useful lens, `lean` allows one, `thorough` may use complementary lenses or one justified best-of-2, and `foreground` applies `auto` before proceeding.
+For implementation requests, `naru-orchestrator` defaults to proactive `auto` analysis. Users may request `lean`, `thorough`, `foreground`, or `off`; these choices affect only discretionary read-only analysis, not authorization, required implementation, final verification, judgment, routing, or review posting. `auto` fills available read-only capacity with distinct useful lenses, `lean` allows one, `thorough` favors complementary coverage or one justified best-of-2 and may use rolling waves, and `foreground` applies `auto` before proceeding.
 
 Runtime scheduling is separately configured as `off`, `observe`, or `enforce` in `naru-runtime.json` beside the installed plugins. `off` keeps prompt-level Protocol 2. `observe` uses Protocol 3 but fails open after recording typed admission incidents. `enforce` fails closed on the same admission checks, rejects Protocol 2, and requires compatible synchronous runtime capability. Prefer current-workspace project configuration; changing global configuration requires explicit approval.
 
-Protocol 3 deterministically validates declared DAGs, claims, revisions, bounded admission tokens and artifacts, quiescence, verification coverage, judgment correlation, and exact-candidate completion gates. It still uses OpenCode's native Task path and preserves the two-writer, two-read-only, four-child, and three-judge-pass limits. The runtime is process-local, non-durable, and not cross-process; it does not create sessions, inspect Git, capture baselines, prove reports, authoritatively observe background completion, or impose provider-wide concurrency caps.
+Protocol 3 deterministically validates declared DAGs, claims, revisions, bounded admission tokens and artifacts, quiescence, verification coverage, judgment correlation, and exact-candidate completion gates. Shared mode defaults to two writers, four read-only children, six total children, and three judge passes. Isolated mode defaults to six writers and supports up to ten writers plus four read-only children. Scheduler state is process-local, non-durable, and not cross-process; it does not create sessions, prove reports, authoritatively observe background completion, or impose provider-wide concurrency caps. Isolated worktree runs persist local recovery metadata for restart-safe continuation and cleanup.
 
-The installed local evaluator currently supports deterministic dry-run scoring of sanitized captured summaries only:
+The installed evaluator supports deterministic dry-run scoring of sanitized captured summaries:
 
 ```sh
 node scripts/naru-live-eval.mjs --manifest tests/fixtures/live-evals.json --dry-run
 ```
 
-Prompts, code, and diffs must be omitted. Live provider execution or capture is not implemented by this command.
+Live provider evaluation is explicit and cost-gated:
+
+```sh
+node scripts/naru-live-eval.mjs --live --case plan-fanout --dir . --confirm-provider-cost
+```
+
+Live output contains only redacted structural timing, routing, depth, and concurrency results; prompts, code, diffs, and outputs are omitted.
 
 ## Full Ultra implementation scheduling
 
-Full Ultra is the orchestrator's implementation scheduling policy, not a speed guarantee. With runtime mode `off`, Protocol 2 uses prompt-level rolling cohorts. In `observe` or `enforce`, Protocol 3 adds the bounded machine gates above without replacing prompt-level safety checks. Both use at most two independent writers in the current workspace, may prepare up to two useful read-only tasks (four children total), never force fan-out, and never create worktrees automatically.
+Full Ultra is the orchestrator's implementation scheduling policy, not a speed guarantee. With runtime mode `off`, Protocol 2 uses prompt-level rolling cohorts. In `observe` or `enforce`, Protocol 3 adds bounded machine gates without replacing prompt-level safety checks. A clean repository may use one detached Naru-owned worktree per writer, with six writers by default and up to ten when configured; dirty or unsupported repositories automatically use at most two writers in the current workspace. Both modes may prepare up to four useful read-only tasks and never force irrelevant fan-out.
 
 Each run, cohort, and item records a baseline and active-peer claims. Writer completion is provisional until its evidence remains valid; uncertainty freezes and drains the cohort. The final candidate is writer-free, receives up to two safe Verify shards with a complete shard manifest, then a Judge and an unchanged final checkpoint. Remediation, delivery, and review posting remain serialized. Todo states are phase-level presentation only: dashboard rows and Task descriptions show child activity, and a terminal writer is not final completion.
 

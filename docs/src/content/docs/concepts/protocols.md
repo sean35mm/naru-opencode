@@ -3,7 +3,7 @@ title: Scheduling protocols
 description: Prompt-level rolling cohorts by default, with optional local Protocol 3 admission gates.
 ---
 
-Naru uses Protocol 2 when the scheduler is off. Protocol 3 is selected only in `observe` or `enforce` mode. Both preserve scoped ownership, native Task dispatch, no automatic worktrees, and the same writer and child limits.
+Naru uses Protocol 2 when the scheduler is off. Protocol 3 is selected only in `observe` or `enforce` mode. Both preserve scoped ownership and native Task dispatch. Shared mode uses the two-writer ceiling; clean isolated mode binds one writer to each Naru-owned worktree and may use the configured six-to-ten writer budget.
 
 ## Protocol 2: rolling cohorts
 

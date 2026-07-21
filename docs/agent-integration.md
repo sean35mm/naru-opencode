@@ -76,7 +76,7 @@ Delegate only when the user explicitly requests one of these activities. Do not 
 
 `naru-orchestrator` is a visible primary agent for implementation work. Users select it in OpenCode's UI, configure `"default_agent": "naru-orchestrator"`, or launch `opencode --agent naru-orchestrator`. It is not a supported Task target for custom-agent integration, and custom agents must not route around its approval-aware implementation workflow by calling minions directly.
 
-The selected orchestrator delegates through OpenCode's native Task implementation in the current workspace. Its adaptive `auto`, `lean`, `thorough`, `foreground`, and `off` analysis preferences do not change authorization or grant custom callers new targets. Runtime scheduler `off`, `observe`, and `enforce` modes likewise do not authorize custom agents, create worktrees, or move work to a cloud service.
+The selected orchestrator delegates through OpenCode's native Task implementation. Its adaptive `auto`, `lean`, `thorough`, `foreground`, and `off` analysis preferences do not change authorization or grant custom callers new targets. Runtime scheduler modes likewise do not authorize custom agents or move work to a cloud service. Only the selected `naru-orchestrator` may use the root-only worktree tool; custom callers and minions cannot create or integrate isolated workspaces.
 
 ## Global/project and child permission layers
 

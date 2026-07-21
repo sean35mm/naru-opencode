@@ -20,8 +20,8 @@ flowchart LR
 
 ## Important non-guarantees
 
-- No cross-process coordination, durable state, authoritative background completion, or provider/global hard caps.
-- No session creation, automatic Task worktree binding, Git inspection, baseline capture, or report-truth proof.
+- No cross-process coordination, durable scheduler state, authoritative background completion, or provider/global hard caps.
+- The scheduler provides no session creation, automatic Task directory binding, Git inspection, baseline capture, or report-truth proof. The separate root-only worktree tool validates only its narrow isolation and integration lifecycle and persists local metadata for restart recovery.
 - No sandboxing of repository code, package scripts, shell commands, tools, providers, or installed plugins.
 - No automatic authorization for edits, dependency changes, Git mutation, migrations, database writes, posting, or deployment.
 - No guarantee that dashboard telemetry exists outside the same process or represents a global system state.

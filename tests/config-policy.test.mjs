@@ -69,7 +69,11 @@ const expectedRuntimeFiles = [
   'scripts/naru-live-eval.mjs',
   'tests/fixtures/live-evals.json',
   'tools/naru-scheduler.js',
+  'tools/naru-worktree.js',
   'tools/naru-lib/evaluation.mjs',
+  'tools/naru-lib/live-evaluation.mjs',
+  'tools/naru-lib/opencode-live-evaluation.mjs',
+  'tools/naru-lib/worktree.mjs',
   'tools/naru-lib/scheduler-config.mjs',
   'tools/naru-lib/scheduler-journal.mjs',
   'tools/naru-lib/scheduler-protocol.mjs',
@@ -438,7 +442,20 @@ async function main() {
   ) {
     fail('exactly naru-orchestrator must have one scheduler allow');
   }
-  for (const required of ['native Task', 'current workspace', 'Do not create worktrees automatically']) {
+  const worktreeCapable = [];
+  for (const path of expectedAgents) {
+    const permissions = parsePermissions(await readFile(here(path), 'utf8')) ?? [];
+    const worktreePermissions = permissions.filter(permission => permission.key === 'naru-worktree');
+    if (worktreePermissions.length) worktreeCapable.push({ path, worktreePermissions });
+  }
+  if (
+    worktreeCapable.length !== 1 ||
+    worktreeCapable[0].path !== 'agents/naru-orchestrator.md' ||
+    JSON.stringify(worktreeCapable[0].worktreePermissions) !== JSON.stringify([{ key: 'naru-worktree', val: 'allow' }])
+  ) {
+    fail('exactly naru-orchestrator must have one worktree allow');
+  }
+  for (const required of ['native Task', 'shared-workspace mode', 'Isolated Writer Mode', 'Do not create ad hoc worktrees']) {
     if (!orchestratorText.includes(required)) fail(`orchestrator missing scheduler boundary: ${required}`);
   }
 

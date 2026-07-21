@@ -90,7 +90,7 @@ test('implementation scheduling corpus keeps schema v1 and covers bounded concur
     'scheduler-quiescent-two-shard-verification',
     'scheduler-final-identity-equality',
     'scheduler-remediation-delivery-serialized',
-    'scheduler-no-automatic-worktrees',
+    'scheduler-automatic-isolated-worktrees',
   ];
   assert.deepEqual(fixture.implementationSchedulingCases.map((entry) => entry.id), requiredIDs);
   for (const entry of fixture.implementationSchedulingCases) {
@@ -117,7 +117,7 @@ test('adaptive delegation corpus covers every mode and enforces material-task de
     'adaptive-known-scope-no-useful-lens',
     'adaptive-non-material-typed-skip',
     'adaptive-safety-blocked-typed-skip',
-    'adaptive-early-stop-and-caps',
+    'adaptive-capacity-seeking-refill',
   ];
   assert.deepEqual(fixture.adaptiveDelegationCases.map((entry) => entry.id), requiredIDs);
   assert.deepEqual(new Set(fixture.adaptiveDelegationCases.map((entry) => entry.policy.mode)), new Set([
@@ -166,7 +166,7 @@ test('adaptive modes bound selection, background behavior, and best-of-2', () =>
   assert.equal(thorough.decision.bestOf2.freshChildren, 2);
   assert.equal(thorough.decision.bestOf2.sameBoundedQuestion, true);
   assert.equal(thorough.decision.bestOf2.independentPackets, true);
-  assert.equal(thorough.expected.maxConcurrentReadOnly, 2);
+  assert.equal(thorough.expected.maxConcurrentReadOnly, 4);
 
   const foreground = adaptiveCaseByID('adaptive-foreground-no-background');
   assert.equal(foreground.decision.launch, 'foreground');
@@ -177,23 +177,30 @@ test('adaptive modes bound selection, background behavior, and best-of-2', () =>
   assert.deepEqual(off.requiredStages, ['naru-minion-implement', 'naru-minion-verify', 'naru-minion-judge']);
 });
 
-test('adaptive delegation launches when its packet exists, stops early, and preserves all caps', () => {
+test('adaptive delegation launches when its packet exists, refills useful capacity, and preserves all caps', () => {
   const background = adaptiveCaseByID('adaptive-auto-discovery-background');
   assert.equal(background.packet.dispatchAt, background.packet.availableAt);
   assert.equal(background.decision.launch, 'background');
 
-  const stopped = adaptiveCaseByID('adaptive-early-stop-and-caps');
-  assert.deepEqual(stopped.timeline.map((entry) => entry.event), [
-    'packet-ready', 'start-background', 'sufficient-evidence', 'stop-dispatch',
+  const refill = adaptiveCaseByID('adaptive-capacity-seeking-refill');
+  assert.deepEqual(refill.timeline.map((entry) => entry.event), [
+    'packet-ready', 'start-background', 'finish', 'refill-background', 'sufficient-evidence',
   ]);
-  assert.deepEqual(stopped.caps, {
+  assert.deepEqual(refill.timeline[1].activeReadOnly, [
+    'naru-minion-scout', 'naru-minion-investigate', 'naru-minion-debug', 'naru-minion-verify',
+  ]);
+  assert.deepEqual(refill.timeline[3].activeReadOnly, [
+    'naru-minion-investigate', 'naru-minion-debug', 'naru-minion-verify', 'naru-minion-architect',
+  ]);
+  assert.deepEqual(refill.caps, {
     maxConcurrentImplement: 2,
-    maxConcurrentReadOnly: 2,
-    maxTotalNaruChildren: 4,
+    maxConcurrentReadOnly: 4,
+    maxTotalNaruChildren: 6,
   });
-  assert.equal(stopped.expected.stoppedAfterSufficientEvidence, true);
-  for (const action of ['forced fan-out', 'automatic xhigh escalation', 'automatic worktree']) {
-    assert.ok(stopped.prohibitedActions.includes(action));
+  assert.equal(refill.expected.initialUsefulSlotsFilled, true);
+  assert.equal(refill.expected.refilledWhilePeerActive, true);
+  for (const action of ['duplicate settled lens', 'automatic xhigh escalation', 'automatic worktree']) {
+    assert.ok(refill.prohibitedActions.includes(action));
   }
 });
 
@@ -226,8 +233,8 @@ test('Protocol 3 quality gates expose bounded correlation without overstating en
   ]);
   assert.deepEqual(gated.budgets, {
     maxConcurrentWriters: 2,
-    maxConcurrentReadOnly: 2,
-    maxTotalChildren: 4,
+    maxConcurrentReadOnly: 4,
+    maxTotalChildren: 6,
     maxJudgePasses: 3,
   });
   assert.equal(gated.expected.allVerificationNeedsCovered, true);
@@ -438,6 +445,9 @@ test('active-peer conflicts defer refill until the remaining writer terminates',
   assert.equal(conflict.timeline[5].event, 'start');
   assert.equal(conflict.timeline[5].workItemId, 'c');
   assert.equal(conflict.expected.cStartsAfterBFinishes, true);
+  assert.equal(conflict.expected.userPromptRequired, false);
+  assert.equal(conflict.expected.fallback, 'serialized-coordinator');
+  assert.ok(conflict.prohibitedActions.includes('ask user about Weaver conflict'));
 });
 
 test('run and cohort baselines remain immutable while item dispatch observations stay provisional', () => {
@@ -469,13 +479,13 @@ test('terminal dependency reports unlock provisionally and faults freeze refill 
 test('read-only work stealing is bounded, evidence-keyed, and invalidated by observed-path changes', () => {
   const stealing = schedulingCaseByID('scheduler-read-only-work-stealing');
   assert.equal(stealing.active.implement.length, 2);
-  assert.equal(stealing.active.readOnly.length, 2);
-  assert.equal(stealing.active.totalNaruChildren, 4);
+  assert.equal(stealing.active.readOnly.length, 4);
+  assert.equal(stealing.active.totalNaruChildren, 6);
   assert.deepEqual(Object.keys(stealing.evidence).sort(), [
     'basisIdentity', 'evidenceId', 'invalidationKeys', 'observedPaths', 'validityKeys',
   ]);
-  assert.equal(stealing.expected.maxConcurrentReadOnly, 2);
-  assert.equal(stealing.expected.maxTotalNaruChildren, 4);
+  assert.equal(stealing.expected.maxConcurrentReadOnly, 4);
+  assert.equal(stealing.expected.maxTotalNaruChildren, 6);
   assert.equal(stealing.expected.changedObservedPathInvalidatesEvidence, true);
 });
 
@@ -516,9 +526,12 @@ test('final identity equality gates todos, serialized remediation and delivery, 
   assert.equal(serialized.expected.maxJudges, 3);
   assert.deepEqual(serialized.phases.slice(-3), ['rejudgment', 'serialized-delivery', 'serialized-review-posting']);
 
-  const worktrees = schedulingCaseByID('scheduler-no-automatic-worktrees');
-  assert.equal(worktrees.expected.automaticWorktreeCreation, false);
-  assert.equal(worktrees.expected.workspaceMode, 'current-workspace');
+  const worktrees = schedulingCaseByID('scheduler-automatic-isolated-worktrees');
+  assert.equal(worktrees.expected.cleanRepositoryWriterLimit, 10);
+  assert.equal(worktrees.expected.defaultConcurrentWriters, 6);
+  assert.equal(worktrees.expected.writersPerWorktree, 1);
+  assert.equal(worktrees.expected.dirtyRepositoryFallback, 'shared-two-writer');
+  assert.equal(worktrees.expected.userPromptRequired, false);
 });
 
 test('model-route variants preserve high defaults and never create Max children', () => {
