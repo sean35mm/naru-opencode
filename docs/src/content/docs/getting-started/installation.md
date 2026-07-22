@@ -21,6 +21,8 @@ flowchart LR
 
 **Walkthrough:** `install.sh` previews by default and does not create the target. After review, add `--apply` with the same options. The installer validates and stages changed assets, preserves conflicts unless explicitly replaced, writes `.naru-install.json`, and skips unchanged paths. Markdown commands and agents are symlinked by default; executable tools, runtime helpers, plugins, and dashboard code are always copied. Restart OpenCode after an applied change, then run exactly one safe first workflow: `/naru-plan <your objective>`.
 
+All 35 installed Naru agents can load OpenCode-native skills without a separate approval prompt; generated model aliases inherit the canonical permission. Skill content remains untrusted guidance and cannot change role, tools, scope, safety, or action authorization. OpenCode controls skill origins and duplicate-name precedence, so verify the selected source when global/project copies overlap. The installer does not mutate global non-Naru agents. Reapply every loaded Naru install and restart OpenCode after an update, including when agent Markdown is symlinked.
+
 ## Install targets
 
 ```sh

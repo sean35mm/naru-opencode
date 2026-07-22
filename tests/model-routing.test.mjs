@@ -75,6 +75,7 @@ const READ_TOOL_PERMISSION = {
 
 const READ_ONLY_MINION_PERMISSION = {
   '*': 'deny',
+  skill: { '*': 'allow' },
   edit: 'deny',
   apply_patch: 'deny',
   task: 'deny',
@@ -87,6 +88,7 @@ const READ_ONLY_MINION_PERMISSION = {
 
 const SHELL_READ_ONLY_MINION_PERMISSION = {
   '*': 'deny',
+  skill: { '*': 'allow' },
   edit: 'deny',
   apply_patch: 'deny',
   task: 'deny',
@@ -100,6 +102,7 @@ const SHELL_READ_ONLY_MINION_PERMISSION = {
 
 const IMPLEMENT_MINION_PERMISSION = {
   '*': 'deny',
+  skill: { '*': 'allow' },
   edit: 'allow',
   apply_patch: 'allow',
   task: 'deny',
@@ -128,7 +131,7 @@ function fakeConfig() {
       description: `Canonical Naru role ${agent}`,
       hidden: true,
       mode: 'subagent',
-      permission: { '*': 'deny' },
+      permission: { '*': 'deny', skill: { '*': 'allow' } },
       prompt: `# Naru ${agent}\n\nCanonical prompt.`,
     };
     if (agent.startsWith('naru-minion-')) {
@@ -142,6 +145,18 @@ function fakeConfig() {
     for (const target of targets) config.agent[caller].permission.task[target] = 'allow';
   }
   return config;
+}
+
+function assertAliasSkillPermissionClones(config) {
+  for (const source of NARU_AGENT_IDS) {
+    const sourceSkill = config.agent[source]?.permission?.skill;
+    assert.deepEqual(sourceSkill, { '*': 'allow' });
+    for (const alias of [lunaAlias(source), solAlias(source), solXhighAlias(source)]) {
+      if (!config.agent[alias]) continue;
+      assert.deepEqual(config.agent[alias].permission.skill, sourceSkill);
+      assert.notEqual(config.agent[alias].permission.skill, sourceSkill);
+    }
+  }
 }
 
 let pluginScope = 0;
@@ -385,6 +400,7 @@ test('config routing exposes Luna, canonical Terra, and Sol routes only where el
   assert.match(config.agent['naru-review-post'].prompt, /`naru-review`: Terra\. Sol: `naru-delegate-sol-review`\./);
   assert.equal(Object.keys(config.agent).some((agent) => agent.includes('sol-max')), false);
   assert.equal(config.agent['naru-plan'].permission.task[leakedXhigh], undefined);
+  assertAliasSkillPermissionClones(config);
 });
 
 test('orchestrator default Sol assignment is overrideable to Terra without changing dispatch', () => {
@@ -485,6 +501,7 @@ test('trusted Sol override removes unnecessary Luna and Sol aliases', () => {
     /`naru-minion-implement`: Sol override; invoke this exact role\./,
   );
   assert.doesNotMatch(config.agent['naru-orchestrator'].prompt, /`naru-minion-implement`: Sol floor/);
+  assertAliasSkillPermissionClones(config);
 });
 
 test('validation completes before mutating config', () => {
@@ -746,6 +763,7 @@ test('multiple plugin scopes merge sparse overrides and invalid later config res
   );
   await globalPlugin.config(config);
   assert.equal(config.agent['naru-minion-scout'].model, 'custom/global-fast');
+  assertAliasSkillPermissionClones(config);
   const sharedState = globalThis[Symbol.for('naru.delegate.config-state.v1')].configs.get(config);
   assert.equal(sharedState.overrides.schemaVersion, 1);
   assert.equal(sharedState.overrides.profiles.fast.model, 'custom/global-fast');
@@ -769,6 +787,7 @@ test('multiple plugin scopes merge sparse overrides and invalid later config res
   );
   await projectPlugin.config(config);
   assert.equal(config.agent['naru-minion-scout'].model, 'custom/global-fast');
+  assertAliasSkillPermissionClones(config);
   assert.equal(config.agent['naru-review-security'].model, 'custom/project-sol');
   assert.equal(config.agent['naru-review-security'].variant, 'max');
   assert.equal(sharedState.overrides.profiles.deep.model, 'custom/project-sol');
@@ -783,6 +802,7 @@ test('multiple plugin scopes merge sparse overrides and invalid later config res
   assert.equal(config.agent['naru-review-security'].model, undefined);
   assert.equal(config.agent[lunaAlias('naru-minion-scout')], undefined);
   assert.equal(config.agent[solAlias('naru-minion-scout')], undefined);
+  for (const agent of NARU_AGENT_IDS) assert.deepEqual(config.agent[agent].permission.skill, { '*': 'allow' });
   assert.equal(logs.length, 1);
 });
 

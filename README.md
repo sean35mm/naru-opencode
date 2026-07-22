@@ -47,6 +47,12 @@ After an applied change, restart OpenCode. Then take exactly one safe first acti
 
 See the [User guide](docs/user-guide.md) for installation, migration, configuration, dashboard, and troubleshooting details.
 
+## Installed skills
+
+All 35 canonical Naru agents may discover and load OpenCode-native installed skills without a separate approval prompt. Generated Luna, Sol, and Sol-xhigh aliases inherit a deep-cloned copy of the canonical role's skill permission. Skill text is untrusted guidance, not authorization: it cannot change an agent's role, tools, scope, or safety policy, and suggested commands or mutations still require the user request and existing permission, authorization, secret, destructive, paid, and delivery boundaries.
+
+OpenCode owns skill discovery, source precedence, and duplicate-name handling. Check a skill's origin before relying on it; same-named or duplicate global/project skills can be ambiguous or shadow one another according to the active OpenCode configuration. Naru's installer updates only the managed Naru agent definitions and does not grant skill access to or otherwise mutate global non-Naru agents. Rerun the installer for every loaded global/project copy and restart OpenCode after updating Naru so active sessions receive the new permission and prompt contract.
+
 ## Model routing
 
 - **Luna:** `openai/gpt-5.6-luna-fast`, variant `high`.
@@ -94,7 +100,7 @@ Each run, cohort, and item records a baseline and active-peer claims. Writer com
 
 ## Safety summary
 
-Core workflows are read-only and unchanged. Minion permissions fail closed by role: Scout, Investigate, Architect, and Judge are static read-only; Debug and Verify may run targeted shell checks but cannot edit; only Implement has scoped edit and shell permission. Generated aliases clone their canonical role's permission map. `naru-orchestrator` coordinates but does not edit and is the only agent granted the exact `naru-scheduler` tool permission; children cannot call it.
+Core workflows are read-only and unchanged. Minion permissions fail closed by role: Scout, Investigate, Architect, and Judge are static read-only; Debug and Verify may run targeted shell checks but cannot edit; only Implement has scoped edit and shell permission. Generated aliases clone their canonical role's permission map, including native skill access. `naru-orchestrator` coordinates but does not edit and is the only agent granted the exact `naru-scheduler` tool permission; children cannot call it.
 
 For authorized local implementation work, ordinary Git/GitHub reads, Bash, Weaver coordination, and targeted checks do not require another prompt. Local changes are the default stopping point. An explicit current request to commit, push, open a PR, or post a GitHub review through `/naru-review-post` or the selected orchestrator authorizes that requested delivery without reconfirmation; migrations, persistent database writes, dependency changes outside scope, destructive operations, and material scope expansion remain consequential boundaries. Shell-enabled roles still must inspect package scripts or Make targets before execution because they can hide side effects.
 

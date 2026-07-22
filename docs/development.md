@@ -37,6 +37,7 @@ OpenCode's native Task implementation remains responsible for permission evaluat
 | --- | --- |
 | Public command inventory and command prompts | `commands/naru-*.md` |
 | Canonical agent prompt, visibility, mode, and permissions | `agents/naru-*.md` |
+| Native skill permission and trust boundary | All 35 `agents/naru-*.md` files, checked by config/prompt contracts |
 | Canonical 35-agent inventory | `NARU_AGENT_IDS` in `tools/naru-lib/model-routing.mjs`, checked against agent files |
 | Exact caller-to-target edges | `NARU_DISPATCH_GRAPH`, checked against agent Task allowlists |
 | Luna/Terra/Sol profiles and built-in assignments | `DEFAULT_MODEL_PROFILES` and `DEFAULT_AGENT_ASSIGNMENTS` |
@@ -98,6 +99,7 @@ For mixed copy-pinned generations, the v2 plugin stores normalized v2 overrides 
 ## Permission and security invariants
 
 - Core, review-post, and `naru-orchestrator` permission blocks begin with `'*': deny`; this change does not weaken Core workflows.
+- Immediately after that top-level denial, every canonical agent has the exact nested native skill wildcard allow. Native skill loading is approval-free, but skill content is untrusted guidance and cannot authorize actions or alter role, tool, scope, safety, secret, destructive, paid, or delivery boundaries.
 - Every dispatcher Task map begins with `'*': deny` and allows exactly the targets in `NARU_DISPATCH_GRAPH`. Hidden status is never authorization.
 - Minion permission classes are exact: Scout/Investigate/Architect/Judge are static read-only; Debug/Verify are targeted-shell read-only; Implement alone has scoped edit and shell permission. Every class starts fail-closed and denies Task delegation.
 - Shell-enabled roles allow routine Bash, external-directory access, validated Git/GitHub reads, Weaver, and targeted checks without an approval prompt. They must inspect package scripts and Make targets before execution because repository code can hide side effects; use one routine command per shell call.
@@ -105,6 +107,7 @@ For mixed copy-pinned generations, the v2 plugin stores normalized v2 overrides 
 - Only an explicit `/naru-review-post` invocation or a directly selected `naru-orchestrator` handling a current explicit post request can submit one validated GitHub review posting call without repeated confirmation; neither authorizes any other GitHub posting.
 - Direct-read rules deny all minion environment and known-secret file paths; explicit environment templates remain allowed. Prompts also prohibit reading or revealing secrets. Permission policy is not a complete secret sandbox. Validated Git/GitHub tools still validate requested paths and use fixed argument arrays rather than a shell.
 - Generated Luna, Sol, and Sol-xhigh aliases deep-clone their canonical source definitions. Routing must never invent a stronger or weaker alias policy.
+- The alias clone includes a distinct, deep-equal skill permission object. OpenCode owns skill-source discovery and duplicate-name precedence; Naru does not merge or vouch for skill content.
 - Only `naru-orchestrator` has the exact `naru-scheduler` tool allow. Minions echo predeclared Protocol 3 correlation data but cannot call the scheduler or append artifacts. Global/project root and delegated-session contexts must preserve this boundary while native Task remains the child-session path in the current workspace.
 - Pull-request review uses an immutable GitHub snapshot. Posting is isolated to exactly `naru-review-post` and `naru-orchestrator` callers of the validated posting tool, is `COMMENT`-only, and requires fresh final checks of snapshot identity, head, feedback digest, inline locations, and the existing marker. Same-target calls are serialized within one process using a bounded in-process PR table; cross-process deduplication needs durable external coordination, which Naru does not provide. Every other agent and generated alias is rejected before GitHub I/O, and an ambiguous mutation outcome is never retried.
 - Both posting callers normalize accepted user-authored URL, short, split, case-variant, and bare-number references to one `(owner, repo, positive pull number)` tuple. Equivalent references are deduplicated; unresolved references and multiple distinct tuples are rejected. Different repositories sharing a number and different pull numbers remain distinct.
@@ -151,6 +154,7 @@ When scheduler telemetry exists for the same process-local root, the dashboard a
 - Dashboard registration requires Node.js or Bun, rejects symlinked or malformed TUI config, and is idempotent.
 - OpenCode 1.18.4+ must resolve an effective top-level `subagent_depth` of at least `2`; exactly `2` matches Naru's maximum topology depth, while higher valid integers are accepted and preserved.
 - The installer preserves `naru-models.json` and unrelated OpenCode content. It never changes `opencode.json` or `opencode.jsonc` unless `--configure-subagent-depth` is explicit.
+- The installer replaces only managed Naru definitions; it does not mutate global non-Naru agents to add skill access. Refresh every loaded install scope and restart OpenCode after changing the canonical skill contract.
 - The depth flag safely selects one JSON/JSONC config, uses the project root rather than `.opencode` in project mode, rejects unsafe or ambiguous input, and includes the prepared config in staging, backup, and rollback.
 
 When changing installed inventory, update the install plan and its fixture inventory together.
@@ -231,7 +235,7 @@ Inspect any script or target before execution and do not run database-connected 
 1. Confirm the command and 35-agent inventories are intentional and the dispatch graph matches every dispatcher Task allowlist.
 2. Confirm model defaults, v1 normalization/projection, exact assignments, Sol floors, five Luna aliases, seventeen Sol aliases, seven gated optional Sol-xhigh aliases, canonical Terra/Sol invocation, and override behavior are covered.
 3. Confirm no agent accidentally gained model frontmatter; only the implementation fallback pin should remain.
-4. Review permission blocks for Core fail-closed behavior, exact Task targets, role-specific minion permissions, shell/edit boundaries, secret guidance, alias cloning, and posting boundaries.
+4. Review permission blocks for Core fail-closed behavior, the exact native skill stanza, exact Task targets, role-specific minion permissions, shell/edit boundaries, secret guidance, distinct deep-equal alias cloning, and posting boundaries.
 5. Verify README and the three guides match public commands, installer flags, routing behavior, scheduler modes, evaluation limits, dashboard support, and safety limitations.
 6. Run the targeted checks for every touched subsystem and `git diff --check`; record any checks not run.
 7. Exercise the installer test when release inventory, migration, dashboard registration, or copy/symlink behavior changed.

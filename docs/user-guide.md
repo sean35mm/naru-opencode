@@ -118,6 +118,12 @@ git pull
 
 The first post-pull command previews source-generation and managed changes; the second applies them. Even a symlink install must be rerun because tools, helpers, runtime/evaluation assets, and plugins are copy-pinned. A matching reinstall is a no-op and creates no backup. Restart OpenCode after an applied update or depth change so active sessions reload routing, permissions, and delegation limits.
 
+### Native installed skills
+
+Every canonical Naru agent can use OpenCode's native skill loader for installed skills without a separate approval prompt. Generated Luna, Sol, and Sol-xhigh routes inherit a deep-cloned skill permission object from their canonical source, so routing does not strengthen or weaken skill access. Skill contents remain untrusted guidance rather than authorization: they cannot alter the receiving role, tools, scope, safety rules, or output contract. Every suggested action still obeys the current user request and the existing permission, authorization, secret-access, destructive-action, paid-action, and delivery boundaries.
+
+OpenCode determines which global and project skill sources are visible, their precedence, and how duplicate names resolve. Inspect a skill's origin before trusting it; duplicate or same-named copies may be ambiguous or shadowed by another loaded scope. Installing Naru updates only its 35 managed agent definitions. It neither edits global non-Naru agents nor grants them skill access. After a Naru update, preview and apply the installer for every loaded global/project copy—even for symlink installs—and restart OpenCode so active sessions reload the agent permissions and prompts.
+
 ### Read-only local doctor
 
 Run the copy-pinned doctor directly; it does not invoke `opencode debug config`, load Naru plugins, inspect credentials, call a provider, mutate files, or upload data:
@@ -372,6 +378,7 @@ For a manual dashboard install, also copy both dashboard files and add `"./plugi
 - `naru-orchestrator` is the primary implementation coordinator but does not edit directly. Only `naru-minion-implement` can make scoped edits within an approved packet.
 - Scout, Investigate, Architect, and Judge are technically read-only static-analysis roles. Debug and Verify are technically read-only but can run targeted Bash checks. Implement is the only scoped edit/shell role. No minion can delegate with Task.
 - Generated Luna, Sol, and Sol-xhigh aliases clone the exact permission map of their canonical source role. Selecting a route never strengthens permissions.
+- Approval-free native skill loading changes discovery only. Skill guidance cannot authorize an action or bypass any role, tool, scope, secret, destructive, paid, or delivery boundary.
 
 ### Role-specific minion permissions
 
@@ -420,6 +427,8 @@ Naru does not modify your personal `AGENTS.md`, optional `naru-models.json` or `
 ### Commands or agents are stale
 
 Run the installed doctor with `--source /path/to/naru-opencode` to identify stale copy-pinned or mixed-generation state. Preview `install.sh` with the original options, review any conflicts, then repeat with `--apply`. Plugins, tools, and helpers are copy-pinned even when Markdown is symlinked. Restart OpenCode after an applied update.
+
+If native skill loading is missing, reinstall every loaded Naru scope rather than editing a global non-Naru agent. Confirm the selected skill's origin when duplicate global/project names exist, then restart OpenCode so a new session loads the updated Naru agent definition.
 
 ### A Naru child fails at the subagent depth limit
 

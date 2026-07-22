@@ -51,6 +51,12 @@ Do not allow or invoke:
 
 This boundary is especially important because minion permissions differ by role: static analysts are read-only, Debug/Verify can run targeted checks, and Implement can edit. Every generated Luna, Sol, or Sol-xhigh alias clones its source role's permission map. Keep custom-agent integration limited to the four top-level read-only Core workflows above; never expose minions or any generated alias through the caller's Task map.
 
+## Native skills remain a separate trust boundary
+
+The 35 canonical Naru agents may load OpenCode-native installed skills without a separate approval prompt, and generated aliases inherit a distinct deep-cloned copy of that permission. Skill contents are untrusted guidance, not authorization: they cannot change a role, tool set, scope, safety policy, or the action boundaries in this guide. A skill-suggested edit, command, secret read, destructive or paid operation, or delivery step still needs the same user request and permission/authorization boundary as any other action.
+
+OpenCode controls skill discovery, origin, precedence, and duplicate-name behavior across global and project scopes. Check the origin of a selected skill; duplicate names may be ambiguous or shadowed. Installing Naru does not mutate global non-Naru agent definitions or grant your custom agent skill access. To pick up Naru's skill contract, reinstall each loaded Naru scope and restart OpenCode.
+
 ## Copyable prompt instruction
 
 Add this instruction to the custom agent's prompt:

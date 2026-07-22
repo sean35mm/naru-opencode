@@ -25,45 +25,45 @@ touch "$FIXTURE/commands/naru-review.md"
 touch "$FIXTURE/commands/naru-review-post.md"
 
 # 35 agents
-touch "$FIXTURE/agents/naru-plan.md"
-touch "$FIXTURE/agents/naru-plan-architecture.md"
-touch "$FIXTURE/agents/naru-plan-minimal-change.md"
-touch "$FIXTURE/agents/naru-plan-risk.md"
-touch "$FIXTURE/agents/naru-plan-tests.md"
-touch "$FIXTURE/agents/naru-plan-judge.md"
+cp "$ROOT/agents/naru-plan.md" "$FIXTURE/agents/naru-plan.md"
+cp "$ROOT/agents/naru-plan-architecture.md" "$FIXTURE/agents/naru-plan-architecture.md"
+cp "$ROOT/agents/naru-plan-minimal-change.md" "$FIXTURE/agents/naru-plan-minimal-change.md"
+cp "$ROOT/agents/naru-plan-risk.md" "$FIXTURE/agents/naru-plan-risk.md"
+cp "$ROOT/agents/naru-plan-tests.md" "$FIXTURE/agents/naru-plan-tests.md"
+cp "$ROOT/agents/naru-plan-judge.md" "$FIXTURE/agents/naru-plan-judge.md"
 
-touch "$FIXTURE/agents/naru-impact.md"
-touch "$FIXTURE/agents/naru-impact-topology.md"
-touch "$FIXTURE/agents/naru-impact-contracts.md"
-touch "$FIXTURE/agents/naru-impact-data.md"
-touch "$FIXTURE/agents/naru-impact-frontend-mobile.md"
-touch "$FIXTURE/agents/naru-impact-tests-ci.md"
-touch "$FIXTURE/agents/naru-impact-judge.md"
+cp "$ROOT/agents/naru-impact.md" "$FIXTURE/agents/naru-impact.md"
+cp "$ROOT/agents/naru-impact-topology.md" "$FIXTURE/agents/naru-impact-topology.md"
+cp "$ROOT/agents/naru-impact-contracts.md" "$FIXTURE/agents/naru-impact-contracts.md"
+cp "$ROOT/agents/naru-impact-data.md" "$FIXTURE/agents/naru-impact-data.md"
+cp "$ROOT/agents/naru-impact-frontend-mobile.md" "$FIXTURE/agents/naru-impact-frontend-mobile.md"
+cp "$ROOT/agents/naru-impact-tests-ci.md" "$FIXTURE/agents/naru-impact-tests-ci.md"
+cp "$ROOT/agents/naru-impact-judge.md" "$FIXTURE/agents/naru-impact-judge.md"
 
-touch "$FIXTURE/agents/naru-triage.md"
-touch "$FIXTURE/agents/naru-triage-reproduction.md"
-touch "$FIXTURE/agents/naru-triage-codepath.md"
-touch "$FIXTURE/agents/naru-triage-regression.md"
-touch "$FIXTURE/agents/naru-triage-tests.md"
-touch "$FIXTURE/agents/naru-triage-judge.md"
+cp "$ROOT/agents/naru-triage.md" "$FIXTURE/agents/naru-triage.md"
+cp "$ROOT/agents/naru-triage-reproduction.md" "$FIXTURE/agents/naru-triage-reproduction.md"
+cp "$ROOT/agents/naru-triage-codepath.md" "$FIXTURE/agents/naru-triage-codepath.md"
+cp "$ROOT/agents/naru-triage-regression.md" "$FIXTURE/agents/naru-triage-regression.md"
+cp "$ROOT/agents/naru-triage-tests.md" "$FIXTURE/agents/naru-triage-tests.md"
+cp "$ROOT/agents/naru-triage-judge.md" "$FIXTURE/agents/naru-triage-judge.md"
 
-touch "$FIXTURE/agents/naru-review.md"
-touch "$FIXTURE/agents/naru-review-security.md"
-touch "$FIXTURE/agents/naru-review-backend.md"
-touch "$FIXTURE/agents/naru-review-frontend-mobile.md"
-touch "$FIXTURE/agents/naru-review-integrations.md"
-touch "$FIXTURE/agents/naru-review-tests-ci.md"
-touch "$FIXTURE/agents/naru-review-judge.md"
+cp "$ROOT/agents/naru-review.md" "$FIXTURE/agents/naru-review.md"
+cp "$ROOT/agents/naru-review-security.md" "$FIXTURE/agents/naru-review-security.md"
+cp "$ROOT/agents/naru-review-backend.md" "$FIXTURE/agents/naru-review-backend.md"
+cp "$ROOT/agents/naru-review-frontend-mobile.md" "$FIXTURE/agents/naru-review-frontend-mobile.md"
+cp "$ROOT/agents/naru-review-integrations.md" "$FIXTURE/agents/naru-review-integrations.md"
+cp "$ROOT/agents/naru-review-tests-ci.md" "$FIXTURE/agents/naru-review-tests-ci.md"
+cp "$ROOT/agents/naru-review-judge.md" "$FIXTURE/agents/naru-review-judge.md"
 
-touch "$FIXTURE/agents/naru-review-post.md"
+cp "$ROOT/agents/naru-review-post.md" "$FIXTURE/agents/naru-review-post.md"
 cp "$ROOT/agents/naru-orchestrator.md" "$FIXTURE/agents/naru-orchestrator.md"
-touch "$FIXTURE/agents/naru-minion-scout.md"
-touch "$FIXTURE/agents/naru-minion-investigate.md"
-touch "$FIXTURE/agents/naru-minion-architect.md"
+cp "$ROOT/agents/naru-minion-scout.md" "$FIXTURE/agents/naru-minion-scout.md"
+cp "$ROOT/agents/naru-minion-investigate.md" "$FIXTURE/agents/naru-minion-investigate.md"
+cp "$ROOT/agents/naru-minion-architect.md" "$FIXTURE/agents/naru-minion-architect.md"
 cp "$ROOT/agents/naru-minion-implement.md" "$FIXTURE/agents/naru-minion-implement.md"
-touch "$FIXTURE/agents/naru-minion-debug.md"
-touch "$FIXTURE/agents/naru-minion-verify.md"
-touch "$FIXTURE/agents/naru-minion-judge.md"
+cp "$ROOT/agents/naru-minion-debug.md" "$FIXTURE/agents/naru-minion-debug.md"
+cp "$ROOT/agents/naru-minion-verify.md" "$FIXTURE/agents/naru-minion-verify.md"
+cp "$ROOT/agents/naru-minion-judge.md" "$FIXTURE/agents/naru-minion-judge.md"
 
 # Tools and plugins
 touch "$FIXTURE/tools/naru-git-read.js"
@@ -95,6 +95,19 @@ is_link() { [ -L "$1" ]; }
 is_file() { [ -f "$1" ] && [ ! -L "$1" ]; }
 is_dir() { [ -d "$1" ] && [ ! -L "$1" ]; }
 has_mode_600() { [ "$(LC_ALL=C ls -ld "$1" | cut -c 2-10)" = "rw-------" ]; }
+
+has_agent_skill_contracts() {
+  skill_root="$1"
+  skill_count=0
+  for skill_agent in "$skill_root"/agents/naru-*.md; do
+    [ -f "$skill_agent" ] || return 1
+    skill_count=$((skill_count + 1))
+    [ "$(grep -c '^  skill:$' "$skill_agent")" -eq 1 ] || return 1
+    awk 'previous == "  skill:" && $0 == "    " sprintf("%c", 39) "*" sprintf("%c", 39) ": allow" { matches += 1 } { previous = $0 } END { exit matches == 1 ? 0 : 1 }' "$skill_agent" || return 1
+    grep -Fq 'Native skill loading is approval-free.' "$skill_agent" || return 1
+  done
+  [ "$skill_count" -eq 35 ]
+}
 
 backup_dir() {
   find "$1/.naru-backups" -mindepth 1 -maxdepth 1 -type d | head -n 1
@@ -149,6 +162,7 @@ mkdir -p "$T1"
 apply_install --dir "$T1"
 if is_link "$T1/commands/naru-plan.md"; then pass "symlinked command"; else fail "symlinked command"; fi
 if is_link "$T1/agents/naru-plan.md"; then pass "symlinked agent"; else fail "symlinked agent"; fi
+if has_agent_skill_contracts "$T1"; then pass "all 35 symlinked agents retain skill contracts"; else fail "all 35 symlinked agents retain skill contracts"; fi
 if is_file "$T1/tools/naru-git-read.js" && is_file "$T1/tools/naru-doctor.js" && is_file "$T1/tools/package.json"; then pass "tools and doctor copy-pinned with ESM marker"; else fail "tools and doctor copy-pinned with ESM marker"; fi
 if is_dir "$T1/tools/naru-lib"; then pass "tool helper dir copy-pinned"; else fail "tool helper dir copy-pinned"; fi
 if is_file "$T1/plugins/naru-delegate.js"; then pass "delegate plugin installed by default"; else fail "delegate plugin installed by default"; fi
@@ -165,6 +179,7 @@ mkdir -p "$T2"
 apply_install --dir "$T2" --copy
 if is_file "$T2/commands/naru-plan.md"; then pass "copied command"; else fail "copied command"; fi
 if is_file "$T2/agents/naru-plan.md"; then pass "copied agent"; else fail "copied agent"; fi
+if has_agent_skill_contracts "$T2"; then pass "all 35 copied agents retain skill contracts"; else fail "all 35 copied agents retain skill contracts"; fi
 if is_file "$T2/tools/naru-git-read.js"; then pass "copied tool"; else fail "copied tool"; fi
 if is_file "$T2/plugins/naru-delegate.js"; then pass "copied delegate plugin"; else fail "copied delegate plugin"; fi
 
@@ -173,6 +188,7 @@ PROJECT="$TMP/project"
 mkdir -p "$PROJECT"
 (cd "$PROJECT" && apply_install --project >/dev/null)
 if is_link "$PROJECT/.opencode/commands/naru-plan.md"; then pass "project install"; else fail "project install"; fi
+if has_agent_skill_contracts "$PROJECT/.opencode"; then pass "all 35 project agents retain skill contracts"; else fail "all 35 project agents retain skill contracts"; fi
 if [ "$(grep -c '^  naru-scheduler: allow$' "$PROJECT/.opencode/agents/naru-orchestrator.md")" -eq 1 ] && [ "$(grep -c '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-(scheduler|worktree): allow$' "$PROJECT/.opencode/agents/naru-minion-implement.md"; then pass "project root and delegated runtime permissions"; else fail "project root and delegated runtime permissions"; fi
 
 # 3. Paths with spaces.
@@ -512,6 +528,11 @@ for LIFECYCLE_SCOPE in global project custom; do
     esac
 
     lifecycle_install_run "$LIFECYCLE_SOURCE" "$LIFECYCLE_SCOPE" "$LIFECYCLE_CONTEXT" "$LIFECYCLE_TARGET" "$LIFECYCLE_MODE" --apply >/dev/null
+    if has_agent_skill_contracts "$LIFECYCLE_TARGET"; then
+      pass "$LIFECYCLE_LABEL installs all 35 agent skill contracts"
+    else
+      fail "$LIFECYCLE_LABEL installs all 35 agent skill contracts"
+    fi
     cp "$LIFECYCLE_TARGET/.naru-install.json" "$LIFECYCLE_ROOT/v1-manifest.json"
     printf '%s\n' 'keep-unrelated' > "$LIFECYCLE_TARGET/commands/user-owned.md"
     printf '%s\n' 'v2' > "$LIFECYCLE_SOURCE/tools/naru-git-read.js"

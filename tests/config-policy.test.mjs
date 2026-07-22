@@ -112,6 +112,7 @@ const readToolPermissions = [
 
 const readOnlyMinionPermissions = [
   { key: '*', val: 'deny' },
+  { key: 'skill', val: '' },
   { key: 'edit', val: 'deny' },
   { key: 'apply_patch', val: 'deny' },
   { key: 'task', val: 'deny' },
@@ -124,6 +125,7 @@ const readOnlyMinionPermissions = [
 
 const shellReadOnlyMinionPermissions = [
   { key: '*', val: 'deny' },
+  { key: 'skill', val: '' },
   { key: 'edit', val: 'deny' },
   { key: 'apply_patch', val: 'deny' },
   { key: 'task', val: 'deny' },
@@ -137,6 +139,7 @@ const shellReadOnlyMinionPermissions = [
 
 const implementMinionPermissions = [
   { key: '*', val: 'deny' },
+  { key: 'skill', val: '' },
   { key: 'edit', val: 'allow' },
   { key: 'apply_patch', val: 'allow' },
   { key: 'task', val: 'deny' },
@@ -186,6 +189,8 @@ const expectedReadRules = [
 const expectedBashRules = [
   ['*', 'allow'],
 ].map(([pattern, action]) => ({ pattern, action }));
+
+const expectedSkillRules = [{ pattern: '*', action: 'allow' }];
 
 async function exists(p) {
   try {
@@ -322,6 +327,18 @@ async function main() {
   for (const path of expectedAgents.filter(path => !minionPaths.includes(path))) {
     const first = parsePermissions(await readFile(here(path), 'utf8'))?.[0];
     if (!first || first.key !== '*' || first.val !== 'deny') fail(`${path} is not fail-closed`);
+  }
+
+  for (const path of expectedAgents) {
+    const text = await readFile(here(path), 'utf8');
+    const skillPermissions = parsePermissions(text)?.filter(permission => permission.key === 'skill') ?? [];
+    const skillRules = parseNestedPermission(text, 'skill');
+    if (JSON.stringify(skillPermissions) !== JSON.stringify([{ key: 'skill', val: '' }])) {
+      fail(`${path} must declare exactly one nested skill permission`);
+    }
+    if (JSON.stringify(skillRules) !== JSON.stringify(expectedSkillRules)) {
+      fail(`${path} skill policy must allow exactly the native wildcard`);
+    }
   }
 
   for (const role of minionRoles) {
