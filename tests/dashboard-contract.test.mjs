@@ -53,7 +53,7 @@ test('dashboard owns reactive resources in its mounted component', () => {
   assert.match(source, /function NaruActivity\(props\)/);
   assert.match(source, /createEffect\(\(\) => void refresh\(props\.sessionID\)\)/);
   assert.match(source, /onCleanup\(\(\) => \{/);
-  assert.match(source, /setRows\(\[\]\)\s*\n\s*setDegraded\(true\)/);
+  assert.match(source, /setRows\(\[\]\)\s*\n\s*setTelemetry\(null\)\s*\n\s*setDegraded\(true\)/);
   assert.doesNotMatch(source, /route\.changed/);
 });
 

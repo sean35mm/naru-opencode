@@ -1,3 +1,5 @@
+import { stat } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { errEnvelope, okEnvelope } from './naru-lib/output.mjs';
@@ -48,6 +50,16 @@ function errorText(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+async function workspaceDirectory(context) {
+  const directory = context.worktree ?? context.directory;
+  if (typeof directory !== 'string' || !isAbsolute(directory) || directory.includes('\0')) {
+    throw new Error('an absolute workspace directory is required');
+  }
+  const stats = await stat(directory);
+  if (!stats.isDirectory()) throw new Error('workspace directory must be a directory');
+  return directory;
+}
+
 export default {
   description: 'Manage clean-repository isolated Naru writer worktrees and serialized integration. Never pushes or creates delivery commits.',
   args: {
@@ -66,6 +78,8 @@ export default {
   execute: async (args, context = {}) => {
     let input;
     try {
+      if (context.agent !== 'naru-orchestrator') throw new Error('naru-worktree is restricted to naru-orchestrator');
+      const directory = await workspaceDirectory(context);
       input = validate(args?.input);
       const config = await runtimeConfig(context);
       const implementation = config.implementation;
@@ -80,7 +94,7 @@ export default {
         case 'prepare_run':
           data = await createWorktreeRun({
             ...common,
-            directory: context.worktree ?? context.directory,
+            directory,
             maxWriters: implementation.maxConcurrentWriters,
             worktreeRoot: context.worktreeRoot,
           });
@@ -95,7 +109,7 @@ export default {
         case 'recover_run':
           data = await recoverWorktreeRun({
             ...common,
-            directory: context.worktree ?? context.directory,
+            directory,
             worktreeRoot: context.worktreeRoot,
           });
           break;

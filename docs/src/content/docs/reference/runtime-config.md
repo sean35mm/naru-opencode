@@ -25,9 +25,9 @@ flowchart TD
 | Setting | Default | Bound |
 | --- | --- | --- |
 | `mode` | `off` | `off`, `observe`, `enforce` |
-| `maxConcurrentWriters` | 2 | 1–10 |
+| `maxConcurrentWriters` | 2 shared; 6 in the isolated example | 1–10 hard ceiling |
 | `maxConcurrentReadOnly` | 4 | 0–4 |
-| `maxTotalChildren` | 6 | 1–14 |
+| `maxTotalChildren` | 6 shared; 10 in the isolated example | 1–14 hard ceiling |
 | `maxJudgePasses` | 3 | 1–3 |
 | `maxWorkItems` | 256 | 1–256 |
 | `maxArtifactBytes` | 65,536 | 1,024–262,144 |
@@ -42,6 +42,8 @@ flowchart TD
 | `implementation.maxWritersPerWorktree` | 1 | exactly 1 |
 | `implementation.cleanWorkspaceRequired` | `true` | exactly `true` |
 
-`auto` uses one detached Naru-owned worktree per writer only for a clean Git repository. Dirty or unsupported repositories downgrade to the shared two-writer ceiling without prompting. The integration worktree is verified before the aggregate is applied back to the unchanged main workspace; Naru never pushes or leaves delivery commits through this mechanism. Local run metadata supports recovery after a process restart.
+Scheduler values are hard configuration ceilings: a run may request lower writer, read-only, and total-child budgets, but never higher ones. Shared mode requests at most two writers, four read-only children, and six total children. Isolated mode may request the configured implementation writer count (six by default, ten maximum), up to four read-only children, and the corresponding total up to fourteen.
+
+`auto` uses one detached Naru-owned worktree per writer only for a clean Git repository. Dirty or unsupported repositories downgrade to the shared two-writer ceiling without prompting. Only the root orchestrator may invoke worktree mutations. Tool-owned Git operations suppress hooks, mutations are serialized per run, metadata updates are atomic, and changed paths remain contained to Naru-owned roots. The integration worktree is verified before the aggregate is applied back to the unchanged main workspace; failures attempt rollback and local metadata supports recovery after a process restart. This is not a general sandbox and does not protect against unrelated external workspace mutation. Naru never pushes or leaves delivery commits through this mechanism.
 
 `enforce` requires `legacyProtocol2: "reject"`; `observe` may set it to `observe` for explicit Protocol 2 compatibility observation. See [scheduler modes](https://sean35mm.github.io/naru-opencode/runtime/scheduler-modes/) for behavior and [limitations](https://sean35mm.github.io/naru-opencode/reference/limitations/) for the enforcement boundary.

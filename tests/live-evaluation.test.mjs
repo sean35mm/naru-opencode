@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import test from 'node:test';
 
 import {
@@ -6,6 +7,10 @@ import {
   LIVE_EVALUATION_REDACTION,
   evaluateLiveCapture,
 } from '../tools/naru-lib/live-evaluation.mjs';
+import {
+  requestOpenCode,
+  runOpenCodeLiveEvaluation,
+} from '../tools/naru-lib/opencode-live-evaluation.mjs';
 
 const root = { id: 'root', createdAt: 1000, completedAt: 2000 };
 
@@ -38,6 +43,22 @@ function completeCapture() {
       session('judge', 'plan', 'naru-plan-judge', 1500, 1800),
     ],
     observation: { polls: 20, statusTransitions: 12 },
+  };
+}
+
+async function localServer(handler) {
+  const server = createServer(handler);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const { port } = server.address();
+  return {
+    url: `http://127.0.0.1:${port}`,
+    async close() {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    },
   };
 }
 
@@ -84,4 +105,63 @@ test('live evaluator output is structural and omits captured prompts, code, diff
   assert.deepEqual(Object.keys(report.agents[0]).sort(), [
     'agent', 'depth', 'durationMs', 'model', 'provider', 'route', 'startMs', 'status', 'variant',
   ]);
+});
+
+test('live evaluator HTTP requests abort a hung local response within their request deadline', async () => {
+  const server = await localServer(() => {});
+  const startedAt = Date.now();
+  try {
+    await assert.rejects(
+      requestOpenCode(server.url, '/tmp', 'GET', '/hung', undefined, { timeoutMs: 50 }),
+      /OpenCode GET \/hung request timed out after 50ms/,
+    );
+    assert.ok(Date.now() - startedAt < 500, 'hung response exceeded its request deadline bound');
+  } finally {
+    await server.close();
+  }
+});
+
+test('live evaluator omits secret-bearing non-2xx response bodies from bounded diagnostics', async () => {
+  const markers = [
+    'secret prompt marker',
+    'secret output marker',
+    'bearer ghp_abcdefghijklmnopqrstuvwxyz123456',
+  ];
+  const server = await localServer((_request, response) => {
+    response.writeHead(503, { 'content-type': 'text/plain' });
+    response.end(markers.join('\n'));
+  });
+  try {
+    let failure;
+    await assert.rejects(
+      requestOpenCode(server.url, '/tmp', 'POST', '/session/example/command', {}, { timeoutMs: 500 }),
+      (error) => {
+        failure = error;
+        return /OpenCode POST \/session\/example\/command failed \(503\); response body omitted/.test(error.message);
+      },
+    );
+    assert.ok(failure.message.length <= 512);
+    for (const marker of markers) assert.ok(!failure.message.includes(marker));
+  } finally {
+    await server.close();
+  }
+});
+
+test('live evaluator validates request timeout bounds before starting OpenCode', async () => {
+  await assert.rejects(
+    runOpenCodeLiveEvaluation({
+      caseId: 'plan-fanout',
+      directory: '/tmp',
+      requestTimeoutMs: 99,
+    }),
+    /live evaluation request timeout must be from 100 to 900000 milliseconds/,
+  );
+  await assert.rejects(
+    runOpenCodeLiveEvaluation({
+      caseId: 'plan-fanout',
+      directory: '/tmp',
+      requestTimeoutMs: 900001,
+    }),
+    /live evaluation request timeout must be from 100 to 900000 milliseconds/,
+  );
 });

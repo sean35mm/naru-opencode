@@ -33,6 +33,9 @@ const WORKFLOW_STATUSES = ['complete', 'partial', 'incomplete'];
 const SNAPSHOT_ID = /^naru-snap-[0-9a-f]{64}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
 const POSTING_AGENTS = new Set(['naru-review-post', 'naru-orchestrator']);
+const MAX_TRACKED_POST_TARGETS = 128;
+const postLocks = new Map();
+const postRecords = new Map();
 
 function hash(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -190,6 +193,77 @@ function markerOnHead(reviews, target, headSha, actor) {
   return null;
 }
 
+function targetKey(target) {
+  return `${target.owner.toLowerCase()}/${target.repo.toLowerCase()}#${target.number}`;
+}
+
+async function withPostLock(key, operation) {
+  let entry = postLocks.get(key);
+  if (!entry) {
+    if (postLocks.size >= MAX_TRACKED_POST_TARGETS) {
+      throw new Error('too many review post targets are active');
+    }
+    entry = { tail: Promise.resolve(), queued: 0 };
+    postLocks.set(key, entry);
+  }
+
+  entry.queued += 1;
+  const previous = entry.tail;
+  let release;
+  const current = new Promise((resolve) => { release = resolve; });
+  entry.tail = current;
+  await previous;
+
+  try {
+    return await operation();
+  } finally {
+    release();
+    entry.queued -= 1;
+    if (entry.queued === 0 && entry.tail === current) postLocks.delete(key);
+  }
+}
+
+function postRecord(key) {
+  const record = postRecords.get(key);
+  if (!record) return null;
+  postRecords.delete(key);
+  postRecords.set(key, record);
+  return record;
+}
+
+function rememberPost(key, record) {
+  postRecords.delete(key);
+  postRecords.set(key, record);
+  while (postRecords.size > MAX_TRACKED_POST_TARGETS) {
+    postRecords.delete(postRecords.keys().next().value);
+  }
+}
+
+function alreadyPosted(reviewId, reviewUrl) {
+  return okEnvelope('naru-github-post-review', {
+    posted: false,
+    reason: 'alreadyPosted',
+    reviewId,
+    reviewUrl,
+  });
+}
+
+function recordedPostResult(key, payload, actor, digest) {
+  const record = postRecord(key);
+  if (!record || record.headSha !== payload.snapshot.headSha) return null;
+  if (record.actor !== actor.toLowerCase()) {
+    return errEnvelope('naru-github-post-review', 'a review post is already recorded for this head under a different actor; duplicate refused');
+  }
+  if (record.digest !== digest) {
+    return errEnvelope('naru-github-post-review', 'a different Naru review already exists on this head; duplicate refused');
+  }
+  if (record.status === 'succeeded') return alreadyPosted(record.reviewId, record.reviewUrl);
+  return errEnvelope(
+    'naru-github-post-review',
+    'outcomeUnknown: a prior in-process POST attempt on this head has an unknown outcome; duplicate refused',
+  );
+}
+
 function validateCurrentComments(comments, snapshot) {
   const files = new Map(snapshot.files.map((file) => [file.filename, file]));
   const valid = [];
@@ -210,12 +284,210 @@ function validateCurrentComments(comments, snapshot) {
   return { valid, dropped };
 }
 
+function locationValidationDigest(validation) {
+  return hash(JSON.stringify({
+    valid: validation.valid.map(({ path, line, side }) => ({ path, line, side })),
+    dropped: validation.dropped.map(({ comment, reason }) => ({
+      path: comment.path,
+      line: comment.line,
+      side: comment.side,
+      reason,
+    })),
+  }));
+}
+
 async function currentSnapshot(payload, spawn) {
   return pullSnapshot({
     owner: payload.target.owner,
     repo: payload.target.repo,
     number: payload.target.number,
   }, { spawn });
+}
+
+function snapshotIdentityError(payload, snapshot) {
+  if (
+    snapshot.number !== payload.target.number ||
+    snapshot.owner.toLowerCase() !== payload.target.owner.toLowerCase() ||
+    snapshot.repo.toLowerCase() !== payload.target.repo.toLowerCase()
+  ) {
+    return 'canonical repository identity mismatch';
+  }
+  if (snapshot.headSha !== payload.snapshot.headSha) return 'snapshot head SHA mismatch';
+  return null;
+}
+
+function snapshotFreshnessError(payload, snapshot) {
+  if (snapshot.snapshotId !== payload.snapshot.id) return 'snapshot ID mismatch';
+  if (snapshot.feedbackDigest !== payload.snapshot.feedbackDigest) return 'snapshot feedback digest mismatch';
+  if (!snapshot.complete) return 'current snapshot is incomplete; refusing to post';
+  return null;
+}
+
+async function postReviewLocked(payload, spawn, key) {
+  let snapshot;
+  try {
+    snapshot = await currentSnapshot(payload, spawn);
+  } catch (error) {
+    return errEnvelope('naru-github-post-review', `snapshot failed: ${safeError(error)}`);
+  }
+  const identityError = snapshotIdentityError(payload, snapshot);
+  if (identityError) return errEnvelope('naru-github-post-review', identityError);
+  payload.target = { ...payload.target, owner: snapshot.owner, repo: snapshot.repo };
+
+  let actor;
+  try {
+    actor = await fetchAuthenticatedLogin({ spawn });
+  } catch (error) {
+    return errEnvelope('naru-github-post-review', `could not resolve authenticated GitHub identity: ${safeError(error)}`);
+  }
+
+  const initialValidation = validateCurrentComments(payload.inlineComments, snapshot);
+  const digest = markerDigest(payload, initialValidation.valid);
+  const existing = markerOnHead(snapshot.reviews, payload.target, snapshot.headSha, actor);
+  if (existing) {
+    if (existing.digest === digest) {
+      rememberPost(key, {
+        actor: actor.toLowerCase(),
+        headSha: snapshot.headSha,
+        digest,
+        status: 'succeeded',
+        reviewId: existing.reviewId,
+        reviewUrl: existing.url,
+      });
+      return alreadyPosted(existing.reviewId, existing.url);
+    }
+    return errEnvelope('naru-github-post-review', 'a different Naru review already exists on this head; duplicate refused');
+  }
+
+  const recorded = recordedPostResult(key, payload, actor, digest);
+  if (recorded) return recorded;
+  const freshnessError = snapshotFreshnessError(payload, snapshot);
+  if (freshnessError) return errEnvelope('naru-github-post-review', freshnessError);
+
+  let finalSnapshot;
+  try {
+    finalSnapshot = await currentSnapshot(payload, spawn);
+  } catch (error) {
+    return errEnvelope('naru-github-post-review', `final snapshot failed: ${safeError(error)}`);
+  }
+  const finalIdentityError = snapshotIdentityError(payload, finalSnapshot);
+  if (finalIdentityError) return errEnvelope('naru-github-post-review', `final ${finalIdentityError}`);
+
+  const finalValidation = validateCurrentComments(payload.inlineComments, finalSnapshot);
+  const finalDigest = markerDigest(payload, finalValidation.valid);
+  const finalExisting = markerOnHead(finalSnapshot.reviews, payload.target, finalSnapshot.headSha, actor);
+  if (finalExisting) {
+    if (finalExisting.digest === finalDigest) {
+      rememberPost(key, {
+        actor: actor.toLowerCase(),
+        headSha: finalSnapshot.headSha,
+        digest: finalDigest,
+        status: 'succeeded',
+        reviewId: finalExisting.reviewId,
+        reviewUrl: finalExisting.url,
+      });
+      return alreadyPosted(finalExisting.reviewId, finalExisting.url);
+    }
+    return errEnvelope('naru-github-post-review', 'a different Naru review already exists on this head; duplicate refused');
+  }
+  const finalRecorded = recordedPostResult(key, payload, actor, finalDigest);
+  if (finalRecorded) return finalRecorded;
+  const finalFreshnessError = snapshotFreshnessError(payload, finalSnapshot);
+  if (finalFreshnessError) return errEnvelope('naru-github-post-review', `final ${finalFreshnessError}`);
+  if (finalDigest !== digest || locationValidationDigest(finalValidation) !== locationValidationDigest(initialValidation)) {
+    return errEnvelope('naru-github-post-review', 'inline comment locations changed during final validation; refusing to post');
+  }
+
+  const validComments = finalValidation.valid;
+  const droppedComments = finalValidation.dropped;
+
+  const marker = markerTag(payload, digest);
+  const body = `${marker}\n${payload.body}`;
+  const ghPayload = {
+    body,
+    event: 'COMMENT',
+    commit_id: finalSnapshot.headSha,
+    comments: validComments.map((comment) => ({
+      path: comment.path,
+      line: comment.line,
+      side: comment.side,
+      body: comment.body,
+    })),
+  };
+  const endpoint = `repos/${payload.target.owner}/${payload.target.repo}/pulls/${payload.target.number}/reviews`;
+
+  rememberPost(key, {
+    actor: actor.toLowerCase(),
+    headSha: finalSnapshot.headSha,
+    digest,
+    status: 'unknown',
+  });
+  let postResult;
+  try {
+    postResult = await run(
+      ['gh', 'api', '--method', 'POST', endpoint, '--input', '-'],
+      { spawn, input: JSON.stringify(ghPayload), maxBytes: MAX_GH_BYTES },
+    );
+  } catch (error) {
+    postResult = { ok: false, stderr: safeError(error), stdout: '' };
+  }
+
+  if (postResult.ok) {
+    try {
+      const result = JSON.parse(postResult.stdout);
+      if (result && result.id) {
+        rememberPost(key, {
+          actor: actor.toLowerCase(),
+          headSha: finalSnapshot.headSha,
+          digest,
+          status: 'succeeded',
+          reviewId: result.id,
+          reviewUrl: result.html_url ?? result.url,
+        });
+        return okEnvelope('naru-github-post-review', {
+          posted: true,
+          reviewId: result.id,
+          reviewUrl: result.html_url ?? result.url,
+          commentsPosted: ghPayload.comments.length,
+          droppedComments,
+        }, {
+          warnings: droppedComments.length ? [`dropped ${droppedComments.length} invalid inline comments`] : [],
+        });
+      }
+    } catch {
+      // Treat a successful status without a parseable review ID as ambiguous.
+    }
+  }
+
+  // Never retry the mutation. A fresh read may only confirm whether it landed.
+  try {
+    const fresh = await currentSnapshot(payload, spawn);
+    const recovered = markerOnHead(fresh.reviews, payload.target, finalSnapshot.headSha, actor);
+    if (recovered?.digest === digest) {
+      rememberPost(key, {
+        actor: actor.toLowerCase(),
+        headSha: finalSnapshot.headSha,
+        digest,
+        status: 'succeeded',
+        reviewId: recovered.reviewId,
+        reviewUrl: recovered.url,
+      });
+      return okEnvelope('naru-github-post-review', {
+        posted: true,
+        recovered: true,
+        reviewId: recovered.reviewId,
+        reviewUrl: recovered.url,
+        commentsPosted: ghPayload.comments.length,
+        droppedComments,
+      });
+    }
+  } catch {
+    // Preserve the unknown outcome below.
+  }
+
+  return errEnvelope('naru-github-post-review', 'outcomeUnknown: the review may or may not have been posted', {
+    warnings: [stripSecrets(postResult.stderr || postResult.stdout || '')].filter(Boolean),
+  });
 }
 
 export async function postReview(rawPayload, context, { spawn } = {}) {
@@ -238,118 +510,10 @@ export async function postReview(rawPayload, context, { spawn } = {}) {
     return errEnvelope('naru-github-post-review', 'degraded or incomplete review snapshots cannot be posted');
   }
 
-  let snapshot;
+  const key = targetKey(payload.target);
   try {
-    snapshot = await currentSnapshot(payload, spawn);
+    return await withPostLock(key, () => postReviewLocked(payload, spawn, key));
   } catch (error) {
-    return errEnvelope('naru-github-post-review', `snapshot failed: ${safeError(error)}`);
+    return errEnvelope('naru-github-post-review', `review post coordination failed: ${safeError(error)}`);
   }
-  if (snapshot.headSha !== payload.snapshot.headSha) {
-    return errEnvelope('naru-github-post-review', 'snapshot head SHA mismatch');
-  }
-  if (
-    snapshot.owner.toLowerCase() !== payload.target.owner.toLowerCase() ||
-    snapshot.repo.toLowerCase() !== payload.target.repo.toLowerCase()
-  ) {
-    return errEnvelope('naru-github-post-review', 'canonical repository identity mismatch');
-  }
-  payload.target = { ...payload.target, owner: snapshot.owner, repo: snapshot.repo };
-
-  let actor;
-  try {
-    actor = await fetchAuthenticatedLogin({ spawn });
-  } catch (error) {
-    return errEnvelope('naru-github-post-review', `could not resolve authenticated GitHub identity: ${safeError(error)}`);
-  }
-
-  const { valid: validComments, dropped: droppedComments } = validateCurrentComments(payload.inlineComments, snapshot);
-  const digest = markerDigest(payload, validComments);
-  const existing = markerOnHead(snapshot.reviews, payload.target, snapshot.headSha, actor);
-  if (existing) {
-    if (existing.digest === digest) {
-      return okEnvelope('naru-github-post-review', {
-        posted: false,
-        reason: 'alreadyPosted',
-        reviewId: existing.reviewId,
-        reviewUrl: existing.url,
-      });
-    }
-    return errEnvelope('naru-github-post-review', 'a different Naru review already exists on this head; duplicate refused');
-  }
-
-  if (snapshot.snapshotId !== payload.snapshot.id) {
-    return errEnvelope('naru-github-post-review', 'snapshot ID mismatch');
-  }
-  if (snapshot.feedbackDigest !== payload.snapshot.feedbackDigest) {
-    return errEnvelope('naru-github-post-review', 'snapshot feedback digest mismatch');
-  }
-  if (!snapshot.complete) {
-    return errEnvelope('naru-github-post-review', 'current snapshot is incomplete; refusing to post');
-  }
-
-  const marker = markerTag(payload, digest);
-  const body = `${marker}\n${payload.body}`;
-  const ghPayload = {
-    body,
-    event: 'COMMENT',
-    commit_id: snapshot.headSha,
-    comments: validComments.map((comment) => ({
-      path: comment.path,
-      line: comment.line,
-      side: comment.side,
-      body: comment.body,
-    })),
-  };
-  const endpoint = `repos/${payload.target.owner}/${payload.target.repo}/pulls/${payload.target.number}/reviews`;
-
-  let postResult;
-  try {
-    postResult = await run(
-      ['gh', 'api', '--method', 'POST', endpoint, '--input', '-'],
-      { spawn, input: JSON.stringify(ghPayload), maxBytes: MAX_GH_BYTES },
-    );
-  } catch (error) {
-    postResult = { ok: false, stderr: safeError(error), stdout: '' };
-  }
-
-  if (postResult.ok) {
-    try {
-      const result = JSON.parse(postResult.stdout);
-      if (result && result.id) {
-        return okEnvelope('naru-github-post-review', {
-          posted: true,
-          reviewId: result.id,
-          reviewUrl: result.html_url ?? result.url,
-          commentsPosted: ghPayload.comments.length,
-          droppedComments,
-        }, {
-          warnings: droppedComments.length ? [`dropped ${droppedComments.length} invalid inline comments`] : [],
-        });
-      }
-    } catch {
-      // Treat a successful status without a parseable review ID as ambiguous.
-    }
-  }
-
-  // Never retry the mutation. A fresh read may only confirm whether it landed.
-  try {
-    const fresh = await currentSnapshot(payload, spawn);
-    const recovered = markerOnHead(fresh.reviews, payload.target, snapshot.headSha, actor);
-    if (recovered?.digest === digest) {
-      return okEnvelope('naru-github-post-review', {
-        posted: true,
-        recovered: true,
-        reviewId: recovered.reviewId,
-        reviewUrl: recovered.url,
-        commentsPosted: ghPayload.comments.length,
-        droppedComments,
-      });
-    }
-  } catch {
-    // Preserve the unknown outcome below.
-  }
-
-  return errEnvelope('naru-github-post-review', 'outcomeUnknown: the review may or may not have been posted', {
-    warnings: [stripSecrets(postResult.stderr || postResult.stdout || '')].filter(Boolean),
-  });
 }

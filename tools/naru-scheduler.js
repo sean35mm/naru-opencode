@@ -9,7 +9,6 @@ import {
   validateAdmissionTokenV1,
   validateArtifactV1,
   validateRunManifestV1,
-  validateSchedulerBudgets,
   validateTransitionTokenV1,
   validateWorkItemV1,
 } from './naru-lib/scheduler-protocol.mjs';
@@ -22,10 +21,12 @@ import {
   DEFAULT_SCHEDULER_CONFIG,
   loadSchedulerConfigFile,
   parseSchedulerConfig,
+  resolveSchedulerBudgets,
 } from './naru-lib/scheduler-config.mjs';
 import {
   addAdmissionMarker,
   admissionClaimsForWorkItem,
+  ensureSchedulerRootCapacity,
   getSchedulerRuntimeRegistry,
   probeSchedulerRuntime,
   pruneSchedulerRuntime,
@@ -34,6 +35,7 @@ import {
 import { appendSchedulerJournal, schedulerJournalSnapshot } from './naru-lib/scheduler-journal.mjs';
 
 const TOOL_ID = 'naru-scheduler';
+const AUTHORIZED_AGENT = 'naru-orchestrator';
 const DEFAULT_CONFIG_PATH = fileURLToPath(new URL('../naru-runtime.json', import.meta.url));
 const OPERATIONS = Object.freeze([
   'create_run',
@@ -83,13 +85,16 @@ function safeContextId(value, label) {
   return value;
 }
 
-function schedulerBudgets(config) {
-  return validateSchedulerBudgets({
-    maxConcurrentWriters: config.maxConcurrentWriters,
-    maxConcurrentReadOnly: config.maxConcurrentReadOnly,
-    maxTotalChildren: config.maxTotalChildren,
-    maxJudgePasses: config.maxJudgePasses,
-  });
+function safeDirectory(value) {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > 4096 ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    throw new Error('context.directory is not valid');
+  }
+  return value;
 }
 
 function validateOperation(raw, config) {
@@ -103,7 +108,7 @@ function validateOperation(raw, config) {
         runId: safeId(raw.runId, 'runId'),
         schedulingProtocol: raw.schedulingProtocol,
         revision: raw.revision === undefined ? 0 : safeRevision(raw.revision, 'revision'),
-        budgets: validateSchedulerBudgets(raw.budgets ?? schedulerBudgets(config)),
+        budgets: resolveSchedulerBudgets(raw.budgets, config),
       };
     case 'declare_items':
       exactInput(raw, ['operation', 'runId', 'expectedRevision', 'workItems'], ['operation', 'runId', 'expectedRevision', 'workItems']);
@@ -206,18 +211,36 @@ async function schedulerConfig(context) {
 function contextIdentity(context) {
   const rootSessionID = safeContextId(context?.sessionID, 'context.sessionID');
   const agent = safeContextId(context?.agent, 'context.agent');
-  const directory = typeof context?.directory === 'string' ? context.directory : '';
-  const directoryDigest = createHash('sha256').update(directory).digest('hex').slice(0, 16);
+  if (agent !== AUTHORIZED_AGENT) throw new Error(`context.agent must be ${AUTHORIZED_AGENT}`);
+  const directory = safeDirectory(context?.directory);
+  const directoryDigest = createHash('sha256').update(directory).digest('hex');
   return { rootSessionID, agent, directoryDigest };
 }
 
-function runFor(registry, rootSessionID, runId) {
-  const run = registry.roots.get(rootSessionID);
+function assertRunIdentity(run, identity) {
+  if (run.rootSessionID !== identity.rootSessionID) throw new Error('scheduler run root session mismatch');
+  if (run.agent !== identity.agent) throw new Error('scheduler run agent mismatch');
+  if (run.directoryDigest !== identity.directoryDigest) throw new Error('scheduler run directory mismatch');
+}
+
+function runFor(registry, identity, runId) {
+  const run = registry.roots.get(identity.rootSessionID);
   if (!run || run.runId !== runId) throw new Error(`unknown run: ${runId}`);
-  registry.roots.delete(rootSessionID);
-  registry.roots.set(rootSessionID, run);
+  assertRunIdentity(run, identity);
   if (run.closed) throw new Error('scheduler run is closed');
+  registry.roots.delete(identity.rootSessionID);
+  registry.roots.set(identity.rootSessionID, run);
   return run;
+}
+
+function verifyOperationIdentity(input, identity, registry) {
+  const run = registry.roots.get(identity.rootSessionID);
+  if (input.operation === 'create_run') {
+    if (run) assertRunIdentity(run, identity);
+    return;
+  }
+  if (!run || run.runId !== input.runId) throw new Error(`unknown run: ${input.runId}`);
+  assertRunIdentity(run, identity);
 }
 
 function itemFor(run, workItemId) {
@@ -268,6 +291,7 @@ async function executeOperation(input, context, config, registry, now) {
         throw new Error('Protocol 2 observation is disabled');
       }
       if (registry.roots.has(identity.rootSessionID)) throw new Error('root session already has a scheduler run');
+      ensureSchedulerRootCapacity(registry);
       const run = {
         ...identity,
         runId: input.runId,
@@ -287,7 +311,7 @@ async function executeOperation(input, context, config, registry, now) {
       return { capability, run: snapshot(run, registry) };
     }
     case 'declare_items': {
-      const run = runFor(registry, identity.rootSessionID, input.runId);
+      const run = runFor(registry, identity, input.runId);
       if (run.state !== null) throw new Error('work items were already declared');
       if (run.revision !== input.expectedRevision) throw new Error('CAS mismatch while declaring work items');
       let manifest;
@@ -317,7 +341,7 @@ async function executeOperation(input, context, config, registry, now) {
       return { capability, run: snapshot(run, registry) };
     }
     case 'issue_admission': {
-      const run = runFor(registry, identity.rootSessionID, input.runId);
+      const run = runFor(registry, identity, input.runId);
       const item = itemFor(run, input.workItemId);
       const token = validateAdmissionTokenV1({
         schemaVersion: 1,
@@ -357,7 +381,7 @@ async function executeOperation(input, context, config, registry, now) {
       };
     }
     case 'request_transition': {
-      const run = runFor(registry, identity.rootSessionID, input.runId);
+      const run = runFor(registry, identity, input.runId);
       const item = itemFor(run, input.workItemId);
       if (run.state.revision !== input.expectedRevision) throw new Error('CAS mismatch while requesting transition');
       if (item.status === input.toStatus) throw new Error('transition must change work item status');
@@ -383,7 +407,7 @@ async function executeOperation(input, context, config, registry, now) {
       return { capability, token };
     }
     case 'append_artifact': {
-      const run = runFor(registry, identity.rootSessionID, input.runId);
+      const run = runFor(registry, identity, input.runId);
       if (input.artifact.runId !== run.runId || (input.token && input.token.runId !== run.runId)) {
         throw new Error('artifact run ID mismatch');
       }
@@ -408,11 +432,11 @@ async function executeOperation(input, context, config, registry, now) {
       return { capability, artifact: input.artifact, run: snapshot(run, registry) };
     }
     case 'snapshot': {
-      const run = runFor(registry, identity.rootSessionID, input.runId);
+      const run = runFor(registry, identity, input.runId);
       return { capability, run: snapshot(run, registry) };
     }
     case 'freeze': {
-      const run = runFor(registry, identity.rootSessionID, input.runId);
+      const run = runFor(registry, identity, input.runId);
       run.state = reduceSchedulerState(run.state, {
         type: 'invalidate',
         workItemId: input.workItemId,
@@ -427,7 +451,7 @@ async function executeOperation(input, context, config, registry, now) {
       return { capability, run: snapshot(run, registry) };
     }
     case 'close': {
-      const run = runFor(registry, identity.rootSessionID, input.runId);
+      const run = runFor(registry, identity, input.runId);
       if (!run.state) throw new Error('work items have not been declared');
       if (run.state.revision !== input.expectedRevision) throw new Error('CAS mismatch while closing run');
       if (run.state.activeAdmissions.length > 0) throw new Error('cannot close a run with active admissions');
@@ -474,7 +498,9 @@ export default {
   execute: async (args, context = {}) => {
     let input;
     let config;
+    let identity;
     try {
+      identity = contextIdentity(context);
       config = await schedulerConfig(context);
       input = validateOperation(args?.input, config);
     } catch (error) {
@@ -493,17 +519,24 @@ export default {
     }
 
     const registry = context.schedulerRegistry ?? getSchedulerRuntimeRegistry();
+    try {
+      verifyOperationIdentity(input, identity, registry);
+    } catch (error) {
+      return JSON.stringify(errEnvelope(TOOL_ID, errorText(error)), null, 2);
+    }
     const now = typeof context.now === 'function' ? context.now() : Date.now();
     try {
       const data = await executeOperation(input, context, config, registry, now);
       return JSON.stringify(okEnvelope(TOOL_ID, { mode: config.mode, ...data }), null, 2);
     } catch (error) {
       const rootSessionID = typeof context.sessionID === 'string' && context.sessionID ? context.sessionID : 'unknown-root';
-      appendSchedulerJournal(rootSessionID, 'tool.error', {
-        operation: input.operation,
-        code: 'operation_refused',
-        reason: errorText(error),
-      }, { registry, now });
+      if (error?.code !== 'scheduler_capacity_exhausted') {
+        appendSchedulerJournal(rootSessionID, 'tool.error', {
+          operation: input.operation,
+          code: 'operation_refused',
+          reason: errorText(error),
+        }, { registry, now });
+      }
       return JSON.stringify(errEnvelope(TOOL_ID, errorText(error)), null, 2);
     }
   },

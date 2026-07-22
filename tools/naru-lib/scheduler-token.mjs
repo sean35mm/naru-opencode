@@ -119,18 +119,75 @@ function sameValue(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function capacityError(resource) {
+  const error = new Error(`scheduler ${resource} capacity exhausted; no safe historical state can be pruned`);
+  error.code = 'scheduler_capacity_exhausted';
+  return error;
+}
+
+function activeAdmissionTokenIds(registry) {
+  return new Set([...registry.roots.values()].flatMap((run) => (
+    run.state?.activeAdmissions?.map((admission) => admission.tokenId) ?? []
+  )));
+}
+
+function deleteAdmission(registry, tokenId) {
+  registry.admissions.delete(tokenId);
+  for (const [callId, call] of registry.calls) {
+    if (call.tokenId === tokenId) registry.calls.delete(callId);
+  }
+}
+
+function deleteClosedRoot(registry, rootSessionID) {
+  registry.roots.delete(rootSessionID);
+  registry.journals.delete(rootSessionID);
+  for (const [tokenId, admission] of registry.admissions) {
+    if (admission.rootSessionID === rootSessionID) deleteAdmission(registry, tokenId);
+  }
+  for (const [callId, call] of registry.lifecycle.taskCalls) {
+    if (call.rootSessionID === rootSessionID) registry.lifecycle.taskCalls.delete(callId);
+  }
+}
+
+function pruneClosedRoots(registry, maximum) {
+  for (const [rootSessionID, run] of registry.roots) {
+    if (registry.roots.size <= maximum) break;
+    if (run.closed && (run.state?.activeAdmissions?.length ?? 0) === 0) {
+      deleteClosedRoot(registry, rootSessionID);
+    }
+  }
+}
+
+function pruneAdmissionHistory(registry, maximum) {
+  const activeTokenIds = activeAdmissionTokenIds(registry);
+  for (const [tokenId, admission] of registry.admissions) {
+    if (registry.admissions.size <= maximum) break;
+    if (admission.consumedBy !== null && !activeTokenIds.has(tokenId)) {
+      deleteAdmission(registry, tokenId);
+    }
+  }
+}
+
+function pruneCallHistory(registry, maximum) {
+  const activeTokenIds = activeAdmissionTokenIds(registry);
+  for (const [callId, call] of registry.calls) {
+    if (registry.calls.size <= maximum) break;
+    if (!activeTokenIds.has(call.tokenId)) registry.calls.delete(callId);
+  }
+}
+
 function pruneMap(map, maximum) {
   while (map.size > maximum) map.delete(map.keys().next().value);
 }
 
 export function pruneSchedulerRuntime(registry = getSchedulerRuntimeRegistry()) {
-  pruneMap(registry.roots, MAX_ROOTS);
+  pruneClosedRoots(registry, MAX_ROOTS);
   const liveRoots = new Set(registry.roots.keys());
   for (const [tokenId, admission] of registry.admissions) {
-    if (!liveRoots.has(admission.rootSessionID)) registry.admissions.delete(tokenId);
+    if (!liveRoots.has(admission.rootSessionID)) deleteAdmission(registry, tokenId);
   }
-  pruneMap(registry.admissions, MAX_TOKENS);
-  pruneMap(registry.calls, MAX_CALLS);
+  pruneAdmissionHistory(registry, MAX_TOKENS);
+  pruneCallHistory(registry, MAX_CALLS);
   pruneMap(registry.lifecycle.sessions, MAX_ROOTS * 8);
   pruneMap(registry.lifecycle.taskCalls, MAX_CALLS);
   pruneMap(registry.lifecycle.seenEvents, MAX_CALLS);
@@ -138,6 +195,21 @@ export function pruneSchedulerRuntime(registry = getSchedulerRuntimeRegistry()) 
     registry.lifecycle.incidents.delete(registry.lifecycle.incidents.values().next().value);
   }
   return registry;
+}
+
+export function ensureSchedulerRootCapacity(registry = getSchedulerRuntimeRegistry()) {
+  pruneClosedRoots(registry, MAX_ROOTS - 1);
+  if (registry.roots.size >= MAX_ROOTS) throw capacityError('root');
+}
+
+function ensureAdmissionCapacity(registry) {
+  pruneAdmissionHistory(registry, MAX_TOKENS - 1);
+  if (registry.admissions.size >= MAX_TOKENS) throw capacityError('admission');
+}
+
+function ensureCallCapacity(registry) {
+  pruneCallHistory(registry, MAX_CALLS - 1);
+  if (registry.calls.size >= MAX_CALLS) throw capacityError('call');
 }
 
 export function admissionClaimsForWorkItem(workItem) {
@@ -170,6 +242,7 @@ export function reserveAdmission({
   if (version !== 1) throw new Error('admission binding version must be 1');
   if (!registry.roots.has(rootSessionID)) throw new Error('scheduler root session is unknown');
   if (registry.admissions.has(validatedToken.tokenId)) throw new Error('admission token ID is already reserved');
+  ensureAdmissionCapacity(registry);
   const record = {
     token: validatedToken,
     rootSessionID,
@@ -244,6 +317,12 @@ export function consumeAdmission({
     return deny(error.message, 'claims_invalid');
   }
   if (!sameValue(normalizedClaims, record.claims)) return deny('work item claims mismatch', 'claims_mismatch');
+
+  try {
+    ensureCallCapacity(registry);
+  } catch (error) {
+    return deny(error.message, error.code);
+  }
 
   try {
     if (typeof onConsume === 'function') onConsume(structuredClone(record));

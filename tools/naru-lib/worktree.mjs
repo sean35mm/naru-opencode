@@ -1,4 +1,6 @@
-import { lstat, mkdir, readFile, realpath, rm, writeFile, copyFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { lstat, mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 
@@ -8,11 +10,33 @@ import { run } from './transport.mjs';
 
 const MAX_WRITERS = 10;
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+// Isolated worktrees are for source changes, not transferring arbitrarily large artifacts.
+const MAX_UNTRACKED_FILE_BYTES = 64 * 1024 * 1024;
+const NO_HOOKS_PATH = '/dev/null';
+const METADATA_FILE = '.naru-run.json';
 const REGISTRY_KEY = Symbol.for('naru.worktree.registry.v1');
+const RUN_LOCKS = new Map();
 
 function registry() {
   globalThis[REGISTRY_KEY] ??= new Map();
   return globalThis[REGISTRY_KEY];
+}
+
+async function withRunLock(runId, operation) {
+  const previous = RUN_LOCKS.get(runId) ?? Promise.resolve();
+  let release;
+  const gate = new Promise((resolveGate) => {
+    release = resolveGate;
+  });
+  const tail = previous.catch(() => {}).then(() => gate);
+  RUN_LOCKS.set(runId, tail);
+  await previous.catch(() => {});
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (RUN_LOCKS.get(runId) === tail) RUN_LOCKS.delete(runId);
+  }
 }
 
 function safeId(value, label) {
@@ -47,6 +71,14 @@ async function git(args, { cwd, input, spawn, label }) {
     throw new Error(`${label} failed: ${detail}`);
   }
   return result.stdout;
+}
+
+async function addWorktree(repository, path, baseSha, spawn, label) {
+  await git(['-c', `core.hooksPath=${NO_HOOKS_PATH}`, 'worktree', 'add', '--detach', path, baseSha], {
+    cwd: repository,
+    spawn,
+    label,
+  });
 }
 
 function inside(root, path) {
@@ -100,21 +132,62 @@ async function writeMetadata(runState) {
       changedPaths: item.changedPaths,
     })),
   };
-  await writeFile(join(runState.runRoot, '.naru-run.json'), `${JSON.stringify(data, null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
+  const metadataPath = join(runState.runRoot, METADATA_FILE);
+  const temporaryPath = join(
+    runState.runRoot,
+    `.naru-run.${process.pid}.${randomBytes(8).toString('hex')}.tmp`,
+  );
+  let handle;
+  try {
+    handle = await open(
+      temporaryPath,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+    await handle.writeFile(`${JSON.stringify(data, null, 2)}\n`, 'utf8');
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await rename(temporaryPath, metadataPath);
+  } catch (error) {
+    await handle?.close().catch(() => {});
+    await rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 async function runRootFor(worktreeRoot, repository, runId, { create = false } = {}) {
   const configuredRoot = resolve(worktreeRoot ?? join(homedir(), '.worktrees'));
   if (create) await mkdir(configuredRoot, { recursive: true, mode: 0o700 });
   const canonicalRoot = await realpath(configuredRoot);
-  const parent = join(canonicalRoot, basename(repository), 'naru');
-  if (create) await mkdir(parent, { recursive: true, mode: 0o700 });
+
+  const validateSegment = async (path, label, { exclusive = false } = {}) => {
+    if (!inside(canonicalRoot, path)) throw new Error('derived worktree path escapes its configured root');
+    let created = false;
+    if (create) {
+      try {
+        await mkdir(path, { mode: 0o700 });
+        created = true;
+      } catch (error) {
+        if (error?.code !== 'EEXIST') throw error;
+      }
+    }
+    const status = await lstat(path);
+    if (status.isSymbolicLink()) throw new Error(`${label} must not be a symbolic link`);
+    if (!status.isDirectory()) throw new Error(`${label} must be a directory`);
+    const canonicalPath = await realpath(path);
+    if (canonicalPath !== path || !inside(canonicalRoot, canonicalPath)) {
+      throw new Error(`${label} is not a canonical descendant of its configured root`);
+    }
+    if (exclusive && !created) throw new Error(`${label} already exists`);
+  };
+
+  const repositoryRoot = join(canonicalRoot, basename(repository));
+  await validateSegment(repositoryRoot, 'repository worktree directory');
+  const parent = join(repositoryRoot, 'naru');
+  await validateSegment(parent, 'Naru worktree directory');
   const runRoot = join(parent, runId);
-  if (!inside(canonicalRoot, runRoot)) throw new Error('derived worktree path escapes its configured root');
-  if (create) await mkdir(runRoot, { mode: 0o700 });
+  await validateSegment(runRoot, 'worktree run directory', { exclusive: create });
   return runRoot;
 }
 
@@ -143,7 +216,7 @@ function stateFor(runId, stateRegistry = registry()) {
   return state;
 }
 
-export async function createWorktreeRun({
+async function createWorktreeRunUnlocked({
   directory,
   runId,
   maxWriters = 6,
@@ -160,11 +233,7 @@ export async function createWorktreeRun({
   const runRoot = await runRootFor(worktreeRoot, repository, runId, { create: true });
   const integrationPath = join(runRoot, 'integration');
   try {
-    await git(['worktree', 'add', '--detach', integrationPath, baseSha], {
-      cwd: repository,
-      spawn,
-      label: 'integration worktree creation',
-    });
+    await addWorktree(repository, integrationPath, baseSha, spawn, 'integration worktree creation');
   } catch (error) {
     await rm(runRoot, { recursive: true, force: true });
     throw error;
@@ -182,11 +251,22 @@ export async function createWorktreeRun({
     faulted: false,
   };
   stateRegistry.set(runId, runState);
-  await writeMetadata(runState);
+  try {
+    await writeMetadata(runState);
+  } catch (error) {
+    stateRegistry.delete(runId);
+    await git(['worktree', 'remove', '--force', integrationPath], {
+      cwd: repository,
+      spawn,
+      label: 'failed integration worktree cleanup',
+    }).catch(() => {});
+    await rm(runRoot, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
   return publicRun(runState);
 }
 
-export async function createWriterWorktree({ runId, itemId, ownedWriteScope, spawn, stateRegistry = registry() }) {
+async function createWriterWorktreeUnlocked({ runId, itemId, ownedWriteScope, spawn, stateRegistry }) {
   safeId(itemId, 'itemId');
   const runState = stateFor(runId, stateRegistry);
   if (runState.finalized || runState.faulted) throw new Error('worktree run is not writable');
@@ -200,11 +280,7 @@ export async function createWriterWorktree({ runId, itemId, ownedWriteScope, spa
   }
   const path = join(runState.runRoot, 'items', itemId);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await git(['worktree', 'add', '--detach', path, runState.baseSha], {
-    cwd: runState.repository,
-    spawn,
-    label: `writer worktree creation for ${itemId}`,
-  });
+  await addWorktree(runState.repository, path, runState.baseSha, spawn, `writer worktree creation for ${itemId}`);
   runState.items.set(itemId, {
     itemId,
     path,
@@ -212,7 +288,17 @@ export async function createWriterWorktree({ runId, itemId, ownedWriteScope, spa
     integrated: false,
     changedPaths: [],
   });
-  await writeMetadata(runState);
+  try {
+    await writeMetadata(runState);
+  } catch (error) {
+    runState.items.delete(itemId);
+    await git(['worktree', 'remove', '--force', path], {
+      cwd: runState.repository,
+      spawn,
+      label: `failed writer worktree cleanup for ${itemId}`,
+    }).catch(() => {});
+    throw error;
+  }
   return publicRun(runState).items.find((item) => item.itemId === itemId);
 }
 
@@ -221,12 +307,12 @@ async function changesAt(path, spawn) {
     cwd: path,
     spawn,
     label: 'tracked changed-path discovery',
-  }));
+  })).sort();
   const untracked = parseNul(await git(['ls-files', '--others', '--exclude-standard', '-z', '--', '.'], {
     cwd: path,
     spawn,
     label: 'untracked changed-path discovery',
-  }));
+  })).sort();
   return { tracked, untracked, all: [...new Set([...tracked, ...untracked])].sort() };
 }
 
@@ -261,24 +347,191 @@ async function trackedPatch(path, spawn) {
   });
 }
 
-async function applyPatch(target, patch, spawn, checkOnly = false) {
+async function applyPatch(target, patch, spawn, checkOnly = false, reverse = false) {
   if (!patch) return;
   const args = ['apply', '--binary', '--whitespace=nowarn'];
+  if (reverse) args.push('--reverse');
   if (checkOnly) args.push('--check');
   args.push('-');
-  await git(args, { cwd: target, input: patch, spawn, label: checkOnly ? 'patch preflight' : 'patch application' });
+  const action = reverse ? 'patch rollback' : 'patch application';
+  await git(args, { cwd: target, input: patch, spawn, label: checkOnly ? `${action} preflight` : action });
 }
 
-async function copyUntracked(source, target, paths) {
-  await rejectSymlinks(source, paths);
-  for (const path of paths) {
-    const destination = join(target, path);
-    await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
-    await copyFile(join(source, path), destination);
+async function safeAncestor(root, relativePath, { create }) {
+  const canonicalRoot = await realpath(root);
+  if (canonicalRoot !== root) throw new Error(`copy root is not canonical: ${root}`);
+  const parent = dirname(relativePath);
+  if (parent === '.') return root;
+  let current = root;
+  for (const segment of parent.split(sep)) {
+    current = join(current, segment);
+    let stats;
+    try {
+      stats = await lstat(current);
+    } catch (error) {
+      if (error?.code !== 'ENOENT' || !create) throw error;
+      try {
+        await mkdir(current, { mode: 0o700 });
+      } catch (mkdirError) {
+        if (mkdirError?.code !== 'EEXIST') throw mkdirError;
+      }
+      stats = await lstat(current);
+    }
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new Error(`copy path has an unsafe ancestor: ${relativePath}`);
+    }
+    const canonical = await realpath(current);
+    if (canonical !== current || !inside(canonicalRoot, canonical)) {
+      throw new Error(`copy path escapes its root: ${relativePath}`);
+    }
+  }
+  return current;
+}
+
+async function copyRegularFile(source, target, path, created) {
+  const sourceParent = await safeAncestor(source, path, { create: false });
+  const targetParent = await safeAncestor(target, path, { create: true });
+  const sourcePath = join(source, path);
+  const destination = join(target, path);
+  let sourceHandle;
+  let destinationHandle;
+  let record;
+  try {
+    sourceHandle = await open(sourcePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const sourceStats = await sourceHandle.stat({ bigint: true });
+    if (!sourceStats.isFile()) throw new Error(`changed path is not a regular file: ${path}`);
+    const sourcePathStats = await lstat(sourcePath, { bigint: true });
+    if (
+      await realpath(sourceParent) !== sourceParent
+      || sourcePathStats.dev !== sourceStats.dev
+      || sourcePathStats.ino !== sourceStats.ino
+    ) {
+      throw new Error(`untracked source escaped its root while opening: ${path}`);
+    }
+    if (sourceStats.size > BigInt(MAX_UNTRACKED_FILE_BYTES)) {
+      throw new Error(`untracked file exceeds ${MAX_UNTRACKED_FILE_BYTES} bytes: ${path}`);
+    }
+    try {
+      destinationHandle = await open(
+        destination,
+        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0),
+        Number(sourceStats.mode & 0o777n),
+      );
+    } catch (error) {
+      if (error?.code === 'EEXIST') throw new Error(`untracked path already exists in target workspace: ${path}`);
+      throw error;
+    }
+    record = {
+      path,
+      destination,
+      dev: undefined,
+      ino: undefined,
+      expected: undefined,
+    };
+    created.push(record);
+    const destinationStats = await destinationHandle.stat({ bigint: true });
+    record.dev = destinationStats.dev;
+    record.ino = destinationStats.ino;
+    const destinationPathStats = await lstat(destination, { bigint: true });
+    if (
+      await realpath(targetParent) !== targetParent
+      || destinationPathStats.dev !== destinationStats.dev
+      || destinationPathStats.ino !== destinationStats.ino
+    ) {
+      throw new Error(`untracked target escaped its root while opening: ${path}`);
+    }
+
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let position = 0;
+    const expectedSize = Number(sourceStats.size);
+    while (position < expectedSize) {
+      const length = Math.min(buffer.length, expectedSize - position);
+      const { bytesRead } = await sourceHandle.read(buffer, 0, length, position);
+      if (bytesRead === 0) throw new Error(`untracked source changed while copying: ${path}`);
+      let written = 0;
+      while (written < bytesRead) {
+        const result = await destinationHandle.write(buffer, written, bytesRead - written, position + written);
+        if (result.bytesWritten === 0) throw new Error(`untracked target stopped accepting data: ${path}`);
+        written += result.bytesWritten;
+      }
+      position += bytesRead;
+    }
+    const extra = await sourceHandle.read(Buffer.allocUnsafe(1), 0, 1, position);
+    const finalSourceStats = await sourceHandle.stat({ bigint: true });
+    if (
+      extra.bytesRead !== 0
+      || finalSourceStats.dev !== sourceStats.dev
+      || finalSourceStats.ino !== sourceStats.ino
+      || finalSourceStats.size !== sourceStats.size
+      || finalSourceStats.mtimeNs !== sourceStats.mtimeNs
+    ) {
+      throw new Error(`untracked source changed while copying: ${path}`);
+    }
+    await destinationHandle.sync();
+  } finally {
+    if (destinationHandle) {
+      try {
+        record.expected = await destinationHandle.stat({ bigint: true });
+      } finally {
+        await destinationHandle.close().catch(() => {});
+      }
+    }
+    await sourceHandle?.close().catch(() => {});
   }
 }
 
-export async function integrateWriterWorktree({ runId, itemId, spawn, stateRegistry = registry() }) {
+async function copyUntracked(source, target, paths, created) {
+  for (const path of paths) await copyRegularFile(source, target, path, created);
+}
+
+function sameCreatedFile(stats, record) {
+  return record.expected
+    && stats.isFile()
+    && stats.dev === record.dev
+    && stats.ino === record.ino
+    && stats.size === record.expected.size
+    && stats.mtimeNs === record.expected.mtimeNs;
+}
+
+async function rollbackMutation(target, patch, created, spawn) {
+  const residuals = [];
+  for (const record of [...created].reverse()) {
+    try {
+      await safeAncestor(target, record.path, { create: false });
+      const stats = await lstat(record.destination, { bigint: true });
+      if (!sameCreatedFile(stats, record)) {
+        residuals.push(`${record.path} changed after creation`);
+        continue;
+      }
+      await rm(record.destination);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') residuals.push(`${record.path}: ${error.message}`);
+    }
+  }
+  if (patch) {
+    try {
+      await applyPatch(target, patch, spawn, true, true);
+      await applyPatch(target, patch, spawn, false, true);
+    } catch (error) {
+      residuals.push(`tracked patch: ${error.message}`);
+    }
+  }
+  return residuals;
+}
+
+async function faultAfterRollback(runState, error, target, patch, created, spawn) {
+  const residuals = await rollbackMutation(target, patch, created, spawn);
+  runState.faulted = true;
+  try {
+    await writeMetadata(runState);
+  } catch (metadataError) {
+    residuals.push(`fault metadata: ${metadataError.message}`);
+  }
+  const rollback = residuals.length ? `rollback residual: ${residuals.join('; ')}` : 'rollback completed';
+  throw new Error(`${error instanceof Error ? error.message : String(error)}; ${rollback}`, { cause: error });
+}
+
+async function integrateWriterWorktreeUnlocked({ runId, itemId, spawn, stateRegistry }) {
   const runState = stateFor(runId, stateRegistry);
   if (runState.finalized || runState.faulted) throw new Error('worktree run cannot integrate more items');
   const item = runState.items.get(itemId);
@@ -290,31 +543,27 @@ export async function integrateWriterWorktree({ runId, itemId, spawn, stateRegis
   const overlap = changes.all.filter((path) => runState.integratedPaths.has(path));
   if (overlap.length) throw new Error(`writer changes overlap previously integrated paths: ${overlap.join(', ')}`);
   const patch = await trackedPatch(item.path, spawn);
+  const created = [];
+  let patchApplied = false;
   try {
     await applyPatch(runState.integrationPath, patch, spawn, true);
-    for (const path of changes.untracked) {
-      try {
-        await lstat(join(runState.integrationPath, path));
-        throw new Error(`untracked path already exists in integration workspace: ${path}`);
-      } catch (error) {
-        if (error?.code !== 'ENOENT') throw error;
-      }
-    }
     await applyPatch(runState.integrationPath, patch, spawn, false);
-    await copyUntracked(item.path, runState.integrationPath, changes.untracked);
-  } catch (error) {
-    runState.faulted = true;
+    patchApplied = Boolean(patch);
+    await copyUntracked(item.path, runState.integrationPath, changes.untracked, created);
+    item.integrated = true;
+    item.changedPaths = changes.all;
+    for (const path of changes.all) runState.integratedPaths.add(path);
     await writeMetadata(runState);
-    throw error;
+  } catch (error) {
+    item.integrated = false;
+    item.changedPaths = [];
+    for (const path of changes.all) runState.integratedPaths.delete(path);
+    await faultAfterRollback(runState, error, runState.integrationPath, patchApplied ? patch : '', created, spawn);
   }
-  item.integrated = true;
-  item.changedPaths = changes.all;
-  for (const path of changes.all) runState.integratedPaths.add(path);
-  await writeMetadata(runState);
   return { itemId, changedPaths: [...changes.all], integrationPath: runState.integrationPath };
 }
 
-export async function finalizeWorktreeRun({ runId, spawn, stateRegistry = registry() }) {
+async function finalizeWorktreeRunUnlocked({ runId, spawn, stateRegistry }) {
   const runState = stateFor(runId, stateRegistry);
   if (runState.finalized || runState.faulted) throw new Error('worktree run cannot be finalized');
   const incomplete = [...runState.items.values()].filter((item) => !item.integrated).map((item) => item.itemId);
@@ -337,28 +586,22 @@ export async function finalizeWorktreeRun({ runId, spawn, stateRegistry = regist
   const patch = await trackedPatch(runState.integrationPath, spawn);
   await rejectSymlinks(runState.integrationPath, changes.all);
   await applyPatch(runState.repository, patch, spawn, true);
-  for (const path of changes.untracked) {
-    try {
-      await lstat(join(runState.repository, path));
-      throw new Error(`untracked path already exists in main workspace: ${path}`);
-    } catch (error) {
-      if (error?.code !== 'ENOENT') throw error;
-    }
-  }
+  const created = [];
+  let patchApplied = false;
   try {
     await applyPatch(runState.repository, patch, spawn, false);
-    await copyUntracked(runState.integrationPath, runState.repository, changes.untracked);
-  } catch (error) {
-    runState.faulted = true;
+    patchApplied = Boolean(patch);
+    await copyUntracked(runState.integrationPath, runState.repository, changes.untracked, created);
+    runState.finalized = true;
     await writeMetadata(runState);
-    throw error;
+  } catch (error) {
+    runState.finalized = false;
+    await faultAfterRollback(runState, error, runState.repository, patchApplied ? patch : '', created, spawn);
   }
-  runState.finalized = true;
-  await writeMetadata(runState);
   return { runId, changedPaths: changes.all, finalized: true };
 }
 
-export async function recoverWorktreeRun({
+async function recoverWorktreeRunUnlocked({
   directory,
   runId,
   worktreeRoot,
@@ -369,7 +612,7 @@ export async function recoverWorktreeRun({
   if (stateRegistry.has(runId)) throw new Error(`worktree run already exists: ${runId}`);
   const { repository, baseSha } = await repositoryIdentity(directory, spawn);
   const runRoot = await runRootFor(worktreeRoot, repository, runId);
-  const metadata = await readWorktreeMetadata(join(runRoot, '.naru-run.json'));
+  const metadata = await readWorktreeMetadata(join(runRoot, METADATA_FILE));
   const integrationPath = join(runRoot, 'integration');
   if (metadata?.schemaVersion !== 1 || metadata.runId !== runId) throw new Error('invalid worktree run metadata');
   if (metadata.repository !== repository || metadata.baseSha !== baseSha) {
@@ -385,6 +628,7 @@ export async function recoverWorktreeRun({
   if (typeof metadata.finalized !== 'boolean' || typeof metadata.faulted !== 'boolean') {
     throw new Error('worktree run metadata has invalid state flags');
   }
+  if (metadata.finalized && metadata.faulted) throw new Error('worktree run metadata has inconsistent state flags');
   if (await realpath(integrationPath) !== integrationPath) throw new Error('integration worktree path is not canonical');
 
   const items = new Map();
@@ -396,13 +640,22 @@ export async function recoverWorktreeRun({
     if (persisted.path !== path || await realpath(path) !== path) {
       throw new Error(`writer worktree metadata has an unsafe path: ${persisted.itemId}`);
     }
-    if (!Array.isArray(persisted.ownedWriteScope) || persisted.ownedWriteScope.length === 0) {
+    if (
+      !Array.isArray(persisted.ownedWriteScope)
+      || persisted.ownedWriteScope.length === 0
+      || persisted.ownedWriteScope.length > 128
+    ) {
       throw new Error(`writer worktree metadata has invalid ownership: ${persisted.itemId}`);
     }
     if (!persisted.ownedWriteScope.every((scope) => isSafeScope(scope))) {
       throw new Error(`writer worktree metadata has unsafe ownership: ${persisted.itemId}`);
     }
-    if (typeof persisted.integrated !== 'boolean' || !Array.isArray(persisted.changedPaths)) {
+    if (
+      typeof persisted.integrated !== 'boolean'
+      || !Array.isArray(persisted.changedPaths)
+      || persisted.changedPaths.length > 65536
+      || new Set(persisted.changedPaths).size !== persisted.changedPaths.length
+    ) {
       throw new Error(`writer worktree metadata has invalid state: ${persisted.itemId}`);
     }
     const item = {
@@ -417,7 +670,17 @@ export async function recoverWorktreeRun({
       throw new Error(`unintegrated writer has persisted changed paths: ${item.itemId}`);
     }
     items.set(item.itemId, item);
-    if (item.integrated) for (const changedPath of item.changedPaths) integratedPaths.add(changedPath);
+    if (item.integrated) {
+      for (const changedPath of item.changedPaths) {
+        if (integratedPaths.has(changedPath)) {
+          throw new Error(`integrated writer paths overlap in metadata: ${changedPath}`);
+        }
+        integratedPaths.add(changedPath);
+      }
+    }
+  }
+  if (metadata.finalized && [...items.values()].some((item) => !item.integrated)) {
+    throw new Error('finalized worktree run metadata contains unintegrated writers');
   }
 
   const runState = {
@@ -436,7 +699,7 @@ export async function recoverWorktreeRun({
   return publicRun(runState);
 }
 
-export async function cleanupWorktreeRun({ runId, spawn, stateRegistry = registry() }) {
+async function cleanupWorktreeRunUnlocked({ runId, spawn, stateRegistry }) {
   const runState = stateFor(runId, stateRegistry);
   if (!runState.finalized) throw new Error('refusing to remove worktrees before successful finalization');
   for (const item of runState.items.values()) {
@@ -465,5 +728,45 @@ export function resetWorktreeRegistryForTests(stateRegistry = registry()) {
 }
 
 export async function readWorktreeMetadata(path) {
-  return JSON.parse(await readFile(path, 'utf8'));
+  let metadata;
+  try {
+    metadata = JSON.parse(await readFile(path, 'utf8'));
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error('invalid worktree run metadata: malformed JSON', { cause: error });
+    throw error;
+  }
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    throw new Error('invalid worktree run metadata');
+  }
+  return metadata;
+}
+
+export async function createWorktreeRun(options) {
+  const stateRegistry = options.stateRegistry ?? registry();
+  return withRunLock(options.runId, () => createWorktreeRunUnlocked({ ...options, stateRegistry }));
+}
+
+export async function createWriterWorktree(options) {
+  const stateRegistry = options.stateRegistry ?? registry();
+  return withRunLock(options.runId, () => createWriterWorktreeUnlocked({ ...options, stateRegistry }));
+}
+
+export async function integrateWriterWorktree(options) {
+  const stateRegistry = options.stateRegistry ?? registry();
+  return withRunLock(options.runId, () => integrateWriterWorktreeUnlocked({ ...options, stateRegistry }));
+}
+
+export async function finalizeWorktreeRun(options) {
+  const stateRegistry = options.stateRegistry ?? registry();
+  return withRunLock(options.runId, () => finalizeWorktreeRunUnlocked({ ...options, stateRegistry }));
+}
+
+export async function recoverWorktreeRun(options) {
+  const stateRegistry = options.stateRegistry ?? registry();
+  return withRunLock(options.runId, () => recoverWorktreeRunUnlocked({ ...options, stateRegistry }));
+}
+
+export async function cleanupWorktreeRun(options) {
+  const stateRegistry = options.stateRegistry ?? registry();
+  return withRunLock(options.runId, () => cleanupWorktreeRunUnlocked({ ...options, stateRegistry }));
 }

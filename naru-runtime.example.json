@@ -8,9 +8,9 @@
   },
   "scheduler": {
     "mode": "off",
-    "maxConcurrentWriters": 2,
+    "maxConcurrentWriters": 6,
     "maxConcurrentReadOnly": 4,
-    "maxTotalChildren": 6,
+    "maxTotalChildren": 10,
     "maxJudgePasses": 3,
     "maxWorkItems": 256,
     "maxManifestBytes": 262144,

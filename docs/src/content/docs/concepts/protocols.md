@@ -3,7 +3,7 @@ title: Scheduling protocols
 description: Prompt-level rolling cohorts by default, with optional local Protocol 3 admission gates.
 ---
 
-Naru uses Protocol 2 when the scheduler is off. Protocol 3 is selected only in `observe` or `enforce` mode. Both preserve scoped ownership and native Task dispatch. Shared mode uses the two-writer ceiling; clean isolated mode binds one writer to each Naru-owned worktree and may use the configured six-to-ten writer budget.
+Naru uses Protocol 2 when the scheduler is off. Protocol 3 is selected only in `observe` or `enforce` mode. Both preserve scoped ownership and native Task dispatch. Scheduler budget fields are hard ceilings: a run may request lower budgets but cannot request higher ones. Shared mode uses at most two writers, four read-only children, and six total children; clean isolated mode binds one writer to each Naru-owned worktree and may use the configured six-to-ten writer budget, up to four read-only children and fourteen total children.
 
 ## Protocol 2: rolling cohorts
 
@@ -20,7 +20,7 @@ flowchart LR
   C --> H[Writer-free candidate]
 ```
 
-**Walkthrough:** Protocol 2 is a prompt-level compatibility workflow. Each writer receives immutable run and cohort baselines, an item dispatch observation, and active-peer claims. At most two independent writers share the workspace. A contained terminal report is provisional; uncertainty, overlap, or drift freezes refills and drains active work.
+**Walkthrough:** Protocol 2 is a prompt-level compatibility workflow. Each writer receives immutable run and cohort baselines, an item dispatch observation, and active-peer claims. At most two independent writers share the workspace. A contained terminal report is provisional; uncertainty, overlap, or drift freezes refills and drains active work. Isolated worktree mutations remain root-orchestrator-only, use hook-suppressed tool-owned Git operations, serialize per run, update metadata atomically, and attempt rollback on integration failure; they are path-contained recovery tooling, not a general sandbox or protection from unrelated external workspace mutation.
 
 ## Protocol 3: admissions and quality gates
 

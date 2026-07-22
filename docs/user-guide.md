@@ -11,20 +11,23 @@ This guide covers installation, day-to-day use, model routing, the optional dash
 
 - [OpenCode](https://opencode.ai) >= 1.18.4, with an effective top-level `subagent_depth` of at least `2`.
 - [GitHub CLI](https://cli.github.com/) (`gh`), authenticated, for pull-request review workflows.
-- Node.js or Bun for every installation that uses `--with-dashboard` or `--configure-subagent-depth`; the installer needs one of them to merge configuration safely.
+- Node.js or Bun for the safe install preview, ownership manifest, configuration merges, and local doctor.
 - `codebase-memory` and LSP support are optional. Read-only workflows fall back to literal file search when they are unavailable or stale.
 
 ## Install and update
 
-Clone Naru and run its transactional installer:
+Clone Naru, preview the safe default install, and apply the same option set:
 
 ```sh
 git clone https://github.com/sean35mm/naru-opencode.git
 cd naru-opencode
-./install.sh
+./install.sh --configure-subagent-depth
+./install.sh --apply --configure-subagent-depth
 ```
 
-The installer preflights and stages the complete release before replacing loader paths. Replaced content is retained in a timestamped `.naru-backups/` directory and restored if installation fails. It copies the scheduler tool/plugin, runtime libraries, `naru-runtime.example.json`, and local evaluation script/fixture, but does not create an active runtime configuration or enable scheduling.
+Without `--apply`, the installer prints a bounded preview and does not create or remove anything under the target. An apply preflights and stages changed assets before replacement, writes a deterministic schema-v1 `.naru-install.json` ownership manifest, and skips matching assets. Replaced content is retained in a timestamped `.naru-backups/` directory and restored if that transaction fails. It copies the scheduler tool/plugin, doctor, runtime libraries, `naru-runtime.example.json`, and local evaluation script/fixture, but does not create an active runtime configuration or enable scheduling.
+
+The manifest records exact managed roots, source fingerprints, selected options, source version, location mode, and copy/symlink method. If a current managed path is unowned or differs from its last recorded installed fingerprint, apply preserves it and stops. Only a reviewed apply with `--replace-conflicts` replaces and backs up those conflicts. Unrelated files and previously owned paths omitted by a later option set remain untouched.
 
 OpenCode 1.18.4 defaults `subagent_depth` to `1` when the top-level key is omitted. Naru requires an effective value of at least `2`, which is the maximum depth used by the current Naru topology. Exactly `2` is recommended: larger values do not enable additional Naru behavior and can allow unrelated agents to recurse further, increasing cost. Explicit integer values above `2` remain valid and are preserved.
 
@@ -33,13 +36,13 @@ OpenCode 1.18.4 defaults `subagent_depth` to `1` when the top-level key is omitt
 With no location flag, the target is `~/.config/opencode`. Markdown command and agent files are symlinked individually by default. Tools, helper modules, Naru Delegate, and the optional dashboard are always copied so executable plugin code cannot change merely because the source checkout changes.
 
 ```sh
-./install.sh
+./install.sh --apply --configure-subagent-depth
 ```
 
 Use `--copy` if command and agent Markdown should also be copied:
 
 ```sh
-./install.sh --copy
+./install.sh --apply --copy --configure-subagent-depth
 ```
 
 ### Project install
@@ -47,7 +50,7 @@ Use `--copy` if command and agent Markdown should also be copied:
 Run the installer from the project that should receive `.opencode` configuration. The Naru checkout can live elsewhere:
 
 ```sh
-/path/to/naru-opencode/install.sh --project
+/path/to/naru-opencode/install.sh --apply --project --configure-subagent-depth
 ```
 
 `--project` targets `$PWD/.opencode`, where `$PWD` is the directory from which the installer is invoked.
@@ -59,7 +62,7 @@ When depth configuration is explicitly requested, project mode reads or creates 
 Use an absolute or relative custom directory:
 
 ```sh
-./install.sh --dir /path/to/opencode-config
+./install.sh --apply --dir /path/to/opencode-config --configure-subagent-depth
 ```
 
 The source checkout and target cannot contain one another. The target and its managed loader directories must not be symlinks.
@@ -68,14 +71,40 @@ The source checkout and target cannot contain one another. The target and its ma
 
 ### Optional flags
 
+- `--preview` — explicitly select the default read-only preview behavior.
+- `--apply` — apply the reviewed option set transactionally.
+- `--replace-conflicts` — replace or remove only the conflicts shown by that exact install, rollback, or uninstall preview. Without it, install/rollback conflicts block mutation and uninstall preserves modified paths.
 - `--copy` — copy command and agent Markdown instead of symlinking it.
 - `--project` — install into `$PWD/.opencode`.
 - `--dir PATH` — install into a custom OpenCode config directory.
 - `--with-dashboard` — copy and register the optional TUI dashboard.
 - `--configure-subagent-depth` — transactionally create or merge the applicable `opencode.jsonc` or `opencode.json`, setting an absent, `0`, or `1` top-level `subagent_depth` to `2` while preserving values of `2` or more.
 - `--migrate-orchestrator` — back up legacy `agents/orchestrator.md`, `agents/minion`, and `plugins/orchestrator-dashboard.js` paths. Without this flag, those paths are untouched.
+- `--rollback BACKUP_ID` — preview restoration of one explicit receipt-backed transaction. It never guesses the latest backup.
+- `--uninstall` — preview removal of manifest-owned assets. Modified assets are preserved by default.
+- `--confirm-rollback TOKEN` / `--confirm-uninstall TOKEN` — with `--apply`, require the exact SHA-256 token from the current matching lifecycle preview.
 
-Without `--configure-subagent-depth`, the installer never changes either OpenCode config file; existing bytes remain untouched. With the flag, it refuses ambiguous `opencode.json` plus `opencode.jsonc`, symlinks, non-regular or oversized files, malformed JSON/JSONC, duplicate `subagent_depth` keys, non-object roots, and invalid depth values before replacing anything. Comments, CRLF, trailing commas, indentation, unrelated keys, and final-newline state are preserved. The prepared config participates in the normal staging, timestamped backup, and rollback transaction. The explicit flag is the authorization; there is no runtime prompt.
+Without `--configure-subagent-depth`, the installer never changes either OpenCode config file; existing bytes remain untouched. With the flag, it refuses ambiguous `opencode.json` plus `opencode.jsonc`, symlinks, non-regular or oversized files, malformed JSON/JSONC, duplicate `subagent_depth` keys, non-object roots, and invalid depth values before replacing anything. Comments, CRLF, trailing commas, indentation, unrelated keys, and final-newline state are preserved. The prepared config participates in preview, staging, timestamped backup when changed, and automatic failed-transaction rollback. The explicit flag plus `--apply` is the authorization; there is no runtime prompt.
+
+Backups are created lazily when install replaces a path. Successful replacement backups also contain a bounded `.naru-transaction.json` receipt; no-op and ordinary first installs still create no backup. Rollback and uninstall move their removed or replaced paths into a new timestamped receipt-backed backup. All backups are retained indefinitely, never consumed by rollback, and never pruned automatically.
+
+Preview a successful transaction by its exact backup directory name, then copy the printed token into an unchanged apply:
+
+```sh
+./install.sh --rollback 20260722123456-12345
+./install.sh --rollback 20260722123456-12345 --apply \
+  --confirm-rollback 'sha256:copy-the-current-preview-token'
+
+./install.sh --uninstall
+./install.sh --uninstall --apply \
+  --confirm-uninstall 'sha256:copy-the-current-preview-token'
+```
+
+Add the same `--project` or `--dir PATH` selector used for installation. Install-only flags such as `--copy`, `--with-dashboard`, and `--configure-subagent-depth` are rejected in lifecycle mode; the manifest supplies the location and method metadata. The confirmation token is bound to the canonical target, action, current manifest, selected receipt, conflict choice, and complete classified plan, so a stale or differently scoped token fails before mutation.
+
+Rollback refuses a modified current path by default and remains atomic; preview again with `--replace-conflicts` only after reviewing the bounded conflict list. Uninstall removes only healthy owned paths by default. If a managed path was changed after installation, uninstall preserves it and keeps `.naru-install.json`, yielding a partial uninstall. A new `--replace-conflicts` preview explicitly selects those modified owned paths for removal and emits a different token. Missing paths are treated as already absent. Unrelated files, parent directories, and `.naru-backups/` are not removed.
+
+Receipts and fingerprints are size- and count-bounded, require contained normalized paths, and reject symlinked or malformed metadata. Backup directories created before receipt support are not inferred and cannot be selected for rollback. User-triggered rollback covers only exact manifest-owned assets plus `.naru-install.json`; it does not reverse OpenCode depth configuration, TUI registration, or legacy migrations. Symlink rollback restores the recorded link itself but cannot rewind content in the source checkout. Automatic rollback still covers an active failed transaction, including a failed lifecycle apply.
 
 ### Updating
 
@@ -83,10 +112,28 @@ After pulling a new Naru version, rerun the installer with the same location and
 
 ```sh
 git pull
-./install.sh --with-dashboard
+./install.sh --with-dashboard --configure-subagent-depth
+./install.sh --apply --with-dashboard --configure-subagent-depth
 ```
 
-Even a symlink install must be rerun because tools, helpers, runtime/evaluation assets, and plugins are copy-pinned. A `--copy` install is entirely stale until reinstalled. Restart OpenCode after reinstalling or changing `subagent_depth` so active sessions reload routing, permissions, and delegation limits.
+The first post-pull command previews source-generation and managed changes; the second applies them. Even a symlink install must be rerun because tools, helpers, runtime/evaluation assets, and plugins are copy-pinned. A matching reinstall is a no-op and creates no backup. Restart OpenCode after an applied update or depth change so active sessions reload routing, permissions, and delegation limits.
+
+### Read-only local doctor
+
+Run the copy-pinned doctor directly; it does not invoke `opencode debug config`, load Naru plugins, inspect credentials, call a provider, mutate files, or upload data:
+
+```sh
+# Global install
+node ~/.config/opencode/tools/naru-doctor.js
+
+# Project install
+node .opencode/tools/naru-doctor.js --project-root .
+
+# Custom install
+node /path/to/opencode-config/tools/naru-doctor.js --dir /path/to/opencode-config
+```
+
+The bounded, path-sanitized report covers candidate global/project/custom scopes, manifest version and install mode, missing or modified assets, stale copy-pinned and mixed-generation state, effective global/project `subagent_depth` and its winner, local OpenCode/runtime compatibility, routing/runtime configuration state, and dashboard installation/registration. Arbitrary custom loading cannot be proven, so custom scope is explicitly reported as unconfirmed. Use `--source PATH` to compare a copy-only install with a checkout and `--json` for the equivalent structured report. A warning report exits nonzero for automation without changing state.
 
 ## Commands and primary agent
 
@@ -123,7 +170,7 @@ opencode --agent naru-orchestrator
 
 Do not use `naru-orchestrator` as a Task target from custom agents. See the [agent integration guide](https://sean35mm.github.io/naru-opencode/agent-integration/) for supported read-only delegation.
 
-For review-only language, the orchestrator runs one fresh canonical `naru-review` dry run and never posts. An explicit current request such as “post the review” authorizes one posting attempt without another confirmation. The target must be in that message or uniquely identified by prior user-authored PR context; ambiguous or missing targets stop for clarification. Every post request runs a fresh review, rejects stale, pasted, incomplete, or degraded results, and passes the validated result unchanged to the dedicated tool once. Mixed implementation or Git delivery completes first; the fresh review and post are the final phase.
+For review-only language, the orchestrator runs one fresh canonical `naru-review` dry run and never posts. An explicit current request such as “post the review” authorizes one posting attempt without another confirmation. The target must be in that message or uniquely identified by prior user-authored PR context; ambiguous or missing targets stop for clarification. Every post request runs a fresh review, rejects stale, pasted, incomplete, or degraded results, and passes the validated result unchanged to the dedicated tool once. Before POST, the tool rechecks a fresh final snapshot, head, feedback digest, inline locations, and existing marker. Same-target calls are serialized within one process with a bounded in-process PR table; cross-process deduplication remains impossible without durable external coordination, and ambiguous outcomes are never retried. Mixed implementation or Git delivery completes first; the fresh review and post are the final phase.
 
 Both posting paths normalize every accepted user-authored URL, `OWNER/REPO#NUMBER`, split, case-variant, or bare-number reference to one `(owner, repo, positive pull number)` tuple. A bare number is resolved once from the current workspace repository. Equivalent duplicates identify one target; unresolved references or multiple distinct targets stop, including the same number in different repositories or different numbers in one repository. The wrapper uses the route selected by its generated Naru Delegate policy, while the orchestrator review edge remains canonical-only.
 
@@ -133,7 +180,7 @@ Core workflows select specialists by relevant surface rather than launching ever
 
 ### Full Ultra implementation scheduling
 
-Full Ultra is the orchestrator's implementation scheduling protocol. A clean Git repository may use one detached Naru-owned worktree per writer, with six concurrent writers by default and up to ten when configured. Dirty or unsupported repositories automatically use at most two independent writers in the current workspace. It can also run up to four useful read-only preparation tasks. It proactively fills capacity with distinct useful work but does not invent irrelevant fan-out, claim complete runtime enforcement, or promise a measured speedup.
+Full Ultra is Naru's isolated parallel implementation protocol. A clean Git repository may use one detached Naru-owned worktree per writer, with six concurrent writers by default and up to ten when configured. Dirty or unsupported repositories automatically use at most two independent writers in the current workspace. It can also run up to four useful read-only preparation tasks. Scheduler budget fields are hard ceilings: a run may request lower budgets but cannot request higher ones. Shared mode remains capped at two writers, four read-only children, and six total children; isolated mode may use the configured implementation writer count, up to four read-only children, and the corresponding total up to fourteen. It proactively fills capacity with distinct useful work but does not invent irrelevant fan-out, claim complete runtime enforcement, or promise a measured speedup.
 
 Every run, cohort, and item carries its baseline. Active-peer claims identify isolated writer scope. A writer's terminal result is provisional until its evidence remains valid; conflicting evidence, a changed baseline, scope uncertainty, or ownership uncertainty freezes and drains the cohort rather than starting more work.
 
@@ -165,18 +212,18 @@ The `scheduler.mode` values are:
 - `observe` — use Protocol 3 state and admission markers, but record typed incidents and fail open when runtime admission validation cannot be satisfied. Protocol 2 can be observed only when `legacyProtocol2` is explicitly `observe`.
 - `enforce` — fail closed on incompatible capability, missing or invalid admission, replay, stale revision, claim conflict, expiry, or budget exhaustion. This mode requires `legacyProtocol2: "reject"` and refuses Protocol 2.
 
-Protocol 3 uses strict manifests, compare-and-swap revisions, one-time admission and transition tokens, and correlated `evidence`, `terminal`, `candidate`, `shard`, `judgment`, and `gate` artifacts. Verification, judgment, and completion gates require the declared exact candidate and bounded coverage. Shared defaults are two writers, four read-only children, six total children, and three judge passes. Isolated writer budgets may raise writers to ten and total active children to fourteen. Other limits remain 256 work items, a 256 KiB manifest, 64 KiB artifacts, and five-minute token lifetimes. `maxArtifactBytes` may be configured only from 1 KiB through 256 KiB; runtime configuration itself is limited to 64 KiB and must be regular non-symlinked JSON.
+Protocol 3 uses strict manifests, compare-and-swap revisions, one-time admission and transition tokens, and correlated `evidence`, `terminal`, `candidate`, `shard`, `judgment`, and `gate` artifacts. Verification, judgment, and completion gates require the declared exact candidate and bounded coverage. Scheduler budget fields are hard ceilings: a run may request lower budgets but cannot request higher ones. Shared mode requests at most two writers, four read-only children, and six total children. Isolated mode may request the configured implementation writer count (six by default, ten maximum), up to four read-only children, and the corresponding total up to fourteen. Other limits remain 256 work items, a 256 KiB manifest, 64 KiB artifacts, and five-minute token lifetimes. `maxArtifactBytes` may be configured only from 1 KiB through 256 KiB; runtime configuration itself is limited to 64 KiB and must be regular non-symlinked JSON.
 
 The scheduler plugin intercepts the native Task `tool.execute.before` path; it does not replace Task or grant children scheduler authority. Only `naru-orchestrator` has the exact scheduler tool permission. Runtime state and its digest-linked journal are process-local, memory-only, non-durable, and bounded. Journal metadata redacts prompt, diff, path, directory, secret, token, authorization, command/output/content, and model-like fields; it retains at most 64 roots, 256 entries per root, and 4 KiB metadata per entry.
 
-These gates are not a sandbox. The scheduler does not create sessions, inspect Git, capture or compare baselines, prove report truth, infer model routes, authoritatively observe background completion, coordinate another process, or impose provider/global hard caps. The separate root-only worktree tool performs narrowly validated Git isolation and integration and persists local run metadata for recovery after a process restart. Prompt-level authorization, routing, Weaver, scope containment, workspace ownership, freshness, and final-state checks remain required.
+These gates are not a sandbox. The scheduler does not create sessions, inspect Git, capture or compare baselines, prove report truth, infer model routes, authoritatively observe background completion, coordinate another process, or impose provider/global hard caps. The separate root-orchestrator-only worktree tool performs narrowly validated Git isolation and integration: tool-owned Git operations suppress hooks, mutations are serialized per run, paths are contained, recovery metadata is written atomically, and failures attempt rollback. It can recover a run after a process restart, but it does not protect against unrelated external workspace mutation. Prompt-level authorization, routing, Weaver, scope containment, workspace ownership, freshness, and final-state checks remain required.
 
 ## Activity dashboard
 
 Install the dashboard explicitly:
 
 ```sh
-./install.sh --with-dashboard
+./install.sh --apply --with-dashboard
 ```
 
 The installer copies `plugins/naru-minions-dashboard.tsx` and its state helper, then safely updates the top-level `plugin` array in the active `tui.jsonc` or `tui.json`. It prefers an existing `tui.jsonc`, preserves unrelated content, rejects malformed or symlinked TUI configuration, removes exact legacy dashboard registrations from lower-precedence TUI files, and migrates the old dashboard JavaScript file.
@@ -306,12 +353,12 @@ mkdir -p ~/.config/opencode/commands ~/.config/opencode/agents
 mkdir -p ~/.config/opencode/tools ~/.config/opencode/plugins
 cp commands/naru-*.md ~/.config/opencode/commands/
 cp agents/naru-*.md ~/.config/opencode/agents/
-cp tools/naru-git-read.js tools/naru-github-read.js tools/naru-github-post-review.js ~/.config/opencode/tools/
+cp tools/naru-git-read.js tools/naru-github-read.js tools/naru-github-post-review.js tools/naru-doctor.js tools/package.json ~/.config/opencode/tools/
 cp -R tools/naru-lib ~/.config/opencode/tools/
 cp plugins/naru-delegate.js ~/.config/opencode/plugins/
 ```
 
-For a project install, use `.opencode` in place of `~/.config/opencode`.
+For a project install, use `.opencode` in place of `~/.config/opencode`. Manual installs do not have a generated ownership manifest, so the doctor reports their lifecycle state as untracked; use the installer for preview, fingerprints, no-op updates, and conflict preservation.
 
 To include the optional runtime and local evaluation assets in a manual install, also copy the scheduler tool/plugin, the complete current `tools/naru-lib` directory, the runtime example, evaluation script, and sanitized fixture while preserving their relative paths. Copy the example to `naru-runtime.json` only when intentionally enabling a mode.
 
@@ -362,21 +409,25 @@ The installed evaluator deterministically scores supplied, sanitized captured su
 node scripts/naru-live-eval.mjs --manifest tests/fixtures/live-evals.json --dry-run
 ```
 
-From an installed config root, use the copy-pinned sample at `scripts/live-evals.example.json` instead. The manifest is limited to 256 KiB and 128 cases; each captured journal is limited to 128 entries and must omit prompts, code, diffs, raw source/patch fields, credentials, and tokens. The output is a local dry-run score plan. Despite the script name, there is no live provider/session execution, capture API, upload, or cloud evaluation path; invoking it without `--dry-run` is rejected.
+From an installed config root, use the copy-pinned sample at `scripts/live-evals.example.json` instead. The manifest is limited to 256 KiB and 128 cases; each captured journal is limited to 128 entries and must omit prompts, code, diffs, raw source/patch fields, credentials, and tokens. The output is a local dry-run score plan, and dry-run remains free. An explicit `--live` invocation can start the configured OpenCode/provider path and observe descendant sessions; it requires `--confirm-provider-cost`, uses bounded request, overall, and cleanup deadlines, emits sanitized diagnostics and bounded captures, and may incur provider cost. It does not upload artifacts or claim benchmark results that were not run.
 
 ## What Naru does not manage
 
-Naru does not modify your personal `AGENTS.md`, optional `naru-models.json` or `naru-runtime.json`, unrelated OpenCode tools or plugins, or external agent-state systems. By default it also never modifies `opencode.json` or `opencode.jsonc`; only the explicit `--configure-subagent-depth` flag authorizes the bounded transactional merge described above.
+Naru does not modify your personal `AGENTS.md`, optional `naru-models.json` or `naru-runtime.json`, unrelated OpenCode tools or plugins, or external agent-state systems. Preview is the installer default. An applied install modifies only its reviewed managed set and explicitly selected config merges; only `--configure-subagent-depth` plus `--apply` authorizes the bounded OpenCode config merge described above.
 
 ## Troubleshooting
 
 ### Commands or agents are stale
 
-Rerun `install.sh` after every update. Plugins, tools, and helpers are copy-pinned even when Markdown is symlinked. Restart OpenCode after reinstalling.
+Run the installed doctor with `--source /path/to/naru-opencode` to identify stale copy-pinned or mixed-generation state. Preview `install.sh` with the original options, review any conflicts, then repeat with `--apply`. Plugins, tools, and helpers are copy-pinned even when Markdown is symlinked. Restart OpenCode after an applied update.
 
 ### A Naru child fails at the subagent depth limit
 
-Confirm OpenCode is 1.18.4 or newer and inspect the effective top-level `subagent_depth` after global and project precedence is applied. It must be an integer of at least `2`; exactly `2` is recommended. Run the installer for the loaded scope with `--configure-subagent-depth`, or update the applicable config manually, then restart OpenCode. In project mode the file is `opencode.jsonc` or `opencode.json` in the project root, not `.opencode`. For `--dir`, first verify OpenCode actually loads that path. If both JSON and JSONC files exist, remove the ambiguity deliberately before rerunning the installer.
+Run the doctor to inspect the effective top-level `subagent_depth` and winning global/project source without loading plugins. Confirm OpenCode is 1.18.4 or newer. Depth must be an integer of at least `2`; exactly `2` is recommended. Preview the installer for the loaded scope with `--configure-subagent-depth`, apply the reviewed result, then restart OpenCode. In project mode the file is `opencode.jsonc` or `opencode.json` in the project root, not `.opencode`. For `--dir`, first verify OpenCode actually loads that path. If both JSON and JSONC files exist, remove the ambiguity deliberately before rerunning the installer.
+
+### Installer reports a managed conflict
+
+`conflict-unowned` means a selected path exists but is absent from the prior ownership manifest. `conflict-modified` means a manifest-owned path changed after installation. Both are preserved and block apply. Inspect the relative paths and keep or move any user work; only add `--replace-conflicts` to the same reviewed `--apply` when replacing and backing up those exact paths is intended.
 
 ### Duplicate or unexpected agent IDs appear
 

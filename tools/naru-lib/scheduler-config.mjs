@@ -144,6 +144,23 @@ export function parseSchedulerConfig(value) {
   return config;
 }
 
+export function resolveSchedulerBudgets(value, config) {
+  const ceilings = validateSchedulerBudgets({
+    maxConcurrentWriters: config.maxConcurrentWriters,
+    maxConcurrentReadOnly: config.maxConcurrentReadOnly,
+    maxTotalChildren: config.maxTotalChildren,
+    maxJudgePasses: config.maxJudgePasses,
+  });
+  if (value === undefined) return ceilings;
+  const budgets = validateSchedulerBudgets(value);
+  for (const field of Object.keys(ceilings)) {
+    if (budgets[field] > ceilings[field]) {
+      throw new Error(`budgets.${field} cannot exceed configured ceiling ${ceilings[field]}`);
+    }
+  }
+  return budgets;
+}
+
 export function parseRuntimeConfig(value) {
   if (value === undefined || value === null) {
     return {

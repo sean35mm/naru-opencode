@@ -22,6 +22,7 @@ flowchart LR
 
 - No cross-process coordination, durable scheduler state, authoritative background completion, or provider/global hard caps.
 - The scheduler provides no session creation, automatic Task directory binding, Git inspection, baseline capture, or report-truth proof. The separate root-only worktree tool validates only its narrow isolation and integration lifecycle and persists local metadata for restart recovery.
+- Isolated worktree mutations are root-orchestrator-only, hook-suppressed for tool-owned Git operations, serialized per run, metadata-atomic, and path-contained. They can recover local run state and attempt rollback after integration failures, but they are not a general sandbox and do not protect against unrelated external workspace mutation.
 - No sandboxing of repository code, package scripts, shell commands, tools, providers, or installed plugins.
 - No automatic authorization for edits, dependency changes, Git mutation, migrations, database writes, posting, or deployment.
 - No guarantee that dashboard telemetry exists outside the same process or represents a global system state.
@@ -30,3 +31,5 @@ flowchart LR
 If delegation fails at the depth limit, confirm OpenCode is 1.18.4+, check global/project precedence for an effective integer of at least `2`, and restart OpenCode after updating it. Exactly `2` is recommended because larger values do not help Naru and can broaden unrelated recursion and cost. Project mode config lives in the project root, not `.opencode`; a custom `--dir` matters only if OpenCode loads it.
 
 Use Protocol 3 as a bounded runtime check in addition to—not instead of—the [Protocol 2 workflow](https://sean35mm.github.io/naru-opencode/concepts/protocols/), review, and human approval boundaries.
+
+Review posting also has a narrow boundary: it rechecks a fresh final snapshot, head, feedback digest, inline locations, and existing marker before POST, and serializes same-target calls only within one process using a bounded in-process table. Cross-process deduplication needs durable external coordination; ambiguous POST outcomes remain no-retry.

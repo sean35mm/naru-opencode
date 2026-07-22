@@ -10,6 +10,7 @@ import {
   probeSchedulerRuntime,
   reserveAdmission,
   resetSchedulerRuntimeForTests,
+  SCHEDULER_RUNTIME_LIMITS,
 } from '../tools/naru-lib/scheduler-token.mjs';
 import {
   appendSchedulerJournal,
@@ -326,6 +327,47 @@ test('admission reservation rejects an unknown root atomically', () => {
   assert.equal(registry.admissions.has(token.tokenId), false);
 });
 
+test('scheduler tool rejects a non-orchestrator agent before creating runtime state', async () => {
+  const rejected = await invoke({
+    operation: 'create_run',
+    runId: 'wrong-agent-run',
+    schedulingProtocol: 3,
+  }, 'observe', { agent: 'naru-minion-implement' });
+  const registry = getSchedulerRuntimeRegistry();
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.error, /context\.agent must be naru-orchestrator/);
+  assert.equal(registry.roots.size, 0);
+  assert.equal(registry.journals.size, 0);
+});
+
+test('later operations require the creating root, agent, and directory binding', async () => {
+  assert.equal((await invoke({
+    operation: 'create_run',
+    runId: 'bound-run',
+    schedulingProtocol: 3,
+  })).ok, true);
+  const registry = getSchedulerRuntimeRegistry();
+  const journalSize = registry.journals.get(ROOT).entries.length;
+
+  const wrongDirectory = await invoke(
+    { operation: 'snapshot', runId: 'bound-run' },
+    'observe',
+    { directory: '/workspace/other-project' },
+  );
+  assert.equal(wrongDirectory.ok, false);
+  assert.match(wrongDirectory.error, /directory mismatch/);
+
+  const wrongAgent = await invoke(
+    { operation: 'snapshot', runId: 'bound-run' },
+    'observe',
+    { agent: 'naru-minion-verify' },
+  );
+  assert.equal(wrongAgent.ok, false);
+  assert.match(wrongAgent.error, /context\.agent must be naru-orchestrator/);
+  assert.equal(registry.roots.get(ROOT).runId, 'bound-run');
+  assert.equal(registry.journals.get(ROOT).entries.length, journalSize);
+});
+
 test('create_run inherits parsed scheduler budgets when the request omits budgets', async () => {
   const schedulerConfig = {
     mode: 'observe',
@@ -352,6 +394,119 @@ test('create_run inherits parsed scheduler budgets when the request omits budget
     maxTotalChildren: 1,
     maxJudgePasses: 2,
   });
+});
+
+test('create_run accepts lower budgets and rejects every configured-ceiling escalation', async () => {
+  const schedulerConfig = {
+    mode: 'observe',
+    legacyProtocol2: 'observe',
+    maxConcurrentWriters: 2,
+    maxConcurrentReadOnly: 2,
+    maxTotalChildren: 4,
+    maxJudgePasses: 2,
+  };
+  const lower = await invoke({
+    operation: 'create_run',
+    runId: 'lower-budget-run',
+    schedulingProtocol: 3,
+    budgets: {
+      maxConcurrentWriters: 1,
+      maxConcurrentReadOnly: 1,
+      maxTotalChildren: 2,
+      maxJudgePasses: 1,
+    },
+  }, 'observe', { schedulerConfig, sessionID: 'lower-budget-root' });
+  assert.equal(lower.ok, true);
+  assert.deepEqual(getSchedulerRuntimeRegistry().roots.get('lower-budget-root').budgets, {
+    maxConcurrentWriters: 1,
+    maxConcurrentReadOnly: 1,
+    maxTotalChildren: 2,
+    maxJudgePasses: 1,
+  });
+
+  const configured = {
+    maxConcurrentWriters: 2,
+    maxConcurrentReadOnly: 2,
+    maxTotalChildren: 4,
+    maxJudgePasses: 2,
+  };
+  for (const [index, field] of Object.keys(configured).entries()) {
+    const budgets = { ...configured, [field]: configured[field] + 1 };
+    if (field === 'maxConcurrentWriters' || field === 'maxConcurrentReadOnly') {
+      budgets.maxTotalChildren = Math.max(budgets.maxTotalChildren, budgets[field]);
+    }
+    const escalated = await invoke({
+      operation: 'create_run',
+      runId: `escalated-run-${index}`,
+      schedulingProtocol: 3,
+      budgets,
+    }, 'observe', { schedulerConfig, sessionID: `escalated-root-${index}` });
+    assert.equal(escalated.ok, false);
+    assert.match(escalated.error, new RegExp(`budgets\\.${field} cannot exceed configured ceiling`));
+    assert.equal(getSchedulerRuntimeRegistry().roots.has(`escalated-root-${index}`), false);
+  }
+});
+
+test('closed roots are pruned before capacity and open roots are retained', async () => {
+  const closedRoot = 'capacity-root-0';
+  assert.equal((await invoke({
+    operation: 'create_run',
+    runId: 'capacity-run-0',
+    schedulingProtocol: 3,
+  }, 'observe', { sessionID: closedRoot })).ok, true);
+  assert.equal((await invoke({
+    operation: 'declare_items',
+    runId: 'capacity-run-0',
+    expectedRevision: 0,
+    workItems: [workItem()],
+  }, 'observe', { sessionID: closedRoot })).ok, true);
+  assert.equal((await invoke({
+    operation: 'close',
+    runId: 'capacity-run-0',
+    expectedRevision: 0,
+  }, 'observe', { sessionID: closedRoot })).ok, true);
+
+  for (let index = 1; index < SCHEDULER_RUNTIME_LIMITS.maxRoots; index += 1) {
+    assert.equal((await invoke({
+      operation: 'create_run',
+      runId: `capacity-run-${index}`,
+      schedulingProtocol: 3,
+    }, 'observe', { sessionID: `capacity-root-${index}` })).ok, true);
+  }
+  assert.equal((await invoke({
+    operation: 'create_run',
+    runId: 'capacity-run-64',
+    schedulingProtocol: 3,
+  }, 'observe', { sessionID: 'capacity-root-64' })).ok, true);
+
+  const registry = getSchedulerRuntimeRegistry();
+  assert.equal(registry.roots.size, SCHEDULER_RUNTIME_LIMITS.maxRoots);
+  assert.equal(registry.roots.has(closedRoot), false);
+  for (let index = 1; index <= SCHEDULER_RUNTIME_LIMITS.maxRoots; index += 1) {
+    assert.equal(registry.roots.has(`capacity-root-${index}`), true);
+  }
+});
+
+test('create_run refuses atomically when every root is open', async () => {
+  for (let index = 0; index < SCHEDULER_RUNTIME_LIMITS.maxRoots; index += 1) {
+    assert.equal((await invoke({
+      operation: 'create_run',
+      runId: `open-run-${index}`,
+      schedulingProtocol: 3,
+    }, 'observe', { sessionID: `open-root-${index}` })).ok, true);
+  }
+  const registry = getSchedulerRuntimeRegistry();
+  const existingRuns = [...registry.roots.values()].map((run) => run.runId).sort();
+  const refused = await invoke({
+    operation: 'create_run',
+    runId: 'open-run-overflow',
+    schedulingProtocol: 3,
+  }, 'observe', { sessionID: 'open-root-overflow' });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /scheduler root capacity exhausted; no safe historical state can be pruned/);
+  assert.equal(registry.roots.size, SCHEDULER_RUNTIME_LIMITS.maxRoots);
+  assert.equal(registry.roots.has('open-root-overflow'), false);
+  assert.deepEqual([...registry.roots.values()].map((run) => run.runId).sort(), existingRuns);
 });
 
 test('append_artifact rejects expired transition tokens without changing scheduler state', async () => {

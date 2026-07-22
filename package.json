@@ -1,0 +1,10 @@
+{
+  "name": "naru-opencode",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:bun": "bun tests/bun-transport.test.mjs",
+    "test:installer": "sh tests/install.test.sh"
+  },
+  "type": "module"
+}

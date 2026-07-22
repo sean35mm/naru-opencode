@@ -40,17 +40,23 @@ function fakeSpawn(handlers) {
   return { spawn, calls };
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 function has(argv, value) {
   return argv.some((item) => item.includes(value));
 }
 
-function pullMeta(head = HEAD, base = BASE, changedFiles = 1) {
+function pullMeta(head = HEAD, base = BASE, changedFiles = 1, number = 42) {
   return {
-    number: 42,
+    number,
     title: 'Safe change',
     body: 'Description',
     state: 'open',
-    html_url: 'https://github.com/owner/repo/pull/42',
+    html_url: `https://github.com/owner/repo/pull/${number}`,
     user: { login: 'author' },
     head: { sha: head, ref: 'feature' },
     base: { sha: base, ref: 'main' },
@@ -71,6 +77,7 @@ function changedFile(filename = 'src/index.js', patch = '@@ -1,1 +1,1 @@\n-old\n
 }
 
 function snapshotHandlers({
+  number = 42,
   meta = pullMeta(),
   files = [changedFile()],
   reviews = [],
@@ -81,17 +88,18 @@ function snapshotHandlers({
   return [
     { match: (argv) => argv[3] === 'GET' && argv[4] === 'user', reply: response({ login: 'viewer' }) },
     {
-      match: (argv) => argv[3] === 'GET' && has(argv, 'pulls/42') && !has(argv, '/files') && !has(argv, '/reviews') && !has(argv, '/comments'),
+      match: (argv) => argv[3] === 'GET' && has(argv, `pulls/${number}`) && !has(argv, '/files') && !has(argv, '/reviews') && !has(argv, '/comments'),
       reply: metadataReply ?? response(meta),
     },
-    { match: (argv) => argv[3] === 'GET' && has(argv, 'pulls/42/files'), reply: response([files]) },
-    { match: (argv) => argv[3] === 'GET' && has(argv, 'pulls/42/reviews'), reply: response([reviews]) },
-    { match: (argv) => argv[3] === 'GET' && has(argv, 'pulls/42/comments'), reply: response([reviewComments]) },
-    { match: (argv) => argv[3] === 'GET' && has(argv, 'issues/42/comments'), reply: response([issueComments]) },
+    { match: (argv) => argv[3] === 'GET' && has(argv, `pulls/${number}/files`), reply: response([files]) },
+    { match: (argv) => argv[3] === 'GET' && has(argv, `pulls/${number}/reviews`), reply: response([reviews]) },
+    { match: (argv) => argv[3] === 'GET' && has(argv, `pulls/${number}/comments`), reply: response([reviewComments]) },
+    { match: (argv) => argv[3] === 'GET' && has(argv, `issues/${number}/comments`), reply: response([issueComments]) },
   ];
 }
 
 function reviewInput({
+  number = 42,
   head = HEAD,
   base = BASE,
   files = [changedFile()],
@@ -104,13 +112,13 @@ function reviewInput({
   comments,
   body = '## Verdict\n\nNo actionable findings.',
 } = {}) {
-  const meta = pullMeta(head, base, files.length);
+  const meta = pullMeta(head, base, files.length, number);
   return {
     reviewResult: {
       schemaVersion: 1,
-      target: { owner: 'owner', repo: 'repo', pullNumber: 42 },
+      target: { owner: 'owner', repo: 'repo', pullNumber: number },
       snapshot: {
-        id: snapshotId('owner', 'repo', 42, head, base, files),
+        id: snapshotId('owner', 'repo', number, head, base, files),
         baseSha: base,
         headSha: head,
         feedbackDigest: digestSnapshot(meta, files, reviews, reviewComments, issueComments),
@@ -320,36 +328,182 @@ test('post tool preserves body, hard-codes COMMENT and commit_id, and posts once
   assert.equal(calls.filter((call) => call.argv.includes('POST')).length, 1);
 });
 
+test('concurrent identical review posts serialize and use the process-local success record', async () => {
+  const head = 'e'.repeat(40);
+  const postStarted = deferred();
+  const releasePost = deferred();
+  let postCalls = 0;
+  const { spawn } = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(head) }),
+    {
+      match: (argv) => argv.includes('POST'),
+      reply: async () => {
+        postCalls += 1;
+        postStarted.resolve();
+        await releasePost.promise;
+        return response({ id: 201, html_url: 'review-201' });
+      },
+    },
+  ]);
+  const input = reviewInput({ head });
+  const first = postReview(input, { agent: 'naru-review-post' }, { spawn });
+  const second = postReview(input, { agent: 'naru-review-post' }, { spawn });
+
+  await postStarted.promise;
+  assert.equal(postCalls, 1);
+  releasePost.resolve();
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  assert.equal(firstResult.data.posted, true);
+  assert.equal(secondResult.data.posted, false);
+  assert.equal(secondResult.data.reason, 'alreadyPosted');
+  assert.equal(secondResult.data.reviewId, 201);
+  assert.equal(postCalls, 1);
+});
+
+test('concurrent differing review posts on one head refuse the second digest', async () => {
+  const head = 'f'.repeat(40);
+  const postStarted = deferred();
+  const releasePost = deferred();
+  let postCalls = 0;
+  const { spawn } = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(head) }),
+    {
+      match: (argv) => argv.includes('POST'),
+      reply: async () => {
+        postCalls += 1;
+        postStarted.resolve();
+        await releasePost.promise;
+        return response({ id: 202 });
+      },
+    },
+  ]);
+  const first = postReview(reviewInput({ head, body: 'first result' }), { agent: 'naru-review-post' }, { spawn });
+  const second = postReview(reviewInput({ head, body: 'different result' }), { agent: 'naru-review-post' }, { spawn });
+
+  await postStarted.promise;
+  releasePost.resolve();
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  assert.equal(firstResult.ok, true, firstResult.error);
+  assert.equal(secondResult.ok, false);
+  assert.match(secondResult.error, /different Naru review/);
+  assert.equal(postCalls, 1);
+});
+
+test('review post lock releases after a snapshot failure', async () => {
+  const head = '0'.repeat(40);
+  let metadataCalls = 0;
+  let postCalls = 0;
+  const { spawn } = fakeSpawn([
+    ...snapshotHandlers({
+      meta: pullMeta(head),
+      metadataReply: () => {
+        metadataCalls += 1;
+        return metadataCalls === 1 ? response('temporary failure', false) : response(pullMeta(head));
+      },
+    }),
+    { match: (argv) => argv.includes('POST'), reply: () => {
+      postCalls += 1;
+      return response({ id: 203 });
+    } },
+  ]);
+  const input = reviewInput({ head });
+  const [failed, succeeded] = await Promise.all([
+    postReview(input, { agent: 'naru-review-post' }, { spawn }),
+    postReview(input, { agent: 'naru-review-post' }, { spawn }),
+  ]);
+  assert.equal(failed.ok, false);
+  assert.match(failed.error, /snapshot failed/);
+  assert.equal(succeeded.ok, true, succeeded.error);
+  assert.equal(postCalls, 1);
+});
+
+test('different pull request keys can post concurrently', { timeout: 1000 }, async () => {
+  const head = 'd'.repeat(40);
+  const bothPostsStarted = deferred();
+  let started = 0;
+  const { spawn } = fakeSpawn([
+    ...snapshotHandlers({ number: 50, meta: pullMeta(head, BASE, 1, 50) }),
+    ...snapshotHandlers({ number: 51, meta: pullMeta(head, BASE, 1, 51) }),
+    {
+      match: (argv) => argv.includes('POST'),
+      reply: async (argv) => {
+        started += 1;
+        if (started === 2) bothPostsStarted.resolve();
+        await bothPostsStarted.promise;
+        return response({ id: has(argv, '/50/') ? 250 : 251 });
+      },
+    },
+  ]);
+  const results = await Promise.all([
+    postReview(reviewInput({ number: 50, head }), { agent: 'naru-review-post' }, { spawn }),
+    postReview(reviewInput({ number: 51, head }), { agent: 'naru-review-post' }, { spawn }),
+  ]);
+  assert.equal(started, 2);
+  assert.ok(results.every((result) => result.ok), results.map((result) => result.error).join('\n'));
+});
+
 test('orchestrator caller posts through the same fixed one-POST path', async () => {
+  const head = '1'.repeat(40);
   const { spawn, calls } = fakeSpawn([
-    ...snapshotHandlers(),
+    ...snapshotHandlers({ meta: pullMeta(head) }),
     { match: (argv) => argv.includes('POST'), reply: response({ id: 100 }) },
   ]);
-  const result = await postReview(reviewInput(), { agent: 'naru-orchestrator' }, { spawn });
+  const result = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(calls.filter((call) => call.argv.includes('POST')).length, 1);
 });
 
 test('post tool rejects head and feedback drift', async () => {
+  const expectedHead = '6'.repeat(40);
   const otherHead = 'd'.repeat(40);
   const headDrift = fakeSpawn(snapshotHandlers({ meta: pullMeta(otherHead) }));
-  assert.match((await postReview(reviewInput(), { agent: 'naru-review-post' }, { spawn: headDrift.spawn })).error, /head SHA mismatch/);
+  assert.match((await postReview(reviewInput({ head: expectedHead }), { agent: 'naru-review-post' }, { spawn: headDrift.spawn })).error, /head SHA mismatch/);
 
+  const feedbackHead = '7'.repeat(40);
   const comments = [{ id: 10, body: 'new feedback', updated_at: 'now' }];
-  const feedbackDrift = fakeSpawn(snapshotHandlers({ issueComments: comments }));
-  assert.match((await postReview(reviewInput(), { agent: 'naru-review-post' }, { spawn: feedbackDrift.spawn })).error, /feedback digest mismatch/);
+  const feedbackDrift = fakeSpawn(snapshotHandlers({ meta: pullMeta(feedbackHead), issueComments: comments }));
+  assert.match((await postReview(reviewInput({ head: feedbackHead }), { agent: 'naru-review-post' }, { spawn: feedbackDrift.spawn })).error, /feedback digest mismatch/);
+});
+
+test('post tool refuses final head and feedback drift without POST', async () => {
+  const head = '8'.repeat(40);
+  const movedHead = '9'.repeat(40);
+  let metadataCalls = 0;
+  const headDrift = fakeSpawn(snapshotHandlers({
+    metadataReply: () => response(pullMeta((metadataCalls++ < 2) ? head : movedHead)),
+  }));
+  const headResult = await postReview(reviewInput({ head }), { agent: 'naru-review-post' }, { spawn: headDrift.spawn });
+  assert.equal(headResult.ok, false);
+  assert.match(headResult.error, /final snapshot head SHA mismatch/);
+  assert.equal(headDrift.calls.filter((call) => call.argv.includes('POST')).length, 0);
+
+  const feedbackHead = 'c'.repeat(40);
+  let issueCalls = 0;
+  const finalFeedback = [{ id: 20, body: 'late feedback', updated_at: 'later' }];
+  const feedbackDrift = fakeSpawn([
+    {
+      match: (argv) => argv[3] === 'GET' && has(argv, 'issues/42/comments'),
+      reply: () => response([issueCalls++ === 0 ? [] : finalFeedback]),
+    },
+    ...snapshotHandlers({ meta: pullMeta(feedbackHead) }),
+  ]);
+  const feedbackResult = await postReview(reviewInput({ head: feedbackHead }), { agent: 'naru-review-post' }, { spawn: feedbackDrift.spawn });
+  assert.equal(feedbackResult.ok, false);
+  assert.match(feedbackResult.error, /final snapshot feedback digest mismatch/);
+  assert.equal(feedbackDrift.calls.filter((call) => call.argv.includes('POST')).length, 0);
 });
 
 test('post tool drops invalid inline locations', async () => {
+  const head = '2'.repeat(40);
   let posted;
   const { spawn } = fakeSpawn([
-    ...snapshotHandlers(),
+    ...snapshotHandlers({ meta: pullMeta(head) }),
     { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
       posted = JSON.parse(options.input);
       return response({ id: 5 });
     } },
   ]);
-  const input = reviewInput({ comments: [
+  const input = reviewInput({ head, comments: [
     { path: 'src/index.js', line: 1, side: 'RIGHT', body: 'valid', priority: 'P1', severity: 'High', confidence: 'High' },
     { path: 'src/index.js', line: 999, side: 'RIGHT', body: 'invalid', priority: 'P2', severity: 'Medium', confidence: 'Medium' },
   ] });
@@ -360,50 +514,52 @@ test('post tool drops invalid inline locations', async () => {
 });
 
 test('post tool detects an identical existing marker and refuses a conflicting marker', async () => {
+  const head = '3'.repeat(40);
   let firstPost;
   const first = fakeSpawn([
-    ...snapshotHandlers(),
+    ...snapshotHandlers({ meta: pullMeta(head) }),
     { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
       firstPost = JSON.parse(options.input);
       return response({ id: 8 });
     } },
   ]);
-  const firstResult = await postReview(reviewInput(), { agent: 'naru-review-post' }, { spawn: first.spawn });
+  const firstResult = await postReview(reviewInput({ head }), { agent: 'naru-review-post' }, { spawn: first.spawn });
   assert.equal(firstResult.ok, true, firstResult.error);
   const marker = firstPost.body.match(/^<!-- naru-review:[^>]+-->/)[0];
-  const existingReview = [{ id: 8, commit_id: HEAD, body: marker, html_url: 'review-url', user: { login: 'viewer' } }];
-  const same = fakeSpawn(snapshotHandlers({ reviews: existingReview }));
-  const sameInput = reviewInput({ reviews: existingReview });
+  const existingReview = [{ id: 8, commit_id: head, body: marker, html_url: 'review-url', user: { login: 'viewer' } }];
+  const same = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), reviews: existingReview }));
+  const sameInput = reviewInput({ head, reviews: existingReview });
   const sameResult = await postReview(sameInput, { agent: 'naru-review-post' }, { spawn: same.spawn });
   assert.equal(sameResult.ok, true);
   assert.equal(sameResult.data.reason, 'alreadyPosted');
 
   const conflictReview = [{
     id: 9,
-    commit_id: HEAD,
+    commit_id: head,
     body: marker.replace(/digest=[0-9a-f]{64}/, `digest=${'f'.repeat(64)}`),
     user: { login: 'viewer' },
   }];
-  const conflict = fakeSpawn(snapshotHandlers({ reviews: conflictReview }));
-  const conflictInput = reviewInput({ reviews: conflictReview });
+  const conflict = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), reviews: conflictReview }));
+  const conflictInput = reviewInput({ head, reviews: conflictReview });
   const conflictResult = await postReview(conflictInput, { agent: 'naru-review-post' }, { spawn: conflict.spawn });
   assert.equal(conflictResult.ok, false);
   assert.match(conflictResult.error, /different Naru review/);
 });
 
 test('post tool ignores marker-shaped text from another GitHub actor', async () => {
+  const head = '4'.repeat(40);
   const foreignReview = [{
     id: 10,
-    commit_id: HEAD,
-    body: `<!-- naru-review:owner/repo#42 head=${HEAD} digest=${'f'.repeat(64)} -->`,
+    commit_id: head,
+    body: `<!-- naru-review:owner/repo#42 head=${head} digest=${'f'.repeat(64)} -->`,
     user: { login: 'someone-else' },
   }];
   const { spawn } = fakeSpawn([
-    ...snapshotHandlers({ reviews: foreignReview }),
+    ...snapshotHandlers({ meta: pullMeta(head), reviews: foreignReview }),
     { match: (argv) => argv.includes('POST'), reply: response({ id: 11 }) },
   ]);
   const result = await postReview(
-    reviewInput({ reviews: foreignReview }),
+    reviewInput({ head, reviews: foreignReview }),
     { agent: 'naru-review-post' },
     { spawn },
   );
@@ -412,15 +568,16 @@ test('post tool ignores marker-shaped text from another GitHub actor', async () 
 });
 
 test('ambiguous POST is never retried', async () => {
+  const head = '5'.repeat(40);
   let postCalls = 0;
   const { spawn } = fakeSpawn([
-    ...snapshotHandlers(),
+    ...snapshotHandlers({ meta: pullMeta(head) }),
     { match: (argv) => argv.includes('POST'), reply: () => {
       postCalls += 1;
       return response('gateway timeout', false);
     } },
   ]);
-  const result = await postReview(reviewInput(), { agent: 'naru-review-post' }, { spawn });
+  const result = await postReview(reviewInput({ head }), { agent: 'naru-review-post' }, { spawn });
   assert.equal(result.ok, false);
   assert.match(result.error, /outcomeUnknown/);
   assert.equal(postCalls, 1);

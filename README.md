@@ -22,7 +22,7 @@ Built by [Naru Labs](https://github.com/sean35mm).
 /naru-minions       optional dashboard detail view
 ```
 
-`/naru-review` is always a dry run. Posting is supported through the explicit `/naru-review-post` command or by selecting `naru-orchestrator` and explicitly asking it to post. Both paths acquire a fresh complete review and can attempt at most one comment-only post for the validated snapshot.
+`/naru-review` is always a dry run. Posting is supported through the explicit `/naru-review-post` command or by selecting `naru-orchestrator` and explicitly asking it to post. Both paths acquire a fresh complete review, then recheck the final snapshot, head, feedback, inline locations, and existing marker before at most one comment-only post. Same-target posts are serialized only within one process and within a bounded number of tracked PRs; cross-process deduplication requires durable external coordination that Naru does not provide. An ambiguous POST outcome is never retried.
 
 The wrapper follows its generated Naru Delegate route policy; the orchestrator's review edge remains canonical-only. URL, `OWNER/REPO#NUMBER`, split, and owner/repo case variants are equivalent only when they normalize to one `(owner, repo, positive pull number)` tuple. Equivalent duplicates are deduplicated; unresolved references or multiple distinct targets are rejected, including different repositories with the same number and different pull numbers.
 
@@ -30,17 +30,20 @@ For implementation work or natural-language review posting, select `naru-orchest
 
 ## Quick install
 
-Requirements: OpenCode >= 1.18.4; authenticated `gh` for review workflows; and Node.js or Bun for every `--with-dashboard` or `--configure-subagent-depth` installation.
+Requirements: OpenCode >= 1.18.4; Node.js or Bun for the safe preview, ownership manifest, and local doctor; and authenticated `gh` for review workflows.
 
 ```sh
 git clone https://github.com/sean35mm/naru-opencode.git
 cd naru-opencode
-./install.sh
+./install.sh --configure-subagent-depth
+./install.sh --apply --configure-subagent-depth
 ```
 
-The default install targets `~/.config/opencode` and symlinks Markdown files. Use `./install.sh --project` from the target project for `.opencode`, `--dir PATH` for another config directory, `--copy` to copy Markdown, and `--with-dashboard` to install the optional TUI activity view. Rerun the installer with the same flags after updating Naru because tools, runtime helpers, evaluation assets, and plugins are always copy-pinned, then restart OpenCode so active sessions reload routing and permissions. The installer copies `naru-runtime.example.json` but does not create an active `naru-runtime.json`.
+The first command is a read-only preview; `--apply` is the explicit mutation boundary. The default target is `~/.config/opencode`, with Markdown symlinked and executable assets copy-pinned. Use `--project` from the target project for `.opencode`, `--dir PATH` for another config directory, `--copy` to copy Markdown, and `--with-dashboard` for the optional activity view. Installs write a versioned `.naru-install.json` ownership manifest, skip unchanged assets, and create timestamped backups only for replaced paths. Successful replacement backups include a bounded transaction receipt. `--rollback BACKUP_ID` and `--uninstall` preview by default; either mutation requires `--apply` plus the exact confirmation token printed by its current preview. Unowned or post-install modified managed paths are preserved unless the reviewed operation explicitly includes `--replace-conflicts`.
 
-Naru requires the effective top-level OpenCode setting `"subagent_depth": 2` or higher. OpenCode's omitted/default value is `1`; Naru's current delegation topology reaches depth `2`. Exactly `2` is recommended because higher values do not help Naru and can broaden unrelated agent recursion and cost, although explicit values above `2` are accepted and never lowered. The default installer does not modify `opencode.json` or `opencode.jsonc`. Opt in explicitly with `./install.sh --configure-subagent-depth`; it transactionally creates or safely merges the applicable global config. With `--project`, it merges `opencode.jsonc` or `opencode.json` in the project root, not `.opencode`; project configuration takes precedence over the global value. With `--dir PATH`, ensure that path is actually loaded by OpenCode. Restart OpenCode after changing the setting.
+Naru requires the effective top-level OpenCode setting `"subagent_depth": 2` or higher. OpenCode's omitted/default value is `1`; Naru's current delegation topology reaches depth `2`. Exactly `2` is recommended because higher values do not help Naru and can broaden unrelated agent recursion and cost, although explicit values above `2` are accepted and never lowered. The installer changes `opencode.json` or `opencode.jsonc` only when `--configure-subagent-depth` is present. With `--project`, it merges the project-root config, not a file under `.opencode`; project configuration takes precedence over the global value. With `--dir PATH`, ensure that path is actually loaded by OpenCode.
+
+After an applied change, restart OpenCode. Then take exactly one safe first action: `/naru-plan <your objective>`. For a provider-free, read-only state report, run `node ~/.config/opencode/tools/naru-doctor.js`; project and custom forms are documented in the installation guide.
 
 See the [User guide](docs/user-guide.md) for installation, migration, configuration, dashboard, and troubleshooting details.
 
@@ -59,7 +62,7 @@ Naru Delegate is deterministic: it configures canonical Terra roles plus hidden 
 
 ## Activity dashboard
 
-`./install.sh --with-dashboard` adds a **Naru Activity** sidebar section and `/naru-minions` detail view to OpenCode's full terminal TUI. The sidebar conservatively bounds its status, counts, task, routing, and overflow lines for narrow standard sidebars. When a local scheduler run exists, the same surfaces also show its mode, work counts, process-local budget pressure, quality-gate state, oldest blocked item, and evidenced actors. Telemetry is absent when no local run exists and is not a global or provider cap. It is unavailable under `opencode --mini`. Reinstall with the same dashboard flag and restart OpenCode after routing or dashboard updates because dashboard code is copy-pinned.
+`./install.sh --apply --with-dashboard` adds a **Naru Activity** sidebar section and `/naru-minions` detail view to OpenCode's full terminal TUI. The sidebar conservatively bounds its status, counts, task, routing, and overflow lines for narrow standard sidebars. When a local scheduler run exists, the same surfaces also show its mode, work counts, process-local budget pressure, quality-gate state, oldest blocked item, and evidenced actors. Telemetry is absent when no local run exists and is not a global or provider cap. It is unavailable under `opencode --mini`. Reinstall with the same dashboard flag and restart OpenCode after routing or dashboard updates because dashboard code is copy-pinned.
 
 ## Adaptive analysis and optional runtime gates
 
@@ -67,7 +70,7 @@ For implementation requests, `naru-orchestrator` defaults to proactive `auto` an
 
 Runtime scheduling is separately configured as `off`, `observe`, or `enforce` in `naru-runtime.json` beside the installed plugins. `off` keeps prompt-level Protocol 2. `observe` uses Protocol 3 but fails open after recording typed admission incidents. `enforce` fails closed on the same admission checks, rejects Protocol 2, and requires compatible synchronous runtime capability. Prefer current-workspace project configuration; changing global configuration requires explicit approval.
 
-Protocol 3 deterministically validates declared DAGs, claims, revisions, bounded admission tokens and artifacts, quiescence, verification coverage, judgment correlation, and exact-candidate completion gates. Shared mode defaults to two writers, four read-only children, six total children, and three judge passes. Isolated mode defaults to six writers and supports up to ten writers plus four read-only children. Scheduler state is process-local, non-durable, and not cross-process; it does not create sessions, prove reports, authoritatively observe background completion, or impose provider-wide concurrency caps. Isolated worktree runs persist local recovery metadata for restart-safe continuation and cleanup.
+Protocol 3 deterministically validates declared DAGs, claims, revisions, bounded admission tokens and artifacts, quiescence, verification coverage, judgment correlation, and exact-candidate completion gates. Scheduler budget fields are hard ceilings: a run may request lower budgets, never higher ones. Shared mode still requests at most two writers, four read-only children, and six total children. Isolated mode may request the configured implementation writer count (six by default, ten maximum), up to four read-only children, and the corresponding total up to fourteen. Scheduler state is process-local, non-durable, and not cross-process; it does not create sessions, prove reports, authoritatively observe background completion, or impose provider-wide concurrency caps. Isolated worktree mutations are root-orchestrator-only, use hook-suppressed tool-owned Git operations, serialize per run, write recovery metadata atomically, and contain paths to Naru-owned roots. They support recovery and attempt rollback on integration failure, but are not a general sandbox and do not protect against unrelated external workspace mutation.
 
 The installed evaluator supports deterministic dry-run scoring of sanitized captured summaries:
 
@@ -75,17 +78,17 @@ The installed evaluator supports deterministic dry-run scoring of sanitized capt
 node scripts/naru-live-eval.mjs --manifest tests/fixtures/live-evals.json --dry-run
 ```
 
-Live provider evaluation is explicit and cost-gated:
+Dry-run evaluation remains local and free. Explicit live provider evaluation is cost-gated and may invoke the configured OpenCode/provider path:
 
 ```sh
 node scripts/naru-live-eval.mjs --live --case plan-fanout --dir . --confirm-provider-cost
 ```
 
-Live output contains only redacted structural timing, routing, depth, and concurrency results; prompts, code, diffs, and outputs are omitted.
+Live execution uses bounded request and cleanup deadlines, sanitized diagnostics, and bounded captures. Its output contains only redacted structural timing, routing, depth, and concurrency results; prompts, code, diffs, and outputs are omitted. It may incur provider cost; no benchmark result is implied by this command.
 
 ## Full Ultra implementation scheduling
 
-Full Ultra is the orchestrator's implementation scheduling policy, not a speed guarantee. With runtime mode `off`, Protocol 2 uses prompt-level rolling cohorts. In `observe` or `enforce`, Protocol 3 adds bounded machine gates without replacing prompt-level safety checks. A clean repository may use one detached Naru-owned worktree per writer, with six writers by default and up to ten when configured; dirty or unsupported repositories automatically use at most two writers in the current workspace. Both modes may prepare up to four useful read-only tasks and never force irrelevant fan-out.
+Full Ultra is Naru's isolated parallel implementation scheduling policy, not a speed guarantee. With runtime mode `off`, Protocol 2 uses prompt-level rolling cohorts. In `observe` or `enforce`, Protocol 3 adds bounded machine gates without replacing prompt-level safety checks. A clean repository may use one detached Naru-owned worktree per writer, with six writers by default and up to ten when configured; dirty or unsupported repositories automatically use at most two writers in the current workspace. Both modes may prepare up to four useful read-only tasks and never force irrelevant fan-out. Scheduler ceilings still apply: each run can request lower values but cannot exceed its configured writer, read-only, or total-child ceiling.
 
 Each run, cohort, and item records a baseline and active-peer claims. Writer completion is provisional until its evidence remains valid; uncertainty freezes and drains the cohort. The final candidate is writer-free, receives up to two safe Verify shards with a complete shard manifest, then a Judge and an unchanged final checkpoint. Remediation, delivery, and review posting remain serialized. Todo states are phase-level presentation only: dashboard rows and Task descriptions show child activity, and a terminal writer is not final completion.
 
