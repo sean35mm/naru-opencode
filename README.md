@@ -116,6 +116,7 @@ Copy the exact permission fragment and full integration rules from the [Agent in
 - [User guide](docs/user-guide.md) — install, commands, agent selection, routing, dashboard, migration, troubleshooting, and safety.
 - [Agent integration guide](docs/agent-integration.md) — safe delegation from your own OpenCode agents.
 - [Development guide](docs/development.md) — architecture, invariants, extension rules, tests, and releases.
+- [OpenCode v2 readiness notes](docs/opencode-v2-readiness.md) — investigation snapshot and preparation plan for native background subagents.
 
 ## Repository layout
 
