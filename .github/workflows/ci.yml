@@ -52,6 +52,6 @@ jobs:
           bun_path="$(realpath "$(command -v bun)")"
           test -f "$bun_path"
           test -x "$bun_path"
-          node scripts/naru-compat-smoke.mjs --opencode "$opencode_path" --source "$GITHUB_WORKSPACE" --dashboard --bun "$bun_path"
+          node scripts/naru-compat-smoke.mjs --opencode "$opencode_path" --source "$GITHUB_WORKSPACE" --dashboard --bun "$bun_path" --json
       - name: Check whitespace
         run: git diff --check

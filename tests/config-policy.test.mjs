@@ -548,7 +548,7 @@ async function main() {
     'test -f "$opencode_path"',
     'test -x "$opencode_path"',
     'bun_path="$(realpath "$(command -v bun)")"',
-    'node scripts/naru-compat-smoke.mjs --opencode "$opencode_path" --source "$GITHUB_WORKSPACE" --dashboard --bun "$bun_path"',
+    'node scripts/naru-compat-smoke.mjs --opencode "$opencode_path" --source "$GITHUB_WORKSPACE" --dashboard --bun "$bun_path" --json',
   ]) {
     if (!ciWorkflow.includes(required)) fail(`CI compatibility smoke missing: ${required}`);
   }
