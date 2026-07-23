@@ -416,7 +416,7 @@ The installed evaluator deterministically scores supplied, sanitized captured su
 node scripts/naru-live-eval.mjs --manifest tests/fixtures/live-evals.json --dry-run
 ```
 
-From an installed config root, use the copy-pinned sample at `scripts/live-evals.example.json` instead. The manifest is limited to 256 KiB and 128 cases; each captured journal is limited to 128 entries and must omit prompts, code, diffs, raw source/patch fields, credentials, and tokens. The output is a local dry-run score plan, and dry-run remains free. An explicit `--live` invocation can start the configured OpenCode/provider path and observe descendant sessions; it requires `--confirm-provider-cost`, uses bounded request, overall, and cleanup deadlines, emits sanitized diagnostics and bounded captures, and may incur provider cost. It does not upload artifacts or claim benchmark results that were not run.
+From an installed config root, use the copy-pinned sample at `scripts/live-evals.example.json` instead. The manifest is limited to 256 KiB and 128 cases; each captured journal is limited to 128 entries and must omit prompts, code, diffs, raw source/patch fields, credentials, and tokens. The output is a local dry-run score plan, and dry-run remains free. The separately gated `--live` form requires exact reviewed confirmations for the contract, fixtures, provider, model, repetitions, timeouts, and spend. The current local adapter intentionally fails closed before starting OpenCode or making a provider request because runtime-byte binding and provider-enforced budgets are unavailable. Its output remains sanitized and bounded; it does not upload artifacts or claim a benchmark or live pilot ran.
 
 ## What Naru does not manage
 

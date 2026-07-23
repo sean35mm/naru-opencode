@@ -84,13 +84,30 @@ The installed evaluator supports deterministic dry-run scoring of sanitized capt
 node scripts/naru-live-eval.mjs --manifest tests/fixtures/live-evals.json --dry-run
 ```
 
-Dry-run evaluation remains local and free. Explicit live provider evaluation is cost-gated and may invoke the configured OpenCode/provider path:
+Dry-run evaluation remains local and free. Contract preparation is also provider-free and does not invoke OpenCode. Supply reviewed candidate and executable provenance values; the command writes the contract to stdout and prints that exact stdout's authorization SHA-256 to stderr:
 
 ```sh
-node scripts/naru-live-eval.mjs --live --case plan-fanout --dir . --confirm-provider-cost
+node scripts/naru-live-eval.mjs --prepare-contract \
+  --manifest tests/fixtures/live-evals.json --fixtures tests/fixtures/live-evals \
+  --candidate-id "$CANDIDATE_ID" --candidate-revision "$CANDIDATE_REVISION" \
+  --candidate-digest "$CANDIDATE_DIGEST" \
+  --opencode-version "$OPENCODE_VERSION" --opencode-digest "$OPENCODE_DIGEST" \
+  --provider none --provider-version not-invoked \
+  --model none --model-version not-invoked \
+  --network-mode none --network-target none > live-contract.json
 ```
 
-Live execution uses bounded request and cleanup deadlines, sanitized diagnostics, and bounded captures. Its output contains only redacted structural timing, routing, depth, and concurrency results; prompts, code, diffs, and outputs are omitted. It may incur provider cost; no benchmark result is implied by this command.
+The separately gated live form requires the reviewed contract file, its exact file SHA-256, the embedded contract digest, and the explicit provider-cost confirmation:
+
+```sh
+node scripts/naru-live-eval.mjs --live \
+  --manifest tests/fixtures/live-evals.json --fixtures tests/fixtures/live-evals \
+  --contract live-contract.json --contract-sha256 "$CONTRACT_FILE_SHA256" \
+  --confirm-contract-digest "$CONTRACT_DIGEST" --confirm-provider-cost \
+  --opencode-executable "$OPENCODE_EXECUTABLE"
+```
+
+No paid run starts without that exact checkpoint. The current local adapter fails closed before a run or provider request because it cannot bind the reviewed candidate and resolved executable bytes through execution or enforce provider budgets. Generic injected provider-free fakes remain available for tests, but unknown provenance cannot produce a passing report. Live output is sanitized and bounded; prompts, code, diffs, and outputs are omitted. These commands do not imply that a live pilot or benchmark ran.
 
 ## Full Ultra implementation scheduling
 

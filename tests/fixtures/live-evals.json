@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 2,
-  "suiteId": "phase2-deterministic-evaluation",
+  "schemaVersion": 3,
+  "suiteId": "phase2-reusable-evaluation",
   "redaction": {
     "prompts": "omitted",
     "code": "omitted",
@@ -8,245 +8,112 @@
     "outputs": "omitted",
     "credentials": "omitted"
   },
-  "contract": {
-    "stage": "deterministic",
-    "fixtureSet": { "id": "phase2-product-cases", "version": 1 },
-    "environment": {
-      "provider": "none",
-      "modelIds": [],
-      "opencodeVersion": "not-invoked",
-      "naruRevision": "f5cbb52e2f5f7036c88ddc8a5b22c1bcf201a232+status.e43d0c59af8a0168abb72eba9e0add3edc75f8a6ab9a3634c5b702f77bde3618+diff.97b97338253d367758c6cd18c63edfe7138f4167c5061e14c712794bf942c84f",
-      "operatingSystem": "provider-free",
-      "date": "2026-07-21",
-      "networkTarget": "none"
-    },
-    "execution": {
-      "repetitions": 1,
-      "perCaseTimeoutMs": 60000,
-      "runTimeoutMs": 420000,
-      "maximumSpendUsdMicros": 0,
-      "costStopCondition": "before-provider-call"
-    },
-    "baseline": {
-      "kind": "single-agent-opencode",
-      "sameInputs": true,
-      "sameEnvironment": true,
-      "sameTimeout": true,
-      "sameModel": true,
-      "sameRubric": true,
-      "topologyException": "single-agent-only"
-    },
-    "abortConditions": [
-      "authorization-failure",
-      "cleanup-failure",
-      "cost-limit",
-      "safety-invariant-failure",
-      "timeout"
-    ]
-  },
+  "fixtureSet": { "id": "phase2-product-cases", "version": 1 },
   "budgets": { "maxPeakConcurrency": 6, "maxElapsedMs": 60000, "maxChildCount": 10 },
   "cases": [
     {
       "id": "planning-off",
       "scenario": "planning",
-      "fixture": { "id": "planning", "version": 1, "kind": "synthetic", "permittedMutation": "none", "expectedOutcome": "complete-plan" },
+      "fixture": { "id": "planning", "version": 1, "kind": "synthetic", "path": "planning", "permittedMutation": "none", "expectedOutcome": "complete-plan" },
       "topology": { "workflow": "plan", "schedulerMode": "off", "workspaceMode": "shared", "fallbackMode": "none" },
       "budget": { "maxPeakConcurrency": 4, "maxElapsedMs": 60000, "maxChildCount": 4 },
       "rubric": {
-        "usefulDelegationRequired": true,
-        "justifiedSkipRequired": false,
+        "usefulDelegationRequired": true, "justifiedSkipRequired": false,
         "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false },
-        "remediationRequired": false,
-        "checks": { "minimumPassed": 3, "maximumFailed": 0, "candidateValid": true },
+        "remediationRequired": false, "checks": { "minimumPassed": 3, "maximumFailed": 0, "candidateValid": true },
         "decisions": ["scope", "steps", "verification"],
         "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
         "topologyRequired": true
-      },
-      "syntheticCapture": {
-        "mode": "auto", "elapsedMs": 400, "childCount": 4, "peakConcurrency": 4,
-        "usefulDelegation": true, "justifiedSkip": false,
-        "bestOf2": { "attempted": false, "disagreement": 0, "selected": false },
-        "remediation": { "required": false, "performed": false },
-        "incidents": { "race": 0, "schema": 0, "gate": 0, "authorization": 0 },
-        "checks": { "passed": 3, "failed": 0, "candidateInvalidated": false },
-        "journal": [{ "at": 1, "type": "delegation", "outcome": "accepted" }, { "at": 2, "type": "check", "outcome": "passed" }],
-        "decisions": [{ "id": "scope", "passed": true }, { "id": "steps", "passed": true }, { "id": "verification", "passed": true }],
-        "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
-        "topology": { "workflow": "plan", "schedulerMode": "off", "workspaceMode": "shared", "fallbackMode": "none" }
       }
     },
     {
       "id": "impact-off",
       "scenario": "impact-analysis",
-      "fixture": { "id": "impact", "version": 1, "kind": "synthetic", "permittedMutation": "none", "expectedOutcome": "complete-impact" },
+      "fixture": { "id": "impact", "version": 1, "kind": "synthetic", "path": "impact", "permittedMutation": "none", "expectedOutcome": "complete-impact" },
       "topology": { "workflow": "impact", "schedulerMode": "off", "workspaceMode": "shared", "fallbackMode": "none" },
       "budget": { "maxPeakConcurrency": 4, "maxElapsedMs": 60000, "maxChildCount": 4 },
       "rubric": {
-        "usefulDelegationRequired": true,
-        "justifiedSkipRequired": false,
+        "usefulDelegationRequired": true, "justifiedSkipRequired": false,
         "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false },
-        "remediationRequired": false,
-        "checks": { "minimumPassed": 3, "maximumFailed": 0, "candidateValid": true },
+        "remediationRequired": false, "checks": { "minimumPassed": 3, "maximumFailed": 0, "candidateValid": true },
         "decisions": ["dependencies", "risk", "verification"],
         "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
         "topologyRequired": true
-      },
-      "syntheticCapture": {
-        "mode": "auto", "elapsedMs": 420, "childCount": 4, "peakConcurrency": 4,
-        "usefulDelegation": true, "justifiedSkip": false,
-        "bestOf2": { "attempted": false, "disagreement": 0, "selected": false },
-        "remediation": { "required": false, "performed": false },
-        "incidents": { "race": 0, "schema": 0, "gate": 0, "authorization": 0 },
-        "checks": { "passed": 3, "failed": 0, "candidateInvalidated": false },
-        "journal": [{ "at": 1, "type": "delegation", "outcome": "accepted" }, { "at": 2, "type": "check", "outcome": "passed" }],
-        "decisions": [{ "id": "dependencies", "passed": true }, { "id": "risk", "passed": true }, { "id": "verification", "passed": true }],
-        "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
-        "topology": { "workflow": "impact", "schedulerMode": "off", "workspaceMode": "shared", "fallbackMode": "none" }
       }
     },
     {
       "id": "triage-off",
       "scenario": "bug-triage",
-      "fixture": { "id": "triage", "version": 1, "kind": "synthetic", "permittedMutation": "none", "expectedOutcome": "root-cause" },
+      "fixture": { "id": "triage", "version": 1, "kind": "synthetic", "path": "triage", "permittedMutation": "none", "expectedOutcome": "root-cause" },
       "topology": { "workflow": "triage", "schedulerMode": "off", "workspaceMode": "shared", "fallbackMode": "none" },
       "budget": { "maxPeakConcurrency": 4, "maxElapsedMs": 60000, "maxChildCount": 4 },
       "rubric": {
-        "usefulDelegationRequired": true,
-        "justifiedSkipRequired": false,
+        "usefulDelegationRequired": true, "justifiedSkipRequired": false,
         "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false },
-        "remediationRequired": false,
-        "checks": { "minimumPassed": 3, "maximumFailed": 0, "candidateValid": true },
+        "remediationRequired": false, "checks": { "minimumPassed": 3, "maximumFailed": 0, "candidateValid": true },
         "decisions": ["reproduction", "root-cause", "verification"],
         "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
         "topologyRequired": true
-      },
-      "syntheticCapture": {
-        "mode": "auto", "elapsedMs": 450, "childCount": 4, "peakConcurrency": 4,
-        "usefulDelegation": true, "justifiedSkip": false,
-        "bestOf2": { "attempted": false, "disagreement": 0, "selected": false },
-        "remediation": { "required": false, "performed": false },
-        "incidents": { "race": 0, "schema": 0, "gate": 0, "authorization": 0 },
-        "checks": { "passed": 3, "failed": 0, "candidateInvalidated": false },
-        "journal": [{ "at": 1, "type": "delegation", "outcome": "accepted" }, { "at": 2, "type": "check", "outcome": "passed" }],
-        "decisions": [{ "id": "reproduction", "passed": true }, { "id": "root-cause", "passed": true }, { "id": "verification", "passed": true }],
-        "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
-        "topology": { "workflow": "triage", "schedulerMode": "off", "workspaceMode": "shared", "fallbackMode": "none" }
       }
     },
     {
       "id": "review-off",
       "scenario": "dry-run-review",
-      "fixture": { "id": "review", "version": 1, "kind": "synthetic", "permittedMutation": "none", "expectedOutcome": "review-dry-run" },
+      "fixture": { "id": "review", "version": 1, "kind": "synthetic", "path": "review", "permittedMutation": "none", "expectedOutcome": "review-dry-run" },
       "topology": { "workflow": "review", "schedulerMode": "off", "workspaceMode": "shared", "fallbackMode": "none" },
       "budget": { "maxPeakConcurrency": 3, "maxElapsedMs": 60000, "maxChildCount": 3 },
       "rubric": {
-        "usefulDelegationRequired": true,
-        "justifiedSkipRequired": false,
+        "usefulDelegationRequired": true, "justifiedSkipRequired": false,
         "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false },
-        "remediationRequired": false,
-        "checks": { "minimumPassed": 3, "maximumFailed": 0, "candidateValid": true },
+        "remediationRequired": false, "checks": { "minimumPassed": 3, "maximumFailed": 0, "candidateValid": true },
         "decisions": ["snapshot", "findings", "dry-run"],
         "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
         "topologyRequired": true
-      },
-      "syntheticCapture": {
-        "mode": "auto", "elapsedMs": 380, "childCount": 3, "peakConcurrency": 3,
-        "usefulDelegation": true, "justifiedSkip": false,
-        "bestOf2": { "attempted": false, "disagreement": 0, "selected": false },
-        "remediation": { "required": false, "performed": false },
-        "incidents": { "race": 0, "schema": 0, "gate": 0, "authorization": 0 },
-        "checks": { "passed": 3, "failed": 0, "candidateInvalidated": false },
-        "journal": [{ "at": 1, "type": "delegation", "outcome": "accepted" }, { "at": 2, "type": "check", "outcome": "passed" }],
-        "decisions": [{ "id": "snapshot", "passed": true }, { "id": "findings", "passed": true }, { "id": "dry-run", "passed": true }],
-        "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
-        "topology": { "workflow": "review", "schedulerMode": "off", "workspaceMode": "shared", "fallbackMode": "none" }
       }
     },
     {
       "id": "scoped-implementation-off",
       "scenario": "scoped-implementation",
-      "fixture": { "id": "scoped-implementation", "version": 1, "kind": "synthetic", "permittedMutation": "scoped-disposable", "expectedOutcome": "scoped-change" },
+      "fixture": { "id": "scoped-implementation", "version": 1, "kind": "synthetic", "path": "scoped-implementation", "permittedMutation": "scoped-disposable", "expectedOutcome": "scoped-change" },
       "topology": { "workflow": "implementation", "schedulerMode": "off", "workspaceMode": "shared", "fallbackMode": "none" },
       "budget": { "maxPeakConcurrency": 2, "maxElapsedMs": 60000, "maxChildCount": 4 },
       "rubric": {
-        "usefulDelegationRequired": true,
-        "justifiedSkipRequired": false,
+        "usefulDelegationRequired": true, "justifiedSkipRequired": false,
         "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false },
-        "remediationRequired": false,
-        "checks": { "minimumPassed": 3, "maximumFailed": 0, "candidateValid": true },
+        "remediationRequired": false, "checks": { "minimumPassed": 3, "maximumFailed": 0, "candidateValid": true },
         "decisions": ["scope", "implementation", "verification"],
         "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
         "topologyRequired": true
-      },
-      "syntheticCapture": {
-        "mode": "auto", "elapsedMs": 500, "childCount": 2, "peakConcurrency": 2,
-        "usefulDelegation": true, "justifiedSkip": false,
-        "bestOf2": { "attempted": false, "disagreement": 0, "selected": false },
-        "remediation": { "required": false, "performed": false },
-        "incidents": { "race": 0, "schema": 0, "gate": 0, "authorization": 0 },
-        "checks": { "passed": 3, "failed": 0, "candidateInvalidated": false },
-        "journal": [{ "at": 1, "type": "transition", "outcome": "completed" }, { "at": 2, "type": "check", "outcome": "passed" }],
-        "decisions": [{ "id": "scope", "passed": true }, { "id": "implementation", "passed": true }, { "id": "verification", "passed": true }],
-        "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
-        "topology": { "workflow": "implementation", "schedulerMode": "off", "workspaceMode": "shared", "fallbackMode": "none" }
       }
     },
     {
       "id": "isolated-writer-observe",
       "scenario": "isolated-writer-success",
-      "fixture": { "id": "isolated-writer", "version": 1, "kind": "synthetic", "permittedMutation": "scoped-disposable", "expectedOutcome": "isolated-writer-success" },
+      "fixture": { "id": "isolated-writer", "version": 1, "kind": "synthetic", "path": "isolated-writer", "permittedMutation": "scoped-disposable", "expectedOutcome": "isolated-writer-success" },
       "topology": { "workflow": "implementation", "schedulerMode": "observe", "workspaceMode": "isolated", "fallbackMode": "none" },
       "budget": { "maxPeakConcurrency": 6, "maxElapsedMs": 60000, "maxChildCount": 10 },
       "rubric": {
-        "usefulDelegationRequired": true,
-        "justifiedSkipRequired": false,
+        "usefulDelegationRequired": true, "justifiedSkipRequired": false,
         "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false },
-        "remediationRequired": false,
-        "checks": { "minimumPassed": 3, "maximumFailed": 0, "candidateValid": true },
+        "remediationRequired": false, "checks": { "minimumPassed": 3, "maximumFailed": 0, "candidateValid": true },
         "decisions": ["isolation", "integration", "cleanup"],
         "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
         "topologyRequired": true
-      },
-      "syntheticCapture": {
-        "mode": "auto", "elapsedMs": 700, "childCount": 6, "peakConcurrency": 6,
-        "usefulDelegation": true, "justifiedSkip": false,
-        "bestOf2": { "attempted": false, "disagreement": 0, "selected": false },
-        "remediation": { "required": false, "performed": false },
-        "incidents": { "race": 0, "schema": 0, "gate": 0, "authorization": 0 },
-        "checks": { "passed": 3, "failed": 0, "candidateInvalidated": false },
-        "journal": [{ "at": 1, "type": "admission", "outcome": "accepted" }, { "at": 2, "type": "transition", "outcome": "completed" }, { "at": 3, "type": "check", "outcome": "passed" }],
-        "decisions": [{ "id": "isolation", "passed": true }, { "id": "integration", "passed": true }, { "id": "cleanup", "passed": true }],
-        "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
-        "topology": { "workflow": "implementation", "schedulerMode": "observe", "workspaceMode": "isolated", "fallbackMode": "none" }
       }
     },
     {
       "id": "safe-shared-fallback",
       "scenario": "safe-shared-fallback",
-      "fixture": { "id": "shared-fallback", "version": 1, "kind": "synthetic", "permittedMutation": "scoped-disposable", "expectedOutcome": "safe-shared-fallback" },
+      "fixture": { "id": "shared-fallback", "version": 1, "kind": "synthetic", "path": "shared-fallback", "permittedMutation": "scoped-disposable", "expectedOutcome": "safe-shared-fallback" },
       "topology": { "workflow": "implementation", "schedulerMode": "off", "workspaceMode": "shared", "fallbackMode": "shared" },
       "budget": { "maxPeakConcurrency": 2, "maxElapsedMs": 60000, "maxChildCount": 4 },
       "rubric": {
-        "usefulDelegationRequired": true,
-        "justifiedSkipRequired": false,
+        "usefulDelegationRequired": true, "justifiedSkipRequired": false,
         "bestOf2": { "required": false, "maxDisagreement": 0, "selectionRequired": false },
-        "remediationRequired": false,
-        "checks": { "minimumPassed": 4, "maximumFailed": 0, "candidateValid": true },
+        "remediationRequired": false, "checks": { "minimumPassed": 4, "maximumFailed": 0, "candidateValid": true },
         "decisions": ["fallback", "scope", "verification", "cleanup"],
         "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
         "topologyRequired": true
-      },
-      "syntheticCapture": {
-        "mode": "auto", "elapsedMs": 550, "childCount": 2, "peakConcurrency": 2,
-        "usefulDelegation": true, "justifiedSkip": false,
-        "bestOf2": { "attempted": false, "disagreement": 0, "selected": false },
-        "remediation": { "required": false, "performed": false },
-        "incidents": { "race": 0, "schema": 0, "gate": 0, "authorization": 0 },
-        "checks": { "passed": 4, "failed": 0, "candidateInvalidated": false },
-        "journal": [{ "at": 1, "type": "transition", "outcome": "completed" }, { "at": 2, "type": "check", "outcome": "passed" }],
-        "decisions": [{ "id": "fallback", "passed": true }, { "id": "scope", "passed": true }, { "id": "verification", "passed": true }, { "id": "cleanup", "passed": true }],
-        "safety": { "cleanupComplete": true, "noPersistentDataWrite": true, "noPost": true, "noRawOutput": true, "noSecret": true, "scopeContained": true },
-        "topology": { "workflow": "implementation", "schedulerMode": "off", "workspaceMode": "shared", "fallbackMode": "shared" }
       }
     }
   ]

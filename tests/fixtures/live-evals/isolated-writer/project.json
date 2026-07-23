@@ -1,0 +1,4 @@
+{
+  "name": "isolated-writer-fixture",
+  "owned": ["src/result.mjs"]
+}

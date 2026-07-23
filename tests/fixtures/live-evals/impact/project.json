@@ -1,0 +1,4 @@
+{
+  "name": "impact-fixture",
+  "entry": "src/calculate.mjs"
+}

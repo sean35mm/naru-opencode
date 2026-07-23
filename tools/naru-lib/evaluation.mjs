@@ -33,6 +33,16 @@ const JOURNAL_OUTCOMES = new Set(['accepted', 'rejected', 'selected', 'invalidat
 export const EVALUATION_SCHEMA_VERSION = 1;
 export const EVALUATION_REDACTION = Object.freeze({ prompts: 'omitted', code: 'omitted', diffs: 'omitted' });
 export const EVALUATION_SPECIFICATION_SCHEMA_VERSION = 2;
+export const REUSABLE_EVALUATION_SPECIFICATION_SCHEMA_VERSION = 3;
+export const APPROVED_EVALUATION_CASE_IDS = Object.freeze([
+  'planning-off',
+  'impact-off',
+  'triage-off',
+  'review-off',
+  'scoped-implementation-off',
+  'isolated-writer-observe',
+  'safe-shared-fallback',
+]);
 export const EVALUATION_SPECIFICATION_REDACTION = Object.freeze({
   prompts: 'omitted',
   code: 'omitted',
@@ -332,6 +342,99 @@ function validateSpecificationFixture(value, label) {
     kind: 'synthetic',
     permittedMutation: assertEnum(value.permittedMutation, PERMITTED_MUTATIONS, `${label}.permittedMutation`),
     expectedOutcome: assertEnum(value.expectedOutcome, EXPECTED_OUTCOMES, `${label}.expectedOutcome`),
+  };
+}
+
+function validateReusableSpecificationFixture(value, label) {
+  assertExactKeys(value, ['id', 'version', 'kind', 'path', 'permittedMutation', 'expectedOutcome'], label);
+  if (value.kind !== 'synthetic') throw new Error(`${label}.kind must be synthetic`);
+  const path = assertString(value.path, `${label}.path`);
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(path) || path === '.' || path === '..') {
+    throw new Error(`${label}.path must be one safe fixture directory name`);
+  }
+  return {
+    id: assertId(value.id, `${label}.id`),
+    version: assertInteger(value.version, `${label}.version`, 1, 1_000_000),
+    kind: 'synthetic',
+    path,
+    permittedMutation: assertEnum(value.permittedMutation, PERMITTED_MUTATIONS, `${label}.permittedMutation`),
+    expectedOutcome: assertEnum(value.expectedOutcome, EXPECTED_OUTCOMES, `${label}.expectedOutcome`),
+  };
+}
+
+export function validateReusableEvaluationSpecificationV3(value) {
+  assertJsonSize(value, 'ReusableEvaluationSpecificationV3');
+  assertObject(value, 'ReusableEvaluationSpecificationV3');
+  const { redaction, ...withoutRedaction } = value;
+  rejectSensitiveContent(withoutRedaction, 'ReusableEvaluationSpecificationV3');
+  assertExactKeys(value, ['schemaVersion', 'suiteId', 'redaction', 'fixtureSet', 'budgets', 'cases'], 'ReusableEvaluationSpecificationV3');
+  if (value.schemaVersion !== REUSABLE_EVALUATION_SPECIFICATION_SCHEMA_VERSION) {
+    throw new Error('ReusableEvaluationSpecificationV3.schemaVersion must be 3');
+  }
+  assertExactKeys(value.fixtureSet, ['id', 'version'], 'ReusableEvaluationSpecificationV3.fixtureSet');
+  const fixtureSet = {
+    id: assertId(value.fixtureSet.id, 'ReusableEvaluationSpecificationV3.fixtureSet.id'),
+    version: assertInteger(value.fixtureSet.version, 'ReusableEvaluationSpecificationV3.fixtureSet.version', 1, 1_000_000),
+  };
+  if (!Array.isArray(value.cases) || value.cases.length !== APPROVED_EVALUATION_CASE_IDS.length) {
+    throw new Error('ReusableEvaluationSpecificationV3.cases must contain the seven approved cases');
+  }
+  const budgets = validateBudget(value.budgets, 'ReusableEvaluationSpecificationV3.budgets');
+  const ids = new Set();
+  const fixturePaths = new Set();
+  const cases = value.cases.map((entry, index) => {
+    const label = `ReusableEvaluationSpecificationV3.cases[${index}]`;
+    assertExactKeys(entry, ['id', 'scenario', 'fixture', 'topology', 'budget', 'rubric'], label);
+    const caseId = assertId(entry.id, `${label}.id`);
+    if (ids.has(caseId)) throw new Error(`ReusableEvaluationSpecificationV3 has duplicate case ID: ${caseId}`);
+    ids.add(caseId);
+    const fixture = validateReusableSpecificationFixture(entry.fixture, `${label}.fixture`);
+    if (fixturePaths.has(fixture.path)) throw new Error(`ReusableEvaluationSpecificationV3 has duplicate fixture path: ${fixture.path}`);
+    fixturePaths.add(fixture.path);
+    const topology = validateTopology(entry.topology, `${label}.topology`);
+    const budget = validateBudget(entry.budget, `${label}.budget`);
+    if (budget.maxPeakConcurrency > budgets.maxPeakConcurrency || budget.maxElapsedMs > budgets.maxElapsedMs
+      || budget.maxChildCount > budgets.maxChildCount) {
+      throw new Error(`${label}.budget exceeds ReusableEvaluationSpecificationV3.budgets`);
+    }
+    if (topology.workflow !== 'implementation' && fixture.permittedMutation !== 'none') {
+      throw new Error(`${label} read-only workflows must prohibit mutation`);
+    }
+    const expectedReadOnlyOutcome = READ_ONLY_EXPECTED_OUTCOMES.get(topology.workflow);
+    if (expectedReadOnlyOutcome && fixture.expectedOutcome !== expectedReadOnlyOutcome) {
+      throw new Error(`${label}.fixture.expectedOutcome does not match its read-only workflow`);
+    }
+    return {
+      id: caseId,
+      scenario: assertId(entry.scenario, `${label}.scenario`),
+      fixture,
+      topology,
+      budget,
+      rubric: validateSpecificationRubric(entry.rubric, `${label}.rubric`),
+    };
+  });
+  if (APPROVED_EVALUATION_CASE_IDS.some((caseId, index) => cases[index].id !== caseId)) {
+    throw new Error('ReusableEvaluationSpecificationV3.cases must use the canonical approved order');
+  }
+  const workflows = new Set(cases.map((entry) => entry.topology.workflow));
+  if (REQUIRED_WORKFLOWS.some((workflow) => !workflows.has(workflow))) {
+    throw new Error('ReusableEvaluationSpecificationV3 must cover planning, impact, triage, review, and implementation');
+  }
+  if (!cases.some((entry) => entry.topology.workspaceMode === 'isolated'
+    && entry.fixture.expectedOutcome === 'isolated-writer-success')) {
+    throw new Error('ReusableEvaluationSpecificationV3 must cover isolated-writer success');
+  }
+  if (!cases.some((entry) => entry.topology.fallbackMode === 'shared'
+    && entry.fixture.expectedOutcome === 'safe-shared-fallback')) {
+    throw new Error('ReusableEvaluationSpecificationV3 must cover safe shared-mode fallback');
+  }
+  return {
+    schemaVersion: REUSABLE_EVALUATION_SPECIFICATION_SCHEMA_VERSION,
+    suiteId: assertId(value.suiteId, 'ReusableEvaluationSpecificationV3.suiteId'),
+    redaction: validateSpecificationRedaction(value.redaction, 'ReusableEvaluationSpecificationV3.redaction'),
+    fixtureSet,
+    budgets,
+    cases,
   };
 }
 
@@ -670,13 +773,54 @@ function evaluateSpecification(value) {
   };
 }
 
+function evaluateReusableSpecification(value) {
+  const specification = validateReusableEvaluationSpecificationV3(value);
+  const unique = (field) => [...new Set(specification.cases.map((entry) => entry.topology[field]))];
+  return {
+    schemaVersion: REUSABLE_EVALUATION_SPECIFICATION_SCHEMA_VERSION,
+    suiteId: specification.suiteId,
+    stage: 'specification',
+    redaction: specification.redaction,
+    fixtureSet: specification.fixtureSet,
+    coverage: {
+      workflows: unique('workflow'),
+      schedulerModes: unique('schedulerMode'),
+      workspaceModes: unique('workspaceMode'),
+      fallbackModes: unique('fallbackMode'),
+    },
+    aggregate: { caseCount: specification.cases.length },
+    results: specification.cases.map((entry) => ({
+      id: entry.id,
+      fixtureId: `${entry.fixture.id}@${entry.fixture.version}`,
+      workflow: entry.topology.workflow,
+      schedulerMode: entry.topology.schedulerMode,
+      workspaceMode: entry.topology.workspaceMode,
+      expectedOutcome: entry.fixture.expectedOutcome,
+    })),
+  };
+}
+
 export function evaluateManifest(value) {
+  if (value?.schemaVersion === REUSABLE_EVALUATION_SPECIFICATION_SCHEMA_VERSION) return evaluateReusableSpecification(value);
   if (value?.schemaVersion === EVALUATION_SPECIFICATION_SCHEMA_VERSION) return evaluateSpecification(value);
   return evaluateLegacyManifest(value);
 }
 
 export function createDryRunPlan(value) {
   const report = evaluateManifest(value);
+  if (report.schemaVersion === REUSABLE_EVALUATION_SPECIFICATION_SCHEMA_VERSION) {
+    return {
+      schemaVersion: report.schemaVersion,
+      suiteId: report.suiteId,
+      stage: report.stage,
+      dryRun: true,
+      redaction: report.redaction,
+      fixtureSet: report.fixtureSet,
+      coverage: report.coverage,
+      aggregate: report.aggregate,
+      cases: report.results,
+    };
+  }
   if (report.schemaVersion === EVALUATION_SPECIFICATION_SCHEMA_VERSION) {
     return {
       schemaVersion: report.schemaVersion,

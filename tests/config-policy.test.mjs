@@ -264,6 +264,22 @@ function evaluateRule(rules, value) {
   return result;
 }
 
+function actionRefs(text) {
+  return [...text.matchAll(/^\s*uses:\s*([^@\s]+)@([^\s#]+)\s+#\s+(\S+)\s*$/gm)].map(match => ({
+    action: match[1],
+    ref: match[2],
+    tag: match[3],
+  }));
+}
+
+function workflowJob(text, name) {
+  const lines = text.split('\n');
+  const start = lines.findIndex(line => line === `  ${name}:`);
+  if (start < 0) return '';
+  const end = lines.findIndex((line, index) => index > start && /^  [\w-]+:/.test(line));
+  return lines.slice(start, end < 0 ? undefined : end).join('\n');
+}
+
 async function collectMarkdown(relative) {
   if (!(await exists(relative))) return [];
   const entries = await readdir(here(relative), { withFileTypes: true });
@@ -495,6 +511,78 @@ async function main() {
   const delegate = await readFile(here('plugins/naru-delegate.js'), 'utf8');
   if (!delegate.includes('export const NaruDelegatePlugin') || !delegate.includes("'tool.execute.before'")) fail('delegate plugin contract mismatch');
   if (delegate.includes('client.session.create') || delegate.includes('client.session.prompt')) fail('delegate bypasses native Task sessions');
+
+  const ciWorkflow = await readFile(here('.github/workflows/ci.yml'), 'utf8');
+  const docsWorkflow = await readFile(here('.github/workflows/docs.yml'), 'utf8');
+  const workflows = `${ciWorkflow}\n${docsWorkflow}`;
+  const expectedActions = [
+    { action: 'actions/checkout', ref: '3d3c42e5aac5ba805825da76410c181273ba90b1', tag: 'v7' },
+    { action: 'actions/checkout', ref: '3d3c42e5aac5ba805825da76410c181273ba90b1', tag: 'v7' },
+    { action: 'actions/setup-node', ref: '820762786026740c76f36085b0efc47a31fe5020', tag: 'v7' },
+    { action: 'actions/setup-node', ref: '820762786026740c76f36085b0efc47a31fe5020', tag: 'v7' },
+    { action: 'oven-sh/setup-bun', ref: '0c5077e51419868618aeaa5fe8019c62421857d6', tag: 'v2' },
+    { action: 'actions/configure-pages', ref: '45bfe0192ca1faeb007ade9deae92b16b8254a0d', tag: 'v6' },
+    { action: 'actions/upload-pages-artifact', ref: 'fc324d3547104276b827a68afc52ff2a11cc49c9', tag: 'v5' },
+    { action: 'actions/deploy-pages', ref: 'cd2ce8fcbc39b97be8ca5fce6e763baed58fa128', tag: 'v5' },
+  ];
+  const actualActions = actionRefs(workflows).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  expectedActions.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  if (JSON.stringify(actualActions) !== JSON.stringify(expectedActions)) fail('workflow action allowlist mismatch');
+  if ((workflows.match(/^\s*uses:\s*\S+/gm) ?? []).length !== actualActions.length) fail('workflow action is missing an immutable ref or tag comment');
+  if (actualActions.some(({ ref }) => !/^[0-9a-f]{40}$/.test(ref))) fail('workflow action ref is not a lowercase 40-hex commit');
+  for (const checkout of workflows.split(/(?=^\s*- name:)/m).filter(step => step.includes('uses: actions/checkout@'))) {
+    if (!/persist-credentials:\s*false\b/.test(checkout)) fail('checkout must disable persisted credentials');
+  }
+  if (!/^permissions:\n  contents: read\n/m.test(ciWorkflow)) fail('CI must have contents-only read permission');
+  if ((ciWorkflow.match(/node-version:\s*24\b/g) ?? []).length !== 1) fail('CI must use Node 24');
+  if ((docsWorkflow.match(/node-version:\s*24\b/g) ?? []).length !== 1) fail('docs must use Node 24');
+  if (!/bun-version:\s*1\.3\.9\b/.test(ciWorkflow)) fail('CI must pin Bun 1.3.9');
+
+  const installCommand = 'npm install --prefix "$RUNNER_TEMP/opencode-linux-x64-1.18.4" --no-save --package-lock=false --ignore-scripts --omit=dev --no-audit --no-fund opencode-linux-x64@1.18.4';
+  if ((ciWorkflow.match(new RegExp(installCommand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length !== 1) {
+    fail('CI must use the exact script-free OpenCode package install');
+  }
+  for (const required of [
+    'test "$(node -p \'require(process.argv[1]).version\' "$package_json")" = "1.18.4"',
+    'opencode_path="$(realpath "$package_root/node_modules/opencode-linux-x64/bin/opencode")"',
+    'test -f "$opencode_path"',
+    'test -x "$opencode_path"',
+    'bun_path="$(realpath "$(command -v bun)")"',
+    'node scripts/naru-compat-smoke.mjs --opencode "$opencode_path" --source "$GITHUB_WORKSPACE" --dashboard --bun "$bun_path"',
+  ]) {
+    if (!ciWorkflow.includes(required)) fail(`CI compatibility smoke missing: ${required}`);
+  }
+  if (!/case "\$opencode_path" in\n\s+"\$package_root"\/\*\)/.test(ciWorkflow)) fail('OpenCode binary must resolve beneath its package root');
+  const orderedCI = [
+    'Run Node tests', 'Run Bun transport smoke test', 'Run installer tests', 'Build documentation',
+    'Run provider-free OpenCode compatibility smoke', 'Check whitespace',
+  ].map(marker => ciWorkflow.indexOf(marker));
+  if (orderedCI.some(index => index < 0) || orderedCI.some((index, i) => i && index <= orderedCI[i - 1])) fail('CI check ordering mismatch');
+  for (const forbidden of [/\bnpx\b/i, /\bnpm\s+exec\b/i, /command\s+-v\s+opencode\b/i, /\bwhich\s+opencode\b/i, /live[-_ ]eval/i, /\bsecrets?(?:\.|\[)/i, /\b[A-Z][A-Z0-9_]*_(?:API_)?KEY\b/]) {
+    if (forbidden.test(workflows)) fail(`workflow contains forbidden provider or package discovery pattern: ${forbidden}`);
+  }
+
+  const docsBuild = workflowJob(docsWorkflow, 'build');
+  const docsDeploy = workflowJob(docsWorkflow, 'deploy');
+  if (!/^permissions:\n  contents: read\n/m.test(docsWorkflow)) fail('docs workflow must default to contents-only read permission');
+  if (/\b(?:pages|id-token):\s*write\b/.test(docsBuild)) fail('docs build has deployment permissions');
+  if (!/permissions:\n\s+pages: write\n\s+id-token: write\n/.test(docsDeploy) || /\bcontents:\s*/.test(docsDeploy)) {
+    fail('docs deploy must have only Pages and ID-token write permissions');
+  }
+  const buildActions = actionRefs(docsBuild).map(({ action }) => action);
+  if (JSON.stringify(buildActions) !== JSON.stringify(['actions/checkout', 'actions/setup-node', 'actions/upload-pages-artifact'])) {
+    fail('docs build action boundary mismatch');
+  }
+  const deployActions = actionRefs(docsDeploy).map(({ action }) => action);
+  if (JSON.stringify(deployActions) !== JSON.stringify(['actions/configure-pages', 'actions/deploy-pages'])) {
+    fail('docs configure-pages must run immediately before deploy-pages');
+  }
+  if (!/uses: actions\/configure-pages@[^\n]+\n\s+- name: Deploy to GitHub Pages\n/.test(docsDeploy)) {
+    fail('docs configure-pages and deploy-pages steps must be adjacent');
+  }
+  if (/\bpull_request_target\s*:/.test(workflows)) fail('privileged pull_request_target trigger is forbidden');
+  const gitignore = await readFile(here('.gitignore'), 'utf8');
+  if (!gitignore.split(/\r?\n/).includes('/.naru-evidence/')) fail('root Naru evidence directory must be ignored');
 
   for (const tool of ['naru-git-read.js', 'naru-github-read.js', 'naru-github-post-review.js']) {
     const text = await readFile(here(`tools/${tool}`), 'utf8');
