@@ -22,6 +22,7 @@ import {
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const AGENT_LIST_OUTPUT_MARKER = 'NARU_AGENT_LIST_OUTPUT_MARKER';
+const DEBUG_CONFIG_OUTPUT_MARKER = 'NARU_DEBUG_CONFIG_OUTPUT_MARKER';
 
 test('compatibility policy fixes approved targets without inventing Git or gh floors', () => {
   assert.deepEqual(COMPATIBILITY_POLICY.release.opencode, { floor: '1.18.4', current: '1.18.4' });
@@ -83,7 +84,7 @@ test('OpenCode command allowlist contains only provider-free inspection and loca
   for (const forbidden of ['auth', 'model', 'run', 'prompt']) assert.doesNotMatch(serialized, new RegExp(`"${forbidden}"`));
 });
 
-async function fakeOpenCode(directory, { agentListOutputBytes = 0, failDebugConfig = false } = {}) {
+async function fakeOpenCode(directory, { agentListOutputBytes = 0, debugConfigOutputBytes = 0, failDebugConfig = false } = {}) {
   const executable = path.join(directory, 'fake-opencode.mjs');
   const source = `#!${process.execPath}
 import http from 'node:http';
@@ -91,6 +92,8 @@ import path from 'node:path';
 const args = process.argv.slice(2);
 const agentListOutputBytes = ${agentListOutputBytes};
 const agentListOutputMarker = ${JSON.stringify(AGENT_LIST_OUTPUT_MARKER)};
+const debugConfigOutputBytes = ${debugConfigOutputBytes};
+const debugConfigOutputMarker = ${JSON.stringify(DEBUG_CONFIG_OUTPUT_MARKER)};
 const required = ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'TMPDIR', 'GH_CONFIG_DIR'];
 const boundary = path.dirname(process.env.HOME || '');
 if (!boundary || required.some(key => !process.env[key]?.startsWith(boundary + path.sep))) process.exit(70);
@@ -99,7 +102,7 @@ if (args.length === 1 && args[0] === '--version') console.log('opencode 1.18.4')
 else if (args.length === 1 && args[0] === '--help') console.log('safe help');
 else if (args.join(' ') === 'debug paths') console.log('isolated paths');
 else if (args.join(' ') === 'debug config') {
-  ${failDebugConfig ? "console.error('SUPER_SECRET_VALUE'); process.exit(9);" : "console.log('{}');"}
+  ${failDebugConfig ? "console.error('SUPER_SECRET_VALUE'); process.exit(9);" : "if (debugConfigOutputBytes === 0) console.log('{}'); else process.stdout.write(debugConfigOutputMarker.repeat(Math.ceil(debugConfigOutputBytes / debugConfigOutputMarker.length)).slice(0, debugConfigOutputBytes));"}
 } else if (args.join(' ') === 'agent list') {
   if (agentListOutputBytes === 0) console.log('naru-orchestrator');
   else process.stdout.write(agentListOutputMarker.repeat(Math.ceil(agentListOutputBytes / agentListOutputMarker.length)).slice(0, agentListOutputBytes));
@@ -122,7 +125,10 @@ test('provider-free fake OpenCode smoke isolates environment, checks depth/defau
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-compat-test-'));
   let disposable;
   try {
-    const fake = await fakeOpenCode(temporary, { agentListOutputBytes: 128 * 1024 });
+    const fake = await fakeOpenCode(temporary, {
+      agentListOutputBytes: 128 * 1024,
+      debugConfigOutputBytes: 128 * 1024,
+    });
     const platformEvidence = process.platform === 'darwin'
       ? { platform: 'darwin', arch: 'arm64', osId: null, wsl: false }
       : { platform: 'linux', arch: 'x64', osId: 'ubuntu', wsl: false };
@@ -137,6 +143,7 @@ test('provider-free fake OpenCode smoke isolates environment, checks depth/defau
     assert.ok(report.checks.every(check => check.status !== 'failed'));
     assert.equal(report.capabilities.dashboard.nativeTuiLoad, 'omitted');
     assert.doesNotMatch(JSON.stringify(report), new RegExp(AGENT_LIST_OUTPUT_MARKER));
+    assert.doesNotMatch(JSON.stringify(report), new RegExp(DEBUG_CONFIG_OUTPUT_MARKER));
     await assert.rejects(lstat(disposable), error => error?.code === 'ENOENT');
   } finally {
     await rm(temporary, { recursive: true, force: true });

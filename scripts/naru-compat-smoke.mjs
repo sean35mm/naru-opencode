@@ -33,7 +33,12 @@ export const OPENCODE_SAFE_COMMANDS = Object.freeze([
   Object.freeze({ id: 'opencode-version', args: Object.freeze(['--version']) }),
   Object.freeze({ id: 'opencode-help', args: Object.freeze(['--help']) }),
   Object.freeze({ id: 'opencode-debug-paths', args: Object.freeze(['debug', 'paths']) }),
-  Object.freeze({ id: 'opencode-debug-config', args: Object.freeze(['debug', 'config']) }),
+  Object.freeze({
+    id: 'opencode-debug-config',
+    args: Object.freeze(['debug', 'config']),
+    maxOutputBytes: MAX_AGENT_LIST_OUTPUT_BYTES,
+    retainOutput: false,
+  }),
   Object.freeze({
     id: 'opencode-agent-list',
     args: Object.freeze(['agent', 'list']),
