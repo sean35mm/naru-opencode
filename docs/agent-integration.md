@@ -22,6 +22,29 @@ The only supported custom-agent integration names are these native skills:
 
 They provide guidance. A skill does not grant tools, enforce read-only behavior, or authorize an action.
 
+```mermaid
+flowchart LR
+  CA["Your custom agent"]:::entry
+  OK["ALLOWED — the entire supported surface<br/>naru-plan · naru-impact<br/>naru-triage · naru-review"]:::read
+  NO["DENIED — fail-closed, never Task targets<br/>naru-orchestrator · naru-minion-* (all seven)<br/>naru-scheduler · generated model aliases<br/>validated posting tool"]:::danger
+  G["Advisory guidance only<br/>no tools, no read-only enforcement"]:::artifact
+
+  CA --> OK --> G
+  CA -.->|"wildcard denial"| NO
+
+  classDef entry fill:#dfe4ff,stroke:#3f4fbe,color:#1b2456
+  classDef read fill:#d3ece5,stroke:#2f8f78,color:#123a31
+  classDef danger fill:#ffdcd6,stroke:#c0392b,color:#4a120c
+  classDef artifact fill:#f5f6fa,stroke:#5f6675,color:#14161d
+```
+
+<ul class="naru-legend">
+  <li data-kind="read">Allowed</li>
+  <li data-kind="danger">Denied</li>
+</ul>
+
+The boundary is the exact allowlist, not the agent's name or visibility. `'*': deny` must come first so anything not explicitly listed is refused.
+
 This custom-agent integration remains dry-run-only. It does not authorize the posting tool. Only a directly selected `naru-orchestrator` handling an explicit current natural-language post request may post; arbitrary Build, Plan, General, and custom agents cannot post through Naru.
 
 ## Required exact skill permissions

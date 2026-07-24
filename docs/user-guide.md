@@ -154,6 +154,54 @@ Naru's current analysis surface is four on-demand native skills:
 
 The five retired `/naru-*` Core slash commands are not current entry points. `/naru-minions` remains the optional dashboard command.
 
+Those four skills and the orchestrator are the only two ways in, and they behave very differently:
+
+```mermaid
+flowchart TB
+  U(["You"]):::actor
+
+  subgraph advisory["ROUTE A — a skill · always advisory"]
+    direction TB
+    SK["naru-plan · naru-impact<br/>naru-triage · naru-review"]:::entry
+    AR["Advisory report<br/><small>no files touched</small>"]:::artifact
+    SK --> AR
+  end
+
+  subgraph implement["ROUTE B — select naru-orchestrator · can reach your files"]
+    direction TB
+    ORC{{"naru-orchestrator<br/><small>coordinates, never edits</small>"}}:::coord
+    LENS["Optional read-only lenses<br/><small>scout · investigate · architect · debug</small>"]:::read
+    IMP["Implement minion<br/><small>the only writer</small>"]:::write
+    VER["Verify shards"]:::read
+    JDG{"Judge"}:::gate
+    STOP["Local edits — the normal stopping point"]:::write
+    ORC --> LENS --> IMP --> VER --> JDG --> STOP
+  end
+
+  POST["One COMMENT-only post<br/><small>explicit current request only</small>"]:::danger
+
+  U -->|"ask naturally, or pick a skill"| SK
+  U -->|"select in the agent picker"| ORC
+  ORC -.->|"'post the review'"| POST
+
+  style advisory fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
+  style implement fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
+
+  classDef actor fill:#eef0f6,stroke:#5f6675,color:#14161d
+  classDef entry fill:#dfe4ff,stroke:#3f4fbe,color:#1b2456
+  classDef coord fill:#ccd3ff,stroke:#3f4fbe,color:#1b2456
+  classDef read fill:#d3ece5,stroke:#2f8f78,color:#123a31
+  classDef write fill:#ffe4bd,stroke:#b8760f,color:#4a2c00
+  classDef gate fill:#e8eaf0,stroke:#8f96a5,color:#22252e
+  classDef danger fill:#ffdcd6,stroke:#c0392b,color:#4a120c
+```
+
+<ul class="naru-legend">
+  <li data-kind="read">Read-only</li>
+  <li data-kind="write">Writes files</li>
+  <li data-kind="danger">Leaves your machine</li>
+</ul>
+
 ### Select `naru-orchestrator` for implementation
 
 `naru-orchestrator` is a visible primary agent, not a slash command. Select it in the OpenCode UI when you want the Naru Minions implementation workflow or natural-language PR review posting. It coordinates its seven minions—Scout, Investigate, Architect, Implement, Debug, Verify, and Judge—while remaining unable to edit files itself. Adaptive lenses are optional and selected only when useful.
@@ -172,7 +220,7 @@ Or launch OpenCode with it for one invocation:
 opencode --agent naru-orchestrator
 ```
 
-Do not use `naru-orchestrator` as a Task target from custom agents. See the [agent integration guide](https://sean35mm.github.io/naru-opencode/agent-integration/) for supported skill guidance.
+Do not use `naru-orchestrator` as a Task target from custom agents. See the [agent integration guide](/naru-opencode/agent-integration/) for supported skill guidance.
 
 For review-only language, the orchestrator performs a dry run and never posts. Only a current explicit request such as “post the review” to the directly selected orchestrator authorizes one posting attempt. The target must be in that message or uniquely identified by prior user-authored PR context; ambiguous or missing targets stop for clarification. Every post request runs a fresh review, rejects stale, pasted, incomplete, or degraded results, and passes the validated result unchanged to the dedicated tool once. Before POST, the tool rechecks a fresh final snapshot, head, feedback digest, inline locations, and existing marker. Same-target calls are deduplicated within one process; cross-process deduplication requires durable external coordination, and ambiguous outcomes are never retried. Custom agents cannot post. Mixed implementation or Git delivery completes first; the fresh review and post are the final phase.
 
@@ -369,6 +417,54 @@ To include the optional runtime and local evaluation assets in a manual install,
 For a manual dashboard install, also copy both dashboard files and add `"./plugins/naru-minions-dashboard.tsx"` to the top-level `plugin` array in the active `tui.jsonc` or `tui.json`. Remove the old dashboard JS file and its exact registrations from every active TUI config before registering the TSX plugin. Restart OpenCode after a manual install.
 
 ## Complete safety model
+
+The seven minions sit in three capability tiers. Every tier below denies environment and secret file reads, and no minion can delegate with Task.
+
+```mermaid
+flowchart TB
+  subgraph t1["TIER 1 — static analysis · no shell at all"]
+    direction LR
+    A1["Scout"]:::read
+    A2["Investigate"]:::read
+    A3["Architect"]:::read
+    A4["Judge"]:::read
+  end
+
+  subgraph t2["TIER 2 — read-only, plus targeted Bash checks"]
+    direction LR
+    B1["Debug"]:::shell
+    B2["Verify"]:::shell
+  end
+
+  subgraph t3["TIER 3 — the only scoped edit and shell role"]
+    direction LR
+    C1["Implement"]:::write
+  end
+
+  DENY["Denied to all seven<br/><small>environment and secret file reads · Task delegation</small>"]:::danger
+
+  t1 --> DENY
+  t2 --> DENY
+  t3 --> DENY
+
+  style t1 fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
+  style t2 fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
+  style t3 fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
+
+  classDef read fill:#d3ece5,stroke:#2f8f78,color:#123a31
+  classDef shell fill:#e6f0cf,stroke:#6f8f2f,color:#2c3a10
+  classDef write fill:#ffe4bd,stroke:#b8760f,color:#4a2c00
+  classDef danger fill:#ffdcd6,stroke:#c0392b,color:#4a120c
+```
+
+<ul class="naru-legend">
+  <li data-kind="read">Read-only, no shell</li>
+  <li data-kind="shell">Read-only, runs checks</li>
+  <li data-kind="write">Scoped edits</li>
+  <li data-kind="danger">Denied to all</li>
+</ul>
+
+Tier 2 is read-only with respect to your files but can execute repository code through targeted checks, which is not the same as being harmless — see [permission limitations](#permission-limitations).
 
 ### Skills and scoped implementation
 

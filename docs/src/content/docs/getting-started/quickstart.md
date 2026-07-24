@@ -36,4 +36,4 @@ Use the `naru-plan` skill to plan <your objective>
 
 Local edits are the normal stopping point. Commit, push, pull-request creation, and review posting happen only when the current request explicitly asks for them. Review is dry-run by default; only an explicit current natural-language post request to the directly selected `naru-orchestrator` can make one validated `COMMENT`-only post.
 
-Run `node ~/.config/opencode/tools/naru-doctor.js` for a provider-free, read-only local state report. Continue with [installation](https://sean35mm.github.io/naru-opencode/getting-started/installation/) for project/custom targets, lifecycle previews, conflicts, backups, and doctor options, or see the canonical [user guide](https://sean35mm.github.io/naru-opencode/user-guide/) for complete operational details.
+Run `node ~/.config/opencode/tools/naru-doctor.js` for a provider-free, read-only local state report. Continue with [installation](/naru-opencode/getting-started/installation/) for project/custom targets, lifecycle previews, conflicts, backups, and doctor options, or see the canonical [user guide](/naru-opencode/user-guide/) for complete operational details.

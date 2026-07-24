@@ -17,11 +17,56 @@ Naru has three related layers:
 
 The agent dispatch surface is fixed and explicit:
 
-```text
-naru-plan, naru-impact, naru-triage, naru-review -> on-demand guidance
-naru-orchestrator -> scout, investigate, architect, implement, debug, verify, judge
-naru-orchestrator -> validated posting tool (only on a current explicit natural-language post request)
+```mermaid
+flowchart LR
+  subgraph L1["LAYER 1 — skills/ · four Markdown skills"]
+    direction TB
+    SK["naru-plan · naru-impact<br/>naru-triage · naru-review"]:::entry
+    GD["On-demand guidance"]:::read
+    SK --> GD
+  end
+
+  subgraph L2["LAYER 2 — agents/ · eight Markdown agents"]
+    direction TB
+    ORC{{"naru-orchestrator"}}:::coord
+    subgraph MIN["seven naru-minion-* roles"]
+      direction LR
+      RO["scout · investigate · architect<br/>debug · verify · judge"]:::read
+      IMP["implement"]:::write
+    end
+    ORC --> RO
+    ORC --> IMP
+  end
+
+  subgraph L3["LAYER 3 — plugins/ + tools/ · runtime"]
+    direction TB
+    DEL["naru-delegate<br/><small>central model routing</small>"]:::coord
+    SCHED["naru-scheduler<br/><small>optional, Protocol 3</small>"]:::gate
+    POST["validated posting tool"]:::danger
+  end
+
+  ORC -.-> DEL
+  ORC -.-> SCHED
+  ORC -.->|"explicit current post request only"| POST
+
+  style L1 fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
+  style L2 fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
+  style MIN fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
+  style L3 fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
+
+  classDef entry fill:#dfe4ff,stroke:#3f4fbe,color:#1b2456
+  classDef coord fill:#ccd3ff,stroke:#3f4fbe,color:#1b2456
+  classDef read fill:#d3ece5,stroke:#2f8f78,color:#123a31
+  classDef write fill:#ffe4bd,stroke:#b8760f,color:#4a2c00
+  classDef gate fill:#e8eaf0,stroke:#8f96a5,color:#22252e
+  classDef danger fill:#ffdcd6,stroke:#c0392b,color:#4a120c
 ```
+
+<ul class="naru-legend">
+  <li data-kind="read">Read-only</li>
+  <li data-kind="write">Writes files</li>
+  <li data-kind="danger">Leaves your machine</li>
+</ul>
 
 The visible primary `naru-orchestrator` delegates only to the seven `naru-minion-*` roles. Skills and adaptive lenses are optional, not a workflow-agent topology. Review is dry-run by default; only an explicit current natural-language post request to the directly selected orchestrator may use the validated posting tool.
 

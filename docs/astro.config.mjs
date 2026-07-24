@@ -13,6 +13,26 @@ export default defineConfig({
       enableLog: false,
       mermaidConfig: {
         securityLevel: 'strict',
+        themeVariables: {
+          fontFamily:
+            '"JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace',
+          fontSize: '14px',
+        },
+        flowchart: {
+          curve: 'basis',
+          nodeSpacing: 44,
+          rankSpacing: 52,
+          padding: 12,
+          // Render at intrinsic size and let .mermaid scroll horizontally. With
+          // useMaxWidth, wide diagrams are scaled down until labels are unreadable.
+          useMaxWidth: false,
+        },
+        sequence: {
+          useMaxWidth: false,
+          mirrorActors: false,
+          messageFontFamily:
+            '"JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace',
+        },
       },
     }),
     starlight({

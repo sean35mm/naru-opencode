@@ -1,62 +1,395 @@
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+/* ---------- Tokens ---------- */
+
 :root {
-  --sl-color-accent-low: #e3e8ff;
-  --sl-color-accent: #4556c7;
-  --sl-color-accent-high: #18235f;
-  --sl-color-white: #151827;
-  --sl-color-gray-1: #24283b;
-  --sl-color-gray-2: #41465d;
-  --sl-color-gray-3: #626980;
-  --sl-color-gray-4: #9298aa;
-  --sl-color-gray-5: #c5c9d4;
-  --sl-color-gray-6: #e7e8ee;
-  --sl-color-gray-7: #f6f7fb;
+  --sl-font: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --sl-font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --sl-color-accent-low: #dfe4ff;
+  --sl-color-accent: #3f4fbe;
+  --sl-color-accent-high: #1b2456;
+  --sl-color-white: #14161d;
+  --sl-color-gray-1: #22252e;
+  --sl-color-gray-2: #3d4250;
+  --sl-color-gray-3: #5f6675;
+  --sl-color-gray-4: #8f96a5;
+  --sl-color-gray-5: #c8ccd6;
+  --sl-color-gray-6: #e8eaf0;
+  --sl-color-gray-7: #f5f6fa;
   --sl-color-black: #ffffff;
+
+  --naru-hairline: #dcdfe8;
+  --naru-eyebrow: #5f6675;
+  --naru-read: #2f8f78;
+  --naru-shell: #6f8f2f;
+  --naru-write: #b8760f;
+  --naru-danger: #c0392b;
+
+  --naru-rule: 1px solid var(--naru-hairline);
+  --naru-radius: 4px;
 }
 
 :root[data-theme='dark'] {
-  --sl-color-accent-low: #202a62;
-  --sl-color-accent: #aeb9ff;
-  --sl-color-accent-high: #e4e7ff;
-  --sl-color-white: #f7f7fc;
-  --sl-color-gray-1: #dfe1eb;
-  --sl-color-gray-2: #b8bdcf;
-  --sl-color-gray-3: #858ca3;
-  --sl-color-gray-4: #555c72;
-  --sl-color-gray-5: #343a4d;
-  --sl-color-gray-6: #24293a;
-  --sl-color-gray-7: #191d2b;
-  --sl-color-black: #111420;
+  --sl-color-accent-low: #1c234f;
+  --sl-color-accent: #a9b4ff;
+  --sl-color-accent-high: #dfe4ff;
+  --sl-color-white: #f7f8fb;
+  --sl-color-gray-1: #dfe2ea;
+  --sl-color-gray-2: #b4bac7;
+  --sl-color-gray-3: #7f8797;
+  --sl-color-gray-4: #4a5060;
+  --sl-color-gray-5: #262a34;
+  --sl-color-gray-6: #1a1d25;
+  --sl-color-gray-7: #12141a;
+  --sl-color-black: #0b0c10;
+
+  --naru-hairline: #262a34;
+  --naru-eyebrow: #7f8797;
+  --naru-read: #5fc4a8;
+  --naru-shell: #a8c46a;
+  --naru-write: #e0a444;
+  --naru-danger: #ef6f60;
 }
+
+/* ---------- Typography ---------- */
 
 body {
-  background-image:
-    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--sl-color-accent) 9%, transparent), transparent 28rem),
-    linear-gradient(180deg, color-mix(in srgb, var(--sl-color-gray-7) 68%, transparent), transparent 24rem);
+  font-synthesis-weight: none;
+  -webkit-font-smoothing: antialiased;
 }
+
+.sl-markdown-content {
+  --sl-text-h2: 1.4rem;
+  --sl-text-h3: 1.125rem;
+  line-height: 1.68;
+}
+
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4 {
+  font-weight: 620;
+  letter-spacing: -0.022em;
+}
+
+h1,
+.content-panel h1 {
+  letter-spacing: -0.032em;
+  line-height: 1.1;
+}
+
+.sl-markdown-content h2 {
+  margin-top: 2.75rem;
+  padding-top: 1.5rem;
+  border-top: var(--naru-rule);
+}
+
+.sl-markdown-content > .sl-heading-wrapper:first-child h2 {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 1.75rem;
+}
+
+.sl-markdown-content h3 {
+  margin-top: 2rem;
+  color: var(--sl-color-white);
+}
+
+.sl-markdown-content a:not(.naru-card) {
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
+}
+
+.sl-markdown-content strong {
+  font-weight: 640;
+  color: var(--sl-color-white);
+}
+
+/* ---------- Chrome ---------- */
 
 .site-title {
-  font-weight: 750;
-  letter-spacing: -0.02em;
+  font-family: var(--sl-font-mono);
+  font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
 }
 
-:focus-visible {
-  outline: 3px solid var(--sl-color-accent);
-  outline-offset: 3px;
+header.header {
+  border-bottom: var(--naru-rule);
+  background: var(--sl-color-black);
 }
 
-.mermaid {
-  max-width: 100%;
-  overflow-x: auto;
-  padding: 1rem;
-  border: 1px solid var(--sl-color-gray-5);
-  border-radius: 0.75rem;
-  background: color-mix(in srgb, var(--sl-color-gray-7) 82%, transparent);
+.sidebar-pane {
+  border-inline-end: var(--naru-rule);
+  background: var(--sl-color-black);
 }
 
-.mermaid svg {
+.sidebar-content .group-label,
+.sidebar-content summary .group-label > span {
+  font-family: var(--sl-font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--naru-eyebrow);
+}
+
+.sidebar-content a {
+  font-size: 0.875rem;
+  border-radius: var(--naru-radius);
+}
+
+.sidebar-content a[aria-current='page'] {
+  font-weight: 600;
+}
+
+.right-sidebar {
+  border-inline-start: var(--naru-rule);
+}
+
+starlight-toc h2 {
+  font-family: var(--sl-font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+/* ---------- Blocks ---------- */
+
+.sl-markdown-content :not(pre) > code {
+  font-size: 0.86em;
+  padding: 0.15em 0.38em;
+  border: var(--naru-rule);
+  border-radius: var(--naru-radius);
+  background: var(--sl-color-gray-7);
+}
+
+.sl-markdown-content table {
+  font-size: 0.9rem;
+  border-collapse: collapse;
+}
+
+.sl-markdown-content th {
+  font-family: var(--sl-font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--naru-eyebrow);
+  border-bottom: 1px solid var(--sl-color-gray-4);
+}
+
+.sl-markdown-content td {
+  border-bottom: var(--naru-rule);
+}
+
+.sl-markdown-content .starlight-aside {
+  border-inline-start-width: 2px;
+  border-radius: 0;
+  background: transparent;
+  padding-block: 0.5rem;
+}
+
+.sl-markdown-content .starlight-aside__title {
+  font-family: var(--sl-font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+/* ---------- Landing ---------- */
+
+.hero {
+  padding-block: 1rem 0;
+}
+
+.hero > .stack {
+  align-items: start;
+  text-align: start;
+}
+
+.hero .copy {
+  align-items: start;
+  text-align: start;
+  max-width: 52ch;
+}
+
+.hero .copy::before {
+  content: 'Adaptive multi-agent · OpenCode 1.18.4+';
+  font-family: var(--sl-font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--naru-eyebrow);
+}
+
+.hero h1 {
+  font-size: clamp(2.4rem, 6vw, 3.75rem);
+  font-weight: 640;
+  letter-spacing: -0.038em;
+  line-height: 1.04;
+}
+
+.hero .tagline {
+  font-size: clamp(1.02rem, 1.6vw, 1.2rem);
+  line-height: 1.55;
+  color: var(--sl-color-gray-2);
+}
+
+.hero .actions {
+  justify-content: start;
+  margin-top: 0.75rem;
+  padding-bottom: 2.75rem;
+  border-bottom: var(--naru-rule);
+  width: 100%;
+}
+
+.hero .actions .sl-link-button {
+  font-family: var(--sl-font-mono);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border-radius: var(--naru-radius);
+  padding: 0.6rem 1.1rem;
+}
+
+.hero .actions .sl-link-button.minimal {
+  padding-inline: 0.5rem;
+}
+
+.naru-grid {
+  display: grid;
+  gap: 0;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  border-top: var(--naru-rule);
+  border-inline-start: var(--naru-rule);
+  margin-top: 3rem;
+}
+
+.naru-card {
   display: block;
+  padding: 1.5rem 1.5rem 1.75rem;
+  border-bottom: var(--naru-rule);
+  border-inline-end: var(--naru-rule);
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 0.15s ease;
+}
+
+.naru-card:hover {
+  background: var(--sl-color-gray-7);
+}
+
+.naru-card__index {
+  font-family: var(--sl-font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.11em;
+  color: var(--naru-eyebrow);
+}
+
+.naru-card__title {
+  font-size: 1rem;
+  font-weight: 620;
+  letter-spacing: -0.015em;
+  margin: 0.6rem 0 0.4rem;
+  color: var(--sl-color-white);
+}
+
+.naru-card__body {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--sl-color-gray-3);
+  margin: 0;
+}
+
+/* ---------- Diagrams ---------- */
+
+/* astro-mermaid appends its own stylesheet to <head> at runtime, so it beats equal
+   specificity. These selectors are deliberately more specific than its
+   `pre.mermaid`, `[data-theme=...] pre.mermaid[data-processed]`, and
+   `pre.mermaid svg` rules. */
+.sl-markdown-content pre.mermaid,
+:root[data-theme='light'] .sl-markdown-content pre.mermaid[data-processed],
+:root[data-theme='dark'] .sl-markdown-content pre.mermaid[data-processed] {
+  display: block;
+  max-width: 100%;
+  min-height: 0;
+  overflow-x: auto;
+  margin-block: 1.75rem;
+  padding: 1.5rem 1rem;
+  border: var(--naru-rule);
+  border-radius: var(--naru-radius);
+  background: var(--sl-color-gray-7);
+}
+
+/* Keep mermaid's intrinsic width/height attributes authoritative and let the
+   container scroll. A CSS width of auto would resolve to 100% and shrink the
+   diagram until its labels were unreadable. */
+.sl-markdown-content pre.mermaid svg {
+  display: block;
+  max-width: none;
   height: auto;
   margin-inline: auto;
+}
+
+.naru-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.1rem;
+  margin: 0.75rem 0 1.75rem;
+  padding: 0;
+  list-style: none;
+  font-family: var(--sl-font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--naru-eyebrow);
+}
+
+/* Hug the diagram it describes, but only when it directly follows one. */
+.mermaid + .naru-legend {
+  margin-top: -0.9rem;
+}
+
+.naru-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.naru-legend li::before {
+  content: '';
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.naru-legend li[data-kind='read'] {
+  color: var(--naru-read);
+}
+
+.naru-legend li[data-kind='shell'] {
+  color: var(--naru-shell);
+}
+
+.naru-legend li[data-kind='write'] {
+  color: var(--naru-write);
+}
+
+.naru-legend li[data-kind='danger'] {
+  color: var(--naru-danger);
+}
+
+/* ---------- Accessibility ---------- */
+
+:focus-visible {
+  outline: 2px solid var(--sl-color-accent);
+  outline-offset: 3px;
 }
 
 @media (prefers-reduced-motion: reduce) {

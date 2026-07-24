@@ -7,17 +7,40 @@ Naru requires OpenCode 1.18.4 or later and Node.js or Bun for the safe installer
 
 ```mermaid
 flowchart LR
-  A[Clone repository] --> B[Preview install.sh options]
-  B --> C{Review preview}
-  C -->|--apply| D[Transactional install]
-  D --> E{Target}
-  E -->|default| F[~/.config/opencode]
-  E -->|--project| G[Current .opencode]
-  E -->|--dir PATH| H[Custom config directory]
-  D --> I[Write ownership manifest]
-  I --> J[Restart OpenCode]
-  J --> K["Ask naturally or use a Naru skill"]
+  A["Clone repository"]:::read
+  B["Preview install.sh options"]:::read
+  C{"Review the preview"}:::gate
+  D["Transactional install"]:::write
+  I["Write ownership manifest"]:::write
+  J["Restart OpenCode"]:::gate
+  K["Ask naturally, or use a Naru skill"]:::entry
+
+  subgraph targets["INSTALL TARGET"]
+    direction TB
+    F["~/.config/opencode<br/><small>default</small>"]:::write
+    G["Current .opencode<br/><small>--project</small>"]:::write
+    H["Custom directory<br/><small>--dir PATH</small>"]:::write
+  end
+
+  A --> B --> C
+  C -->|"--apply"| D
+  D --> targets
+  D --> I --> J --> K
+
+  style targets fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
+
+  classDef entry fill:#dfe4ff,stroke:#3f4fbe,color:#1b2456
+  classDef read fill:#d3ece5,stroke:#2f8f78,color:#123a31
+  classDef write fill:#ffe4bd,stroke:#b8760f,color:#4a2c00
+  classDef gate fill:#e8eaf0,stroke:#8f96a5,color:#22252e
 ```
+
+<ul class="naru-legend">
+  <li data-kind="read">Read-only preview</li>
+  <li data-kind="write">Writes to disk</li>
+</ul>
+
+Everything left of `--apply` is read-only. `--apply` is the single mutation boundary: nothing is written to disk until you pass it.
 
 **Walkthrough:** `install.sh` previews by default and does not create the target. After review, add `--apply` with the same options. The installer validates and stages changed assets, preserves conflicts unless explicitly replaced, writes `.naru-install.json`, and skips unchanged paths. Skill and agent Markdown are symlinked by default; executable tools, runtime helpers, plugins, and dashboard code are always copied. Restart OpenCode after an applied change, then make one safe natural request, such as “Use the `naru-plan` skill to plan my objective.”
 
@@ -89,4 +112,4 @@ node /path/to/opencode-config/tools/naru-doctor.js --dir /path/to/opencode-confi
 
 The report is provider-free, read-only, bounded, and path-sanitized. It reports manifest-backed scopes and source generation, effective global/project depth, OpenCode/runtime compatibility, routing/runtime config state, and dashboard installation/registration. `--source PATH` enables stale-copy comparison when no symlink can identify the source checkout; `--json` emits the same sanitized report as JSON. Custom scopes are reported as explicit but unconfirmed because the doctor cannot prove that OpenCode loads an arbitrary path.
 
-For migration, manual installation, and recovery details, use the canonical [user guide](https://sean35mm.github.io/naru-opencode/user-guide/).
+For migration, manual installation, and recovery details, use the canonical [user guide](/naru-opencode/user-guide/).

@@ -1,37 +1,86 @@
 ---
 title: Naru for OpenCode
 description: A disciplined multi-agent workflow for OpenCode.
+template: splash
+hero:
+  tagline: Read-only analysis, scoped implementation, verification, and judgment — each with a boundary it cannot exceed.
+  actions:
+    - text: Quickstart
+      link: /naru-opencode/getting-started/quickstart/
+      variant: primary
+    - text: Install ▸
+      link: /naru-opencode/getting-started/installation/
+      variant: minimal
 ---
-
-Naru adds read-only analysis, scoped implementation, verification, judgment, optional local scheduler gates, and a terminal activity view to [OpenCode](https://opencode.ai).
-
-Start with the [quickstart](https://sean35mm.github.io/naru-opencode/getting-started/quickstart/) or the detailed [user guide](https://sean35mm.github.io/naru-opencode/user-guide/). For a safety-first view of the runtime, read [scheduler modes](https://sean35mm.github.io/naru-opencode/runtime/scheduler-modes/) and [limitations](https://sean35mm.github.io/naru-opencode/reference/limitations/).
 
 ## How the pieces fit
 
+Naru has two lanes. Advisory skills only ever return guidance. The implementation lane is the only path that reaches your files, and within it exactly one agent — the Implement minion — is permitted to write. A local scheduler and telemetry are optional and off by default.
+
 ```mermaid
-flowchart TD
-  U[User] --> C[On-demand Naru skills]
-  U --> O[naru-orchestrator]
-  C --> R[Advisory guidance]
-  O --> A[Adaptive analysis]
-  A --> I[Scoped Implement minion]
-  I --> V[Verify shards]
-  V --> J[Judge]
-  O --> S[Optional local scheduler]
-  S --> T[Dashboard telemetry]
-  R --> G[Advisory report]
-  J --> G
+flowchart TB
+  U(["User"]):::actor
+
+  subgraph advisory["ADVISORY — read-only, grants no tools"]
+    direction LR
+    SK["4 on-demand skills"]:::entry --> AG["Advisory report"]:::read
+  end
+
+  subgraph impl["IMPLEMENTATION — the only path to your files"]
+    direction LR
+    ORC{{"naru-orchestrator<br/>never edits"}}:::coord --> AN["Analysis lenses"]:::read
+    AN --> IMP["Implement"]:::write
+    IMP --> VJ["Verify and Judge"]:::gate
+  end
+
+  SCH["Local scheduler and telemetry<br/>optional, off by default"]:::gate
+
+  U --> SK
+  U --> ORC
+  ORC -.-> SCH
+
+  style advisory fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
+  style impl fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
+
+  classDef actor fill:#eef0f6,stroke:#5f6675,color:#14161d
+  classDef entry fill:#dfe4ff,stroke:#3f4fbe,color:#1b2456
+  classDef coord fill:#ccd3ff,stroke:#3f4fbe,color:#1b2456
+  classDef read fill:#d3ece5,stroke:#2f8f78,color:#123a31
+  classDef write fill:#ffe4bd,stroke:#b8760f,color:#4a2c00
+  classDef gate fill:#e8eaf0,stroke:#8f96a5,color:#22252e
 ```
 
-**Walkthrough:** Four on-demand skills provide plan, impact, triage, or dry-run review guidance. For implementation, the selected orchestrator chooses useful optional lenses and delegates only to its seven minions; scoped edits go only to Implement, followed by Verify and Judge. The optional scheduler observes or gates declared Task admissions; the dashboard displays local activity and telemetry.
+<ul class="naru-legend">
+  <li data-kind="read">Read-only</li>
+  <li data-kind="write">Writes files</li>
+  <li data-kind="gate">Gate</li>
+</ul>
 
-## Choose a path
+This colour vocabulary is used in every diagram across these docs: teal is read-only, amber writes to your workspace, red marks something that is refused or explicitly unproven.
 
-- **Install Naru:** [installation](https://sean35mm.github.io/naru-opencode/getting-started/installation/)
-- **Understand delegation:** [adaptive delegation](https://sean35mm.github.io/naru-opencode/concepts/adaptive-delegation/) and [protocols](https://sean35mm.github.io/naru-opencode/concepts/protocols/)
-- **Configure the runtime:** [scheduler modes](https://sean35mm.github.io/naru-opencode/runtime/scheduler-modes/) and [runtime configuration](https://sean35mm.github.io/naru-opencode/reference/runtime-config/)
-- **Use a review safely:** [review lane](https://sean35mm.github.io/naru-opencode/workflows/review-lane/)
-- **Integrate another agent:** [agent workflows](https://sean35mm.github.io/naru-opencode/workflows/agents/) and the canonical [integration guide](https://sean35mm.github.io/naru-opencode/agent-integration/)
+<div class="naru-grid">
+  <a class="naru-card" href="/naru-opencode/getting-started/quickstart/">
+    <span class="naru-card__index">01 — START</span>
+    <p class="naru-card__title">Quickstart</p>
+    <p class="naru-card__body">Preview the install, apply it, then take exactly one safe first action.</p>
+  </a>
+  <a class="naru-card" href="/naru-opencode/concepts/adaptive-delegation/">
+    <span class="naru-card__index">02 — CONCEPTS</span>
+    <p class="naru-card__title">Adaptive delegation</p>
+    <p class="naru-card__body">How the orchestrator picks analysis lenses, and which of the seven minions may write.</p>
+  </a>
+  <a class="naru-card" href="/naru-opencode/runtime/scheduler-modes/">
+    <span class="naru-card__index">03 — RUNTIME</span>
+    <p class="naru-card__title">Scheduler modes</p>
+    <p class="naru-card__body">Off, observe, or enforce — and what each mode does and does not guarantee.</p>
+  </a>
+  <a class="naru-card" href="/naru-opencode/reference/limitations/">
+    <span class="naru-card__index">04 — BOUNDARIES</span>
+    <p class="naru-card__title">Limitations</p>
+    <p class="naru-card__body">What Naru enforces, what it merely advises, and what it never claims to prove.</p>
+  </a>
+</div>
 
-The detailed [user guide](https://sean35mm.github.io/naru-opencode/user-guide/), [development guide](https://sean35mm.github.io/naru-opencode/development/), and [agent integration guide](https://sean35mm.github.io/naru-opencode/agent-integration/) remain the canonical references.
+## Canonical references
+
+The [user guide](/naru-opencode/user-guide/) covers complete operational detail, [agent integration](/naru-opencode/agent-integration/) is the reference for exposing Naru to a custom agent, and [development](/naru-opencode/development/) covers the repository and its test lanes.

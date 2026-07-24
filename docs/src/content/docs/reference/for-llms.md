@@ -16,9 +16,9 @@ description: A compact integration and safety checklist for agents working with 
 
 ## Useful links
 
-- [Agent workflows](https://sean35mm.github.io/naru-opencode/workflows/agents/)
-- [Canonical agent integration guide](https://sean35mm.github.io/naru-opencode/agent-integration/)
-- [Limitations and trust boundaries](https://sean35mm.github.io/naru-opencode/reference/limitations/)
-- [Canonical user guide](https://sean35mm.github.io/naru-opencode/user-guide/)
+- [Agent workflows](/naru-opencode/workflows/agents/)
+- [Canonical agent integration guide](/naru-opencode/agent-integration/)
+- [Limitations and trust boundaries](/naru-opencode/reference/limitations/)
+- [Canonical user guide](/naru-opencode/user-guide/)
 
-Prefer the canonical [agent integration guide](https://sean35mm.github.io/naru-opencode/agent-integration/) when exact permissions or integration wording matters.
+Prefer the canonical [agent integration guide](/naru-opencode/agent-integration/) when exact permissions or integration wording matters.
