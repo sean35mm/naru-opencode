@@ -541,5 +541,13 @@ async function main() {
   }
 }
 
-const invokedPath = process.argv[1] === undefined ? null : realpathSync(process.argv[1]);
-if (invokedPath === realpathSync(fileURLToPath(import.meta.url))) await main();
+function realpathOrNull(value) {
+  try {
+    return realpathSync(value);
+  } catch {
+    return null;
+  }
+}
+
+const invokedPath = process.argv[1] === undefined ? null : realpathOrNull(process.argv[1]);
+if (invokedPath !== null && invokedPath === realpathSync(fileURLToPath(import.meta.url))) await main();

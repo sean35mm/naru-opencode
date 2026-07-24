@@ -12,7 +12,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -46,6 +46,18 @@ function runDoctor(doctor, { home, project, source }) {
   assert.equal(result.stderr, '');
   return JSON.parse(result.stdout);
 }
+
+test('CLI helper modules tolerate virtual Bun argv when imported as tools', async () => {
+  const previousArgv1 = process.argv[1];
+  process.argv[1] = '/$bunfs/root/src/cli/tui/worker.js';
+  try {
+    const nonce = Date.now();
+    await import(`${pathToFileURL(path.join(root, 'tools/naru-lib/install-manifest.mjs')).href}?virtual-bun-argv=${nonce}`);
+    await import(`${pathToFileURL(path.join(root, 'tools/naru-doctor.js')).href}?virtual-bun-argv=${nonce}`);
+  } finally {
+    process.argv[1] = previousArgv1;
+  }
+});
 
 test('doctor is read-only and diagnoses scope, default depth, source generation, and dashboard state', async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-doctor-test-'));

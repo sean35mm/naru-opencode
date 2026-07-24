@@ -878,6 +878,11 @@ test('journal is bounded, digest-linked, and recursively redacts sensitive keys 
   assert.equal(journal[1].previousDigest, journal[0].digest);
 });
 
+test('scheduler plugin exposes only the runtime plugin entrypoint', async () => {
+  const module = await import(`../plugins/naru-scheduler.js?exports=${Date.now()}`);
+  assert.deepEqual(Object.keys(module), ['NaruSchedulerPlugin']);
+});
+
 test('scheduler runtime and plugin contain no native session creation or external write path', async () => {
   const pluginSource = await readFile(new URL('../plugins/naru-scheduler.js', import.meta.url), 'utf8');
   const toolSource = await readFile(new URL('../tools/naru-scheduler.js', import.meta.url), 'utf8');

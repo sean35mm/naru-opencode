@@ -339,10 +339,3 @@ export const NaruSchedulerPlugin = async ({ client, directory } = {}, options = 
     },
   };
 };
-
-export function resetSchedulerPluginStateForTests(registry = getSchedulerRuntimeRegistry()) {
-  registry.lifecycle.sessions.clear();
-  registry.lifecycle.taskCalls.clear();
-  registry.lifecycle.seenEvents.clear();
-  registry.lifecycle.incidents.clear();
-}
