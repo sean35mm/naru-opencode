@@ -26,9 +26,7 @@ flowchart LR
 - No sandboxing of repository code, package scripts, shell commands, tools, providers, or installed plugins.
 - No automatic authorization for edits, dependency changes, Git mutation, migrations, database writes, posting, or deployment.
 - No guarantee that dashboard telemetry exists outside the same process or represents a global system state.
-- No automatic correction of OpenCode's omitted/default top-level `subagent_depth` of `1`. Naru needs an effective value of at least `2`; the installer changes it only with explicit `--configure-subagent-depth`.
-
-If delegation fails at the depth limit, confirm OpenCode is 1.18.4+, check global/project precedence for an effective integer of at least `2`, and restart OpenCode after updating it. Exactly `2` is recommended because larger values do not help Naru and can broaden unrelated recursion and cost. Project mode config lives in the project root, not `.opencode`; a custom `--dir` matters only if OpenCode loads it.
+- Naru's current selected-orchestrator-to-seven-minion design is compatible with OpenCode's default depth of `1`. `--configure-subagent-depth` remains a deprecated accepted no-op for migration compatibility.
 
 Use Protocol 3 as a bounded runtime check in addition to—not instead of—the [Protocol 2 workflow](https://sean35mm.github.io/naru-opencode/concepts/protocols/), review, and human approval boundaries.
 

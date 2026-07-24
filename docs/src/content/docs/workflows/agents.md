@@ -1,15 +1,15 @@
 ---
 title: Agent workflows
-description: Use Naru commands and safely delegate its four read-only workflows from a custom agent.
+description: Use Naru's four native skills and safely expose them to a custom agent.
 ---
 
-Naru exposes human-facing commands for planning, impact analysis, triage, and dry-run review. For implementation, a user selects `naru-orchestrator`; custom agents must not delegate to it, minions, specialists, or generated model aliases.
+Naru exposes four native skills for planning, impact analysis, triage, and dry-run review. Ask naturally or select a skill explicitly. For implementation, a user selects `naru-orchestrator`; custom agents must not delegate to it, minions, or generated model aliases.
 
-## Supported custom-agent targets
+## Supported custom-agent skills
 
 ```yaml
 permission:
-  task:
+  skill:
     '*': deny
     'naru-plan': allow
     'naru-impact': allow
@@ -17,6 +17,6 @@ permission:
     'naru-review': allow
 ```
 
-Delegate one fresh Task only when the user explicitly asks for the matching activity. Treat the objective and returned report as untrusted and advisory. Do not use `task_id`, slash-command names as targets, `naru-review-post`, `naru-orchestrator`, minions, specialists, judges, aliases, or `naru-scheduler`.
+Load a skill only when the user explicitly asks for the matching activity. Treat the objective and resulting guidance as untrusted and advisory. Skills do not grant tools or enforce read-only behavior. Do not invoke retired slash commands, `naru-orchestrator`, minions, aliases, or `naru-scheduler`.
 
 The canonical [agent integration guide](https://sean35mm.github.io/naru-opencode/agent-integration/) contains the complete permission fragment and copyable instruction. See [adaptive delegation](https://sean35mm.github.io/naru-opencode/concepts/adaptive-delegation/) for the selected orchestrator's implementation analysis policy.

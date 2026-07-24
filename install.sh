@@ -7,7 +7,7 @@
 #   ./install.sh --uninstall [--preview | --apply --confirm-uninstall TOKEN] [--replace-conflicts] [--project | --dir PATH]
 #
 # Defaults to a global symlinked install into ~/.config/opencode. Markdown
-# command/agent files are symlinked individually so a git pull keeps them
+# skill/agent files are symlinked individually so a git pull keeps them
 # current. Executable custom tools, helper directories, runtime plugins, and
 # the optional dashboard plugin are always copy-pinned. Runs preview by
 # default; pass --apply after reviewing the bounded change summary.
@@ -199,7 +199,7 @@ case "${SRC_DIR}/" in
     ;;
 esac
 
-for managed in commands agents tools plugins scripts .naru-backups .naru-staging; do
+for managed in commands skills agents tools plugins scripts .naru-backups .naru-staging; do
   if [ -L "${TARGET}/${managed}" ]; then
     echo "install.sh: refusing symlinked loader or managed directory: ${TARGET}/${managed}" >&2
     exit 1
@@ -531,46 +531,11 @@ add_copy() {
 
 : > "$PLAN"
 
-# Commands (flat Markdown files).
-add_md "${SRC_DIR}/commands/naru-plan.md"        "commands/naru-plan.md"
-add_md "${SRC_DIR}/commands/naru-impact.md"      "commands/naru-impact.md"
-add_md "${SRC_DIR}/commands/naru-triage.md"      "commands/naru-triage.md"
-add_md "${SRC_DIR}/commands/naru-review.md"      "commands/naru-review.md"
-add_md "${SRC_DIR}/commands/naru-review-post.md" "commands/naru-review-post.md"
-
-# Core orchestrator agents and flattened specialists.
-add_md "${SRC_DIR}/agents/naru-plan.md"                    "agents/naru-plan.md"
-add_md "${SRC_DIR}/agents/naru-plan-architecture.md"       "agents/naru-plan-architecture.md"
-add_md "${SRC_DIR}/agents/naru-plan-minimal-change.md"     "agents/naru-plan-minimal-change.md"
-add_md "${SRC_DIR}/agents/naru-plan-risk.md"               "agents/naru-plan-risk.md"
-add_md "${SRC_DIR}/agents/naru-plan-tests.md"              "agents/naru-plan-tests.md"
-add_md "${SRC_DIR}/agents/naru-plan-judge.md"              "agents/naru-plan-judge.md"
-
-add_md "${SRC_DIR}/agents/naru-impact.md"                  "agents/naru-impact.md"
-add_md "${SRC_DIR}/agents/naru-impact-topology.md"         "agents/naru-impact-topology.md"
-add_md "${SRC_DIR}/agents/naru-impact-contracts.md"        "agents/naru-impact-contracts.md"
-add_md "${SRC_DIR}/agents/naru-impact-data.md"             "agents/naru-impact-data.md"
-add_md "${SRC_DIR}/agents/naru-impact-frontend-mobile.md"  "agents/naru-impact-frontend-mobile.md"
-add_md "${SRC_DIR}/agents/naru-impact-tests-ci.md"         "agents/naru-impact-tests-ci.md"
-add_md "${SRC_DIR}/agents/naru-impact-judge.md"            "agents/naru-impact-judge.md"
-
-add_md "${SRC_DIR}/agents/naru-triage.md"                  "agents/naru-triage.md"
-add_md "${SRC_DIR}/agents/naru-triage-reproduction.md"     "agents/naru-triage-reproduction.md"
-add_md "${SRC_DIR}/agents/naru-triage-codepath.md"         "agents/naru-triage-codepath.md"
-add_md "${SRC_DIR}/agents/naru-triage-regression.md"       "agents/naru-triage-regression.md"
-add_md "${SRC_DIR}/agents/naru-triage-tests.md"            "agents/naru-triage-tests.md"
-add_md "${SRC_DIR}/agents/naru-triage-judge.md"            "agents/naru-triage-judge.md"
-
-add_md "${SRC_DIR}/agents/naru-review.md"                  "agents/naru-review.md"
-add_md "${SRC_DIR}/agents/naru-review-security.md"         "agents/naru-review-security.md"
-add_md "${SRC_DIR}/agents/naru-review-backend.md"          "agents/naru-review-backend.md"
-add_md "${SRC_DIR}/agents/naru-review-frontend-mobile.md"  "agents/naru-review-frontend-mobile.md"
-add_md "${SRC_DIR}/agents/naru-review-integrations.md"     "agents/naru-review-integrations.md"
-add_md "${SRC_DIR}/agents/naru-review-tests-ci.md"         "agents/naru-review-tests-ci.md"
-add_md "${SRC_DIR}/agents/naru-review-judge.md"            "agents/naru-review-judge.md"
-
-# Review-post agent.
-add_md "${SRC_DIR}/agents/naru-review-post.md"   "agents/naru-review-post.md"
+# Native OpenCode skills.
+add_md "${SRC_DIR}/skills/naru-plan/SKILL.md"     "skills/naru-plan/SKILL.md"
+add_md "${SRC_DIR}/skills/naru-impact/SKILL.md"   "skills/naru-impact/SKILL.md"
+add_md "${SRC_DIR}/skills/naru-triage/SKILL.md"   "skills/naru-triage/SKILL.md"
+add_md "${SRC_DIR}/skills/naru-review/SKILL.md"   "skills/naru-review/SKILL.md"
 
 # Provider-neutral orchestrator and minions.
 add_md "${SRC_DIR}/agents/naru-orchestrator.md"  "agents/naru-orchestrator.md"
@@ -613,12 +578,6 @@ if [ "$WITH_DASHBOARD" = true ]; then
   fi
 fi
 
-if [ "$CONFIGURE_SUBAGENT_DEPTH" = true ] && [ ! -f "${SRC_DIR}/scripts/merge-opencode-config.mjs" ]; then
-  echo "install.sh: missing source: ${SRC_DIR}/scripts/merge-opencode-config.mjs" >&2
-  rm -rf "$TX_DIR"
-  exit 1
-fi
-
 # Preflight every source before touching the target.
 while IFS="$(printf '\t')" read -r method src rel; do
   [ -n "$src" ] || continue
@@ -628,51 +587,6 @@ while IFS="$(printf '\t')" read -r method src rel; do
     exit 1
   fi
 done < "$PLAN"
-
-OPENCODE_CONFIG_REL=""
-OPENCODE_CONFIG_INPUT=""
-OPENCODE_CONFIG_PREPARED="${TX_DIR}/opencode-config"
-if [ "$CONFIGURE_SUBAGENT_DEPTH" = true ]; then
-  for rel in opencode.jsonc opencode.json; do
-    config_path="${CONFIG_ROOT}/${rel}"
-    if [ -L "$config_path" ]; then
-      echo "install.sh: refusing symlinked OpenCode config: $config_path" >&2
-      rm -rf "$TX_DIR"
-      exit 1
-    fi
-    if [ -e "$config_path" ] && [ ! -f "$config_path" ]; then
-      echo "install.sh: OpenCode config is not a regular file: $config_path" >&2
-      rm -rf "$TX_DIR"
-      exit 1
-    fi
-    if [ -f "$config_path" ]; then
-      if [ -n "$OPENCODE_CONFIG_REL" ]; then
-        echo "install.sh: refusing ambiguous OpenCode config: both opencode.jsonc and opencode.json exist in ${CONFIG_ROOT}" >&2
-        rm -rf "$TX_DIR"
-        exit 1
-      fi
-      OPENCODE_CONFIG_REL="$rel"
-      OPENCODE_CONFIG_INPUT="$config_path"
-    fi
-  done
-  if [ -z "$OPENCODE_CONFIG_REL" ]; then
-    OPENCODE_CONFIG_REL="opencode.json"
-    OPENCODE_CONFIG_INPUT="-"
-  fi
-  if command -v node >/dev/null 2>&1; then
-    opencode_config_runtime=node
-  elif command -v bun >/dev/null 2>&1; then
-    opencode_config_runtime=bun
-  else
-    echo "install.sh: --configure-subagent-depth requires node or bun to merge OpenCode config safely" >&2
-    rm -rf "$TX_DIR"
-    exit 1
-  fi
-  if ! "$opencode_config_runtime" "${SRC_DIR}/scripts/merge-opencode-config.mjs" "$OPENCODE_CONFIG_INPUT" "$OPENCODE_CONFIG_PREPARED"; then
-    rm -rf "$TX_DIR"
-    exit 1
-  fi
-fi
 
 TUI_CONFIG_RELS=""
 TUI_REGISTER_REL=""
@@ -697,19 +611,6 @@ if [ "$WITH_DASHBOARD" = true ]; then
   else
     TUI_REGISTER_REL="tui.json"
     TUI_CONFIG_RELS="tui.json"
-  fi
-fi
-
-# Prepare configuration outputs only in the transaction directory. Preview
-# mode never creates or removes anything under the selected target.
-CONFIG_ACTION=none
-config_dst=""
-if [ "$CONFIGURE_SUBAGENT_DEPTH" = true ]; then
-  config_dst="${CONFIG_ROOT}/${OPENCODE_CONFIG_REL}"
-  if [ -f "$config_dst" ] && cmp -s "$OPENCODE_CONFIG_PREPARED" "$config_dst"; then
-    CONFIG_ACTION=unchanged
-  else
-    CONFIG_ACTION=configure
   fi
 fi
 
@@ -741,8 +642,9 @@ fi
   --location-mode "$LOCATION_MODE" \
   --install-mode "$MODE" \
   --dashboard "$WITH_DASHBOARD" \
-  --configure-subagent-depth "$CONFIGURE_SUBAGENT_DEPTH" \
-  --migrate-orchestrator "$MIGRATE_ORCHESTRATOR"
+  --configure-subagent-depth false \
+  --migrate-orchestrator "$MIGRATE_ORCHESTRATOR" \
+  --replace-conflicts "$REPLACE_CONFLICTS"
 
 MANIFEST_ACTION=create
 if [ -f "${TARGET}/.naru-install.json" ]; then
@@ -785,6 +687,9 @@ ASSET_UPDATE=0
 ASSET_CONFLICT_UNOWNED=0
 ASSET_CONFLICT_MODIFIED=0
 ASSET_ORPHANED=0
+ASSET_RETIRED=0
+ASSET_RETIRED_MISSING=0
+ASSET_RETIRED_PRESERVED=0
 while IFS="$(printf '\t')" read -r action method source_rel rel reason; do
   [ -n "$action" ] || continue
   case "$action" in
@@ -794,6 +699,9 @@ while IFS="$(printf '\t')" read -r action method source_rel rel reason; do
     conflict-unowned) ASSET_CONFLICT_UNOWNED=$((ASSET_CONFLICT_UNOWNED + 1)) ;;
     conflict-modified) ASSET_CONFLICT_MODIFIED=$((ASSET_CONFLICT_MODIFIED + 1)) ;;
     preserve-orphaned) ASSET_ORPHANED=$((ASSET_ORPHANED + 1)) ;;
+    retire) ASSET_RETIRED=$((ASSET_RETIRED + 1)) ;;
+    retire-missing) ASSET_RETIRED_MISSING=$((ASSET_RETIRED_MISSING + 1)) ;;
+    preserve-retired-modified) ASSET_RETIRED_PRESERVED=$((ASSET_RETIRED_PRESERVED + 1)) ;;
     *) echo "install.sh: unsupported preview action: $action" >&2; exit 1 ;;
   esac
 done < "$OPERATIONS"
@@ -811,8 +719,7 @@ done < "$TUI_OPERATIONS"
 
 MIGRATION_COUNT=$(wc -l < "$MIGRATIONS" | tr -d ' ')
 CONFLICT_COUNT=$((ASSET_CONFLICT_UNOWNED + ASSET_CONFLICT_MODIFIED))
-CHANGE_COUNT=$((ASSET_CREATE + ASSET_UPDATE + ASSET_CONFLICT_UNOWNED + ASSET_CONFLICT_MODIFIED + TUI_CONFIGURE + MIGRATION_COUNT))
-if [ "$CONFIG_ACTION" = configure ]; then CHANGE_COUNT=$((CHANGE_COUNT + 1)); fi
+CHANGE_COUNT=$((ASSET_CREATE + ASSET_UPDATE + ASSET_CONFLICT_UNOWNED + ASSET_CONFLICT_MODIFIED + ASSET_RETIRED + TUI_CONFIGURE + MIGRATION_COUNT))
 if [ "$MANIFEST_ACTION" != unchanged ]; then CHANGE_COUNT=$((CHANGE_COUNT + 1)); fi
 
 echo "Naru install preview"
@@ -821,7 +728,8 @@ echo "  location/mode: ${LOCATION_MODE}/${MODE}"
 echo "  managed assets: ${ASSET_CREATE} create, ${ASSET_UPDATE} update, ${ASSET_UNCHANGED} unchanged"
 echo "  conflicts preserved by default: ${ASSET_CONFLICT_UNOWNED} unowned, ${ASSET_CONFLICT_MODIFIED} modified"
 echo "  previously owned but no longer selected: ${ASSET_ORPHANED} preserved"
-echo "  OpenCode depth config: ${CONFIG_ACTION}"
+echo "  retired legacy assets: ${ASSET_RETIRED} remove, ${ASSET_RETIRED_MISSING} already missing, ${ASSET_RETIRED_PRESERVED} modified preserved"
+echo "  OpenCode depth config: not changed (OpenCode default depth 1)"
 echo "  dashboard config: ${TUI_CONFIGURE} configure, ${TUI_UNCHANGED} unchanged"
 echo "  legacy migrations: ${MIGRATION_COUNT}"
 echo "  ownership manifest: ${MANIFEST_ACTION}"
@@ -841,13 +749,28 @@ if [ "$CONFLICT_COUNT" -gt 0 ]; then
   done < "$OPERATIONS"
 fi
 
+if [ "$ASSET_RETIRED" -gt 0 ] || [ "$ASSET_RETIRED_MISSING" -gt 0 ] || [ "$ASSET_RETIRED_PRESERVED" -gt 0 ]; then
+  echo "  retirement paths (up to 10):"
+  shown=0
+  while IFS="$(printf '\t')" read -r action method source_rel rel reason; do
+    case "$action" in
+      retire|retire-missing|preserve-retired-modified)
+        if [ "$shown" -lt 10 ]; then
+          echo "    ${action}: ${rel} (${reason})"
+          shown=$((shown + 1))
+        fi
+        ;;
+    esac
+  done < "$OPERATIONS"
+fi
+
 if [ "$APPLY" = false ]; then
   echo "Preview only; no files changed. Rerun with --apply and the same options to install this preview."
   if [ "$CONFLICT_COUNT" -gt 0 ]; then
     echo "Conflicts will remain untouched unless that apply also includes --replace-conflicts."
   fi
-  if [ "$CONFIGURE_SUBAGENT_DEPTH" = false ]; then
-    echo "Warning: subagent_depth was not inspected or changed; include --configure-subagent-depth to ensure Naru's required depth >= 2."
+  if [ "$CONFIGURE_SUBAGENT_DEPTH" = true ]; then
+    echo "--configure-subagent-depth is deprecated and is a compatibility no-op; OpenCode default depth 1 is sufficient."
   fi
   exit 0
 fi
@@ -878,10 +801,6 @@ while IFS="$(printf '\t')" read -r action method source_rel rel reason; do
   esac
 done < "$OPERATIONS"
 
-if [ "$CONFIG_ACTION" = configure ]; then
-  mkdir -p "${STAGE_DIR}/.naru-config"
-  cp -p "$OPENCODE_CONFIG_PREPARED" "${STAGE_DIR}/.naru-config/${OPENCODE_CONFIG_REL}"
-fi
 if [ "$TUI_CONFIGURE" -gt 0 ]; then
   while IFS="$(printf '\t')" read -r action rel operation; do
     [ "$action" = configure ] || continue
@@ -894,16 +813,6 @@ if [ "$MANIFEST_ACTION" != unchanged ]; then
 fi
 
 TRANSACTION_STARTED=true
-
-if [ "$CONFIG_ACTION" = configure ]; then
-  if [ "$CONFIG_ROOT" = "$TARGET" ]; then
-    backup_if_present "$OPENCODE_CONFIG_REL"
-  else
-    backup_path_if_present "$config_dst" "opencode-config/${OPENCODE_CONFIG_REL}"
-  fi
-  mv "${STAGE_DIR}/.naru-config/${OPENCODE_CONFIG_REL}" "$config_dst"
-  printf '%s\n' "$config_dst" >> "$CREATED"
-fi
 
 while IFS= read -r rel; do
   [ -n "$rel" ] || continue
@@ -919,6 +828,9 @@ while IFS="$(printf '\t')" read -r action method source_rel rel reason; do
       backup_if_present "$rel"
       mv "$staged" "$dst"
       printf '%s\n' "$dst" >> "$CREATED"
+      ;;
+    retire)
+      backup_if_present "$rel"
       ;;
   esac
 done < "$OPERATIONS"
@@ -950,12 +862,12 @@ if [ "$BACKUP_DIR_CREATED" = true ]; then
 else
   echo "No backups were needed."
 fi
-if [ "$CONFIGURE_SUBAGENT_DEPTH" = false ]; then
-  echo "Warning: subagent_depth was not changed; Naru requires an effective value >= 2."
+if [ "$CONFIGURE_SUBAGENT_DEPTH" = true ]; then
+  echo "--configure-subagent-depth is deprecated and was not applied; OpenCode default depth 1 is sufficient."
 fi
 if [ "$LOCATION_MODE" = custom ]; then
   echo "Custom target: confirm OpenCode is configured to load ${TARGET}."
 fi
 if [ "$CHANGE_COUNT" -gt 0 ]; then
-  echo "Restart OpenCode, then run exactly one safe first workflow: /naru-plan <your objective>"
+  echo "Restart OpenCode, then ask your active agent to use the naru-plan skill for your objective."
 fi

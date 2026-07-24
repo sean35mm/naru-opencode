@@ -17,42 +17,9 @@ import {
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const here = p => join(root, p);
 
-const expectedCommands = [
-  'commands/naru-plan.md',
-  'commands/naru-impact.md',
-  'commands/naru-triage.md',
-  'commands/naru-review.md',
-  'commands/naru-review-post.md',
-];
+const expectedSkills = ['naru-impact', 'naru-plan', 'naru-review', 'naru-triage'];
 
 const expectedAgents = [
-  'agents/naru-plan.md',
-  'agents/naru-plan-architecture.md',
-  'agents/naru-plan-minimal-change.md',
-  'agents/naru-plan-risk.md',
-  'agents/naru-plan-tests.md',
-  'agents/naru-plan-judge.md',
-  'agents/naru-impact.md',
-  'agents/naru-impact-topology.md',
-  'agents/naru-impact-contracts.md',
-  'agents/naru-impact-data.md',
-  'agents/naru-impact-frontend-mobile.md',
-  'agents/naru-impact-tests-ci.md',
-  'agents/naru-impact-judge.md',
-  'agents/naru-triage.md',
-  'agents/naru-triage-reproduction.md',
-  'agents/naru-triage-codepath.md',
-  'agents/naru-triage-regression.md',
-  'agents/naru-triage-tests.md',
-  'agents/naru-triage-judge.md',
-  'agents/naru-review.md',
-  'agents/naru-review-security.md',
-  'agents/naru-review-backend.md',
-  'agents/naru-review-frontend-mobile.md',
-  'agents/naru-review-integrations.md',
-  'agents/naru-review-tests-ci.md',
-  'agents/naru-review-judge.md',
-  'agents/naru-review-post.md',
   'agents/naru-orchestrator.md',
   'agents/naru-minion-scout.md',
   'agents/naru-minion-investigate.md',
@@ -84,14 +51,6 @@ const expectedRuntimeFiles = [
 
 const minionRoles = ['scout', 'investigate', 'architect', 'implement', 'debug', 'verify', 'judge'];
 const minionPaths = minionRoles.map(role => `agents/naru-minion-${role}.md`);
-const coreAgents = expectedAgents.filter(
-  p =>
-    p.startsWith('agents/naru-') &&
-    p !== 'agents/naru-review-post.md' &&
-    p !== 'agents/naru-orchestrator.md' &&
-    !p.startsWith('agents/naru-minion-')
-);
-
 const readToolPermissions = [
   'glob',
   'grep',
@@ -299,17 +258,23 @@ function fail(message) {
 }
 
 async function main() {
-  for (const path of [...expectedCommands, ...expectedAgents, ...expectedRuntimeFiles]) {
+  for (const path of [...expectedAgents, ...expectedRuntimeFiles]) {
     if (!(await exists(path))) fail(`missing expected file: ${path}`);
   }
 
-  const reviewPostCommand = readFrontmatter(await readFile(here('commands/naru-review-post.md'), 'utf8'));
-  if (reviewPostCommand?.agent !== 'naru-review-post') fail('review-post command wrapper agent changed');
-  if (reviewPostCommand?.subtask !== 'false') fail('review-post command must execute as a root command');
-
   const actualCommands = (await readdir(here('commands'))).filter(name => name.endsWith('.md')).sort();
-  const expectedCommandNames = expectedCommands.map(path => path.split('/')[1]).sort();
-  if (JSON.stringify(actualCommands) !== JSON.stringify(expectedCommandNames)) fail('command inventory mismatch');
+  if (actualCommands.length !== 0) fail('legacy Core command files remain installed');
+
+  const actualSkills = (await readdir(here('skills'), { withFileTypes: true }))
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort();
+  if (JSON.stringify(actualSkills) !== JSON.stringify(expectedSkills)) fail('skill inventory mismatch');
+  for (const skill of expectedSkills) {
+    const path = `skills/${skill}/SKILL.md`;
+    if (!(await exists(path))) fail(`missing expected skill: ${path}`);
+    else if (readFrontmatter(await readFile(here(path), 'utf8'))?.name !== skill) fail(`${path} name mismatch`);
+  }
 
   const actualAgents = (await readdir(here('agents'))).filter(name => name.endsWith('.md')).map(name => `agents/${name}`).sort();
   if (JSON.stringify(actualAgents) !== JSON.stringify([...expectedAgents].sort())) fail('agent inventory mismatch');
@@ -317,9 +282,9 @@ async function main() {
   if (JSON.stringify([...NARU_AGENT_IDS].sort()) !== JSON.stringify(expectedIDs)) fail('routing inventory mismatch');
 
   if (NARU_DELEGATE_PROTOCOL !== 2) fail('unexpected Naru Delegate protocol');
-  if (NARU_MINIMUM_SUBAGENT_DEPTH !== 2) fail('unexpected minimum subagent depth');
-  if (NARU_REQUIRED_SUBAGENT_DEPTH !== 2) fail('dispatch topology depth changed without compatibility update');
-  if (SOL_FLOOR_ROLES.length !== 13) fail('unexpected Sol-floor role count');
+  if (NARU_MINIMUM_SUBAGENT_DEPTH !== 1) fail('unexpected minimum subagent depth');
+  if (NARU_REQUIRED_SUBAGENT_DEPTH !== 1) fail('dispatch topology depth changed without compatibility update');
+  if (SOL_FLOOR_ROLES.length !== 2) fail('unexpected Sol-floor role count');
   if (SOL_FLOOR_ROLES.includes('naru-orchestrator')) fail('orchestrator must not be a Sol floor');
   if (DEFAULT_AGENT_ASSIGNMENTS['naru-orchestrator'] !== 'sol') fail('orchestrator must default to Sol');
   if (LUNA_ELIGIBLE_ROLES.length !== 5) fail('unexpected Luna-eligible role count');
@@ -335,15 +300,9 @@ async function main() {
   if ((await collectMarkdown('commands/naru')).length) fail('old nested commands found');
   if ((await collectMarkdown('agents/naru')).length) fail('old nested agents found');
 
-  for (const path of [...expectedCommands, ...expectedAgents]) {
-    const text = await readFile(here(path), 'utf8');
-    if (text.includes('naru/')) fail(`${path} contains an old nested reference`);
-  }
-
-  for (const path of expectedAgents.filter(path => !minionPaths.includes(path))) {
-    const first = parsePermissions(await readFile(here(path), 'utf8'))?.[0];
-    if (!first || first.key !== '*' || first.val !== 'deny') fail(`${path} is not fail-closed`);
-  }
+  const orchestratorPath = 'agents/naru-orchestrator.md';
+  const orchestratorFirst = parsePermissions(await readFile(here(orchestratorPath), 'utf8'))?.[0];
+  if (!orchestratorFirst || orchestratorFirst.key !== '*' || orchestratorFirst.val !== 'deny') fail(`${orchestratorPath} is not fail-closed`);
 
   for (const path of expectedAgents) {
     const text = await readFile(here(path), 'utf8');
@@ -383,14 +342,11 @@ async function main() {
     }
   }
 
-  for (const path of coreAgents) {
-    if (readFrontmatter(await readFile(here(path), 'utf8'))?.hidden !== 'true') fail(`${path} is not hidden`);
-  }
-  for (const path of [...minionPaths, 'agents/naru-review-post.md']) {
+  for (const path of minionPaths) {
     if (readFrontmatter(await readFile(here(path), 'utf8'))?.hidden !== 'true') fail(`${path} is not hidden`);
   }
 
-  for (const path of [...expectedCommands, ...expectedAgents]) {
+  for (const path of expectedAgents) {
     const frontmatter = readFrontmatter(await readFile(here(path), 'utf8'));
     if (path === 'agents/naru-minion-implement.md') {
       if (frontmatter?.model !== 'openai/gpt-5.6-terra-fast' || frontmatter?.variant !== 'high') fail('implement fallback model mismatch');
@@ -419,24 +375,8 @@ async function main() {
     if (!expected && refs.length) fail(`${path} has unregistered Task routes`);
   }
 
-  for (const path of expectedAgents.filter(path => /^agents\/naru-review(?:-|\.md)/.test(path) && path !== 'agents/naru-review-post.md')) {
-    const text = await readFile(here(path), 'utf8');
-    for (const required of ['read: deny', 'glob: deny', 'grep: deny', 'lsp: deny', 'naru-git-read: deny', 'naru-github-read: allow']) {
-      if (!text.includes(required)) fail(`${path} missing immutable-review permission ${required}`);
-    }
-    if (text.includes('codebase-memory-mcp_')) fail(`${path} may inspect a mutable local graph`);
-  }
-
-  for (const path of expectedAgents.filter(path => !/^agents\/naru-review(?:-|\.md)/.test(path) && !minionPaths.includes(path))) {
-    const text = await readFile(here(path), 'utf8');
-    if (!text.includes('read:\n')) continue;
-    for (const denied of ["'*.pem': deny", "'*.key': deny", "'**/.ssh/**': deny", "'**/credentials/**': deny"]) {
-      if (!text.includes(denied)) fail(`${path} missing direct-read secret denial ${denied}`);
-    }
-  }
-
   const postTool = 'naru-github-post-review';
-  const postingAgents = new Set(['agents/naru-review-post.md', 'agents/naru-orchestrator.md']);
+  const postingAgents = new Set(['agents/naru-orchestrator.md']);
   for (const path of expectedAgents) {
     const text = await readFile(here(path), 'utf8');
     const postPermissions = parsePermissions(text)?.filter(permission => permission.key === postTool) ?? [];
@@ -450,7 +390,7 @@ async function main() {
       }
     }
   }
-  if (postingAgents.size !== 2) fail('exactly two agents must be posting-capable');
+  if (postingAgents.size !== 1) fail('exactly one agent must be posting-capable');
 
   const orchestratorText = await readFile(here('agents/naru-orchestrator.md'), 'utf8');
   const orchestratorTasks = parseNestedPermission(orchestratorText, 'task');
@@ -458,9 +398,7 @@ async function main() {
   if (JSON.stringify(orchestratorAllows) !== JSON.stringify([...NARU_DISPATCH_GRAPH['naru-orchestrator']].sort())) {
     fail('orchestrator exact Task allowlist mismatch');
   }
-  if (!orchestratorAllows.includes('naru-review') || orchestratorAllows.includes('naru-review-post')) {
-    fail('orchestrator review Task boundary mismatch');
-  }
+  if (orchestratorAllows.some(agent => !agent.startsWith('naru-minion-'))) fail('orchestrator may Task only retained minions');
 
   const schedulerCapable = [];
   for (const path of expectedAgents) {
@@ -492,7 +430,7 @@ async function main() {
     if (!orchestratorText.includes(required)) fail(`orchestrator missing scheduler boundary: ${required}`);
   }
 
-  for (const path of [...expectedCommands, ...expectedAgents]) {
+  for (const path of [...expectedAgents, ...expectedSkills.map(skill => `skills/${skill}/SKILL.md`)]) {
     const text = (await readFile(here(path), 'utf8')).toLowerCase();
     for (const forbidden of ['/users/', '.config/opencode', 'herdr']) {
       if (text.includes(forbidden)) fail(`${path} mentions forbidden ${forbidden}`);
@@ -500,8 +438,8 @@ async function main() {
   }
 
   const readme = await readFile(here('README.md'), 'utf8');
-  for (const command of ['plan', 'impact', 'triage', 'review', 'review-post', 'minions']) {
-    if (!readme.includes(`/naru-${command}`)) fail(`README missing /naru-${command}`);
+  for (const skill of expectedSkills) {
+    if (!readme.includes(skill)) fail(`README missing ${skill}`);
   }
 
   const dashboard = await readFile(here('plugins/naru-minions-dashboard.tsx'), 'utf8');

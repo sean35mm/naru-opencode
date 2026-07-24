@@ -40,6 +40,40 @@ const DASHBOARD_RUNTIME_PATHS = new Set([
   'plugins/naru-minions-dashboard.tsx',
   'tools/naru-lib',
 ]);
+export const RETIRED_MANAGED_PATHS = new Set([
+  'commands/naru-plan.md',
+  'commands/naru-impact.md',
+  'commands/naru-triage.md',
+  'commands/naru-review.md',
+  'commands/naru-review-post.md',
+  'agents/naru-plan.md',
+  'agents/naru-plan-architecture.md',
+  'agents/naru-plan-minimal-change.md',
+  'agents/naru-plan-risk.md',
+  'agents/naru-plan-tests.md',
+  'agents/naru-plan-judge.md',
+  'agents/naru-impact.md',
+  'agents/naru-impact-topology.md',
+  'agents/naru-impact-contracts.md',
+  'agents/naru-impact-data.md',
+  'agents/naru-impact-frontend-mobile.md',
+  'agents/naru-impact-tests-ci.md',
+  'agents/naru-impact-judge.md',
+  'agents/naru-triage.md',
+  'agents/naru-triage-reproduction.md',
+  'agents/naru-triage-codepath.md',
+  'agents/naru-triage-regression.md',
+  'agents/naru-triage-tests.md',
+  'agents/naru-triage-judge.md',
+  'agents/naru-review.md',
+  'agents/naru-review-security.md',
+  'agents/naru-review-backend.md',
+  'agents/naru-review-frontend-mobile.md',
+  'agents/naru-review-integrations.md',
+  'agents/naru-review-tests-ci.md',
+  'agents/naru-review-judge.md',
+  'agents/naru-review-post.md',
+]);
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -647,11 +681,11 @@ function backedUpState(state, managedPath) {
 async function buildInstallTransaction({ transactionId, targetRoot, previousManifest, desiredManifest, operations }) {
   const changes = [];
   for (const operation of operations) {
-    if (!['create', 'update', 'conflict-unowned', 'conflict-modified'].includes(operation.action)) continue;
+    if (!['create', 'update', 'conflict-unowned', 'conflict-modified', 'retire'].includes(operation.action)) continue;
     changes.push({
       path: operation.entry.path,
       before: backedUpState(operation.current, operation.entry.path),
-      after: installedState(operation.entry),
+      after: operation.action === 'retire' ? null : installedState(operation.entry),
     });
   }
   if (!manifestEqual(previousManifest, desiredManifest)) {
@@ -677,7 +711,7 @@ async function buildInstallTransaction({ transactionId, targetRoot, previousMani
   });
 }
 
-export async function classifyInstallPlan({ targetRoot, desiredManifest, previousManifest }) {
+export async function classifyInstallPlan({ targetRoot, desiredManifest, previousManifest, replaceConflicts = false }) {
   validateInstallManifest(desiredManifest);
   if (previousManifest !== null) validateInstallManifest(previousManifest);
   const previousByPath = new Map(previousManifest?.managed.map(entry => [entry.path, entry]) ?? []);
@@ -716,6 +750,29 @@ export async function classifyInstallPlan({ targetRoot, desiredManifest, previou
 
   for (const entry of previousManifest?.managed ?? []) {
     if (!desiredPaths.has(entry.path)) {
+      if (RETIRED_MANAGED_PATHS.has(entry.path)) {
+        const current = await fingerprintPath(
+          await containedPathWithoutSymlinkParents(targetRoot, entry.path, 'retired target path'),
+          targetBudget,
+        );
+        let action;
+        let reason;
+        if (current === null) {
+          action = 'retire-missing';
+          reason = 'previously-owned-already-missing';
+        } else if (stateMatches(current, entry)) {
+          action = 'retire';
+          reason = 'previously-owned-and-unmodified';
+        } else if (replaceConflicts) {
+          action = 'retire';
+          reason = 'reviewed-conflict-choice';
+        } else {
+          action = 'preserve-retired-modified';
+          reason = 'changed-after-install';
+        }
+        operations.push({ action, reason, entry, current });
+        continue;
+      }
       operations.push({
         action: 'preserve-orphaned',
         reason: 'previously-owned-not-in-selected-install',
@@ -1031,6 +1088,7 @@ function parsePrepareArgs(argv) {
     '--dashboard',
     '--configure-subagent-depth',
     '--migrate-orchestrator',
+    '--replace-conflicts',
   ]);
   if (!TRANSACTION_ID_PATTERN.test(values['--transaction-id'])) throw new Error('prepare transaction id is invalid');
   return values;
@@ -1106,6 +1164,7 @@ async function prepare(argv) {
     targetRoot: values['--target'],
     desiredManifest,
     previousManifest,
+    replaceConflicts: parseBoolean(values['--replace-conflicts'], '--replace-conflicts'),
   });
   const receipt = await buildInstallTransaction({
     transactionId: values['--transaction-id'],

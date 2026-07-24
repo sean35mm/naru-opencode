@@ -27,9 +27,16 @@ export const QUALITY_ARTIFACT_TYPES = Object.freeze([
 ]);
 
 export const DEFAULT_SCHEDULER_BUDGETS = Object.freeze({
-  maxConcurrentWriters: 2,
-  maxConcurrentReadOnly: 4,
-  maxTotalChildren: 6,
+  maxConcurrentWriters: 10,
+  maxConcurrentReadOnly: 10,
+  maxTotalChildren: 10,
+  maxJudgePasses: 3,
+});
+
+export const MAX_SCHEDULER_BUDGETS = Object.freeze({
+  maxConcurrentWriters: 50,
+  maxConcurrentReadOnly: 50,
+  maxTotalChildren: 50,
   maxJudgePasses: 3,
 });
 
@@ -151,19 +158,19 @@ function validateBudgets(value, label = 'budgets') {
   const budgets = {
     maxConcurrentWriters: assertInteger(value.maxConcurrentWriters, `${label}.maxConcurrentWriters`, {
       minimum: 1,
-      maximum: 10,
+      maximum: MAX_SCHEDULER_BUDGETS.maxConcurrentWriters,
     }),
     maxConcurrentReadOnly: assertInteger(value.maxConcurrentReadOnly, `${label}.maxConcurrentReadOnly`, {
       minimum: 0,
-      maximum: 4,
+      maximum: MAX_SCHEDULER_BUDGETS.maxConcurrentReadOnly,
     }),
     maxTotalChildren: assertInteger(value.maxTotalChildren, `${label}.maxTotalChildren`, {
       minimum: 1,
-      maximum: 14,
+      maximum: MAX_SCHEDULER_BUDGETS.maxTotalChildren,
     }),
     maxJudgePasses: assertInteger(value.maxJudgePasses, `${label}.maxJudgePasses`, {
       minimum: 1,
-      maximum: 3,
+      maximum: MAX_SCHEDULER_BUDGETS.maxJudgePasses,
     }),
   };
   if (budgets.maxConcurrentWriters > budgets.maxTotalChildren) {

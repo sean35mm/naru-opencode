@@ -11,7 +11,7 @@ Git is a prerequisite for Git-backed workflows. GitHub review posting additional
 
 | Surface | Policy |
 | --- | --- |
-| Core Naru workflows | OpenCode 1.18.4 or later; effective `subagent_depth >= 2`; scheduler defaults to `off` |
+| Naru skills and agents | OpenCode 1.18.4 or later; depth-1-compatible; scheduler defaults to `off` |
 | Full TUI dashboard | Optional; Bun 1.3.9 is the syntax-smoke target |
 | Mini TUI | Dashboard excluded |
 | Native Windows | Unsupported and unclaimed for 0.1.0 |

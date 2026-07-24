@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   classifyDashboardEvidence,
+  COMPATIBILITY_POLICY,
   createCompatibilityEvidence,
   evaluatePlatformTarget,
   sanitizeObservedVersion,
@@ -364,7 +365,7 @@ export async function runCompatibilitySmoke(options, hooks = {}) {
       }
       await symlink(opencode, path.join(privateBin, 'opencode'));
 
-      const installArgs = [path.join(source, 'install.sh'), '--copy', '--configure-subagent-depth'];
+      const installArgs = [path.join(source, 'install.sh'), '--copy'];
       if (options.dashboard) installArgs.push('--with-dashboard');
       let result = await runBoundedProcess('/bin/sh', [...installArgs, '--preview'], { cwd: project, env, timeoutMs });
       let targetExists = true;
@@ -402,7 +403,7 @@ export async function runCompatibilitySmoke(options, hooks = {}) {
           const scope = report.scopes?.find(item => item.id === 'global');
           doctorValid = report.providerFree === true
             && report.readOnly === true
-            && report.depth?.effective >= 2
+            && report.depth?.effective >= COMPATIBILITY_POLICY.features.core.minimumSubagentDepth
             && scope?.runtime?.schedulerMode === 'off';
         } catch {
           doctorValid = false;

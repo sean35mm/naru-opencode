@@ -13,7 +13,7 @@ Naru is an OpenCode-specific, local-first multi-agent platform for its owner and
 3. **Explicit boundaries.** Mutation, provider cost, GitHub posting, and commit/push/release actions require clear, separate authorization boundaries.
 4. **Progressive disclosure.** Lead with outcomes and safe defaults; move protocol, routing, alias, and scheduler details into advanced reference material.
 5. **Measurable claims.** Tie correctness, compatibility, cost, latency, and concurrency statements to versioned evidence. Do not imply speedup or support that has not been tested.
-6. **Compatibility over gratuitous renames.** Preserve public commands, agent IDs, configuration keys, routing prefixes, and protocol IDs unless a justified migration has a compatibility plan.
+6. **Compatibility over gratuitous renames.** Preserve public skills, agent IDs, configuration keys, routing prefixes, and protocol IDs unless a justified migration has a compatibility plan.
 7. **No remote telemetry by default.** Keep diagnostics bounded and sanitized, and never upload them automatically.
 
 ## Phase 1 — Local safety and release baseline
@@ -131,14 +131,14 @@ Persist only sanitized structural aggregates and explicit rubric decisions tied 
 
 Present four choices in this order:
 
-1. **Analyze:** four read-only workflows—plan, impact, triage, and dry-run review.
+1. **Analyze:** four native on-demand skills—plan, impact, triage, and dry-run review guidance.
 2. **Implement:** select `naru-orchestrator` for authorized scoped work.
 3. **Runtime safety (optional):** leave scheduling `off`, or deliberately choose `observe`/`enforce` after reading compatibility requirements.
 4. **Activity:** optionally install and open the dashboard.
 
-Publicly describe **Full Ultra** as isolated parallel implementation. Put Protocol 2/3 mechanics, model profiles, generated aliases, and routing internals in advanced reference. Preserve slash commands, agent IDs, configuration keys, routing prefixes, and protocol IDs unless evidence justifies a migration with compatibility and deprecation handling.
+Publicly describe **Full Ultra** as isolated parallel implementation. Put Protocol 2/3 mechanics, model profiles, generated aliases, and routing internals in advanced reference. Preserve public skills, agent IDs, configuration keys, routing prefixes, and protocol IDs unless evidence justifies a migration with compatibility and deprecation handling.
 
-Align the root `README.md` with the safe quickstart: effective `subagent_depth >= 2`, the distinction between slash commands and primary-agent selection, and exactly one next action plus any required OpenCode restart at each setup endpoint.
+Align the root `README.md` with the safe quickstart: native skill discovery, the distinction between skills and primary-agent selection, and exactly one next action plus any required OpenCode restart at each setup endpoint.
 
 ### Evidence-first onboarding and diagnostics
 
@@ -148,7 +148,7 @@ Only if recurring undiagnosable states are confirmed, add a provider-free, read-
 
 - loaded global/project/custom scopes and installed Naru version;
 - stale copy-pinned or mixed-generation managed assets;
-- effective `subagent_depth` and the source that wins;
+- loaded global/project skill and agent scopes;
 - OpenCode/runtime compatibility;
 - routing and scheduler/runtime configuration; and
 - dashboard installation/registration.
@@ -168,7 +168,7 @@ Design install/update/rollback/uninstall metadata around a versioned manifest of
 
 ### Work map
 
-**Likely existing paths:** `README.md`, `docs/user-guide.md`, `docs/src/content/docs/index.mdx`, `docs/src/content/docs/getting-started/installation.md`, `docs/src/content/docs/getting-started/quickstart.md`, `docs/src/content/docs/concepts/protocols.md`, `docs/src/content/docs/reference/runtime-config.md`, `install.sh`, `tests/install.test.sh`, `scripts/merge-opencode-config.mjs`, `scripts/merge-tui-config.mjs`, and `plugins/naru-minions-dashboard.tsx`.
+**Likely existing paths:** `README.md`, `docs/user-guide.md`, `docs/src/content/docs/index.mdx`, `docs/src/content/docs/getting-started/installation.md`, `docs/src/content/docs/getting-started/quickstart.md`, `docs/src/content/docs/concepts/protocols.md`, `docs/src/content/docs/reference/runtime-config.md`, `install.sh`, `tests/install.test.sh`, `scripts/merge-tui-config.mjs`, and `plugins/naru-minions-dashboard.tsx`.
 
 **Potential planned/new paths (only if walkthrough evidence supports them):** `tools/naru-doctor.js`, `tests/doctor.test.mjs`, and a versioned install-manifest schema under `tools/naru-lib/`.
 

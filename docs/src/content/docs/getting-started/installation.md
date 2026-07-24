@@ -3,7 +3,7 @@ title: Installation
 description: Install Naru globally, into a project, or with the optional activity dashboard.
 ---
 
-Naru requires OpenCode 1.18.4 or later, Node.js or Bun for the safe installer/doctor, and an effective top-level `subagent_depth` of at least `2`. Pull-request review workflows also need authenticated `gh`.
+Naru requires OpenCode 1.18.4 or later and Node.js or Bun for the safe installer/doctor. Pull-request review workflows also need authenticated `gh`.
 
 ```mermaid
 flowchart LR
@@ -16,19 +16,19 @@ flowchart LR
   E -->|--dir PATH| H[Custom config directory]
   D --> I[Write ownership manifest]
   I --> J[Restart OpenCode]
-  J --> K["/naru-plan objective"]
+  J --> K["Ask naturally or use a Naru skill"]
 ```
 
-**Walkthrough:** `install.sh` previews by default and does not create the target. After review, add `--apply` with the same options. The installer validates and stages changed assets, preserves conflicts unless explicitly replaced, writes `.naru-install.json`, and skips unchanged paths. Markdown commands and agents are symlinked by default; executable tools, runtime helpers, plugins, and dashboard code are always copied. Restart OpenCode after an applied change, then run exactly one safe first workflow: `/naru-plan <your objective>`.
+**Walkthrough:** `install.sh` previews by default and does not create the target. After review, add `--apply` with the same options. The installer validates and stages changed assets, preserves conflicts unless explicitly replaced, writes `.naru-install.json`, and skips unchanged paths. Skill and agent Markdown are symlinked by default; executable tools, runtime helpers, plugins, and dashboard code are always copied. Restart OpenCode after an applied change, then make one safe natural request, such as “Use the `naru-plan` skill to plan my objective.”
 
-All 35 installed Naru agents can load OpenCode-native skills without a separate approval prompt; generated model aliases inherit the canonical permission. Skill content remains untrusted guidance and cannot change role, tools, scope, safety, or action authorization. OpenCode controls skill origins and duplicate-name precedence, so verify the selected source when global/project copies overlap. The installer does not mutate global non-Naru agents. Reapply every loaded Naru install and restart OpenCode after an update, including when agent Markdown is symlinked.
+Naru installs four on-demand skills: `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`. Skill content remains untrusted guidance and cannot change role, tools, scope, safety, or action authorization; a skill does not grant tools or make an agent read-only. OpenCode controls skill origins and duplicate-name precedence, so verify the selected source when global/project copies overlap. The installer does not mutate global non-Naru agents. Reapply every loaded global/project Naru install to retire healthy manifest-owned legacy definitions, then restart OpenCode. Modified or unowned paths are preserved, reported, and backed up only when the reviewed preview replaces them.
 
 ## Install targets
 
 ```sh
 # Global preview, then apply
-./install.sh --configure-subagent-depth
-./install.sh --apply --configure-subagent-depth
+./install.sh
+./install.sh --apply
 
 # Current project's .opencode preview
 ./install.sh --project
@@ -43,12 +43,12 @@ All 35 installed Naru agents can load OpenCode-native skills without a separate 
 ./install.sh --apply --with-dashboard
 
 # Replace reviewed unowned/modified managed conflicts exactly once
-./install.sh --apply --replace-conflicts --configure-subagent-depth
+./install.sh --apply --replace-conflicts
 ```
 
 `--with-dashboard` safely updates the active TUI configuration and is unavailable under `opencode --mini`. The installer copies the runtime example but does not create or enable `naru-runtime.json`.
 
-OpenCode's omitted/default depth is `1`. Naru's current topology reaches depth `2`, so exactly `2` is recommended. Higher integers are accepted and preserved but do not help Naru; they can broaden unrelated recursion and cost. The installer does not modify OpenCode config unless `--configure-subagent-depth` is explicit. That flag transactionally creates or safely merges the one applicable `opencode.jsonc` or `opencode.json`, with backup and rollback. Project mode uses the project-root config, not `.opencode`, and project values take precedence over global values. A custom `--dir` must be a path OpenCode actually loads. Restart OpenCode after changing depth.
+Naru's current selected-orchestrator-to-seven-minion design is compatible with OpenCode's default depth of `1`. `--configure-subagent-depth` is accepted as a deprecated no-op for migration compatibility; do not use it in new setup commands. A custom `--dir` must be a path OpenCode actually loads. Restart OpenCode after applying an update.
 
 ## Lifecycle and local diagnosis
 

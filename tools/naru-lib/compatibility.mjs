@@ -37,7 +37,7 @@ export const COMPATIBILITY_POLICY = deepFreeze({
       required: ['opencode', 'node'],
       git: { prerequisite: true, versionFloor: null },
       providerCalls: false,
-      minimumSubagentDepth: 2,
+      minimumSubagentDepth: 1,
       schedulerDefault: 'off',
     },
     reviewPosting: {

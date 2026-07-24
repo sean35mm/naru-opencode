@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 async function copyInstallSource(destination) {
-  for (const directory of ['agents', 'commands', 'plugins', 'scripts', 'tools']) {
+  for (const directory of ['agents', 'commands', 'plugins', 'scripts', 'skills', 'tools']) {
     await cp(path.join(root, directory), path.join(destination, directory), { recursive: true });
   }
   await mkdir(path.join(destination, 'tests', 'fixtures'), { recursive: true });
@@ -47,7 +47,7 @@ function runDoctor(doctor, { home, project, source }) {
   return JSON.parse(result.stdout);
 }
 
-test('doctor is read-only and diagnoses scope, depth, source generation, and dashboard state', async () => {
+test('doctor is read-only and diagnoses scope, default depth, source generation, and dashboard state', async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-doctor-test-'));
   try {
     const source = path.join(temporary, 'source');
@@ -62,7 +62,6 @@ test('doctor is read-only and diagnoses scope, depth, source generation, and das
       path.join(source, 'install.sh'),
       '--apply',
       '--with-dashboard',
-      '--configure-subagent-depth',
     ], {
       cwd: source,
       env: { ...process.env, HOME: home },
@@ -75,17 +74,15 @@ test('doctor is read-only and diagnoses scope, depth, source generation, and das
     const target = path.join(home, '.config', 'opencode');
     const doctor = path.join(target, 'tools', 'naru-doctor.js');
     const manifestPath = path.join(target, '.naru-install.json');
-    const configPath = path.join(target, 'opencode.json');
     const manifestBefore = await readFile(manifestPath, 'utf8');
-    const configBefore = await readFile(configPath, 'utf8');
 
     let report = runDoctor(doctor, { home, project, source });
     assert.equal(report.schemaVersion, 1);
     assert.equal(report.diagnostic, 'naru-doctor');
     assert.equal(report.providerFree, true);
     assert.equal(report.readOnly, true);
-    assert.equal(report.depth.effective, 2);
-    assert.equal(report.depth.source, 'global:opencode.json');
+    assert.equal(report.depth.effective, 1);
+    assert.equal(report.depth.source, 'opencode-default');
     assert.equal(report.scopes.filter(scope => scope.installed).length, 1);
     const globalScope = report.scopes.find(scope => scope.id === 'global');
     assert.equal(globalScope.manifestStatus, 'valid');
@@ -98,7 +95,6 @@ test('doctor is read-only and diagnoses scope, depth, source generation, and das
     assert.equal(globalScope.dashboard.registered, true);
     assert.equal(JSON.stringify(report).includes(temporary), false);
     assert.equal(await readFile(manifestPath, 'utf8'), manifestBefore);
-    assert.equal(await readFile(configPath, 'utf8'), configBefore);
 
     await writeFile(path.join(project, 'opencode.jsonc'), '{\n  // project wins\n  "subagent_depth": 4,\n}\n');
     report = runDoctor(doctor, { home, project, source });

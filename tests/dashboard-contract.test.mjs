@@ -59,7 +59,7 @@ test('dashboard owns reactive resources in its mounted component', () => {
 
 test('dashboard distinguishes Luna, Terra, Sol, Sol xhigh, and floors without guessing assignment provenance', () => {
   const configured = {
-    'naru-plan-risk': { model: 'provider/sol', variant: 'high' },
+    'naru-minion-architect': { model: 'provider/sol', variant: 'high' },
     'naru-minion-scout': { model: 'provider/sol', variant: 'high' },
     'naru-delegate-sol-minion-investigate': { model: 'provider/sol', variant: 'high' },
     'naru-delegate-luna-minion-investigate': { model: 'provider/luna', variant: 'high' },
@@ -74,7 +74,7 @@ test('dashboard distinguishes Luna, Terra, Sol, Sol xhigh, and floors without gu
   assert.equal(routeText('naru-delegate-sol-xhigh-minion-investigate', 'naru-minion-investigate', configured), 'Sol xhigh');
   assert.equal(routeText('naru-delegate-sol-xhigh-minion-architect', 'naru-minion-architect', configured), 'Sol xhigh');
   assert.equal(routeText('naru-delegate-deep-minion-investigate', 'naru-minion-investigate', configured), 'Sol');
-  assert.equal(routeText('naru-plan-risk', 'naru-plan-risk', configured), 'Sol floor');
+  assert.equal(routeText('naru-minion-architect', 'naru-minion-architect', configured), 'Sol floor');
   assert.equal(routeText('naru-minion-verify', 'naru-minion-verify', {}), 'Routed');
 });
 

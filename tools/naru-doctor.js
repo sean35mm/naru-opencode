@@ -453,7 +453,7 @@ async function depthState(options, issues) {
       effective = project.depth;
       source = `project:${project.file}`;
     }
-    if (effective < 2) addIssue(issues, 'subagent-depth-too-low', 'effective', 'effective subagent_depth must be at least 2');
+    if (effective < 1) addIssue(issues, 'subagent-depth-too-low', 'effective', 'effective subagent_depth must be at least 1');
   }
   return { status, effective, source, global, project, custom };
 }

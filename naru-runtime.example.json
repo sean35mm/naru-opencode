@@ -2,15 +2,15 @@
   "schemaVersion": 1,
   "implementation": {
     "workspaceMode": "auto",
-    "maxConcurrentWriters": 6,
+    "maxConcurrentWriters": 10,
     "maxWritersPerWorktree": 1,
     "cleanWorkspaceRequired": true
   },
   "scheduler": {
     "mode": "off",
-    "maxConcurrentWriters": 6,
-    "maxConcurrentReadOnly": 4,
-    "maxTotalChildren": 10,
+    "maxConcurrentWriters": 50,
+    "maxConcurrentReadOnly": 50,
+    "maxTotalChildren": 50,
     "maxJudgePasses": 3,
     "maxWorkItems": 256,
     "maxManifestBytes": 262144,

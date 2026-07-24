@@ -7,7 +7,7 @@ const LEGACY_DEEP_ALIAS_PREFIX = 'naru-delegate-deep-';
 const ROUTING_MARKER = '<!-- naru-delegate-routing:v1 -->';
 
 export const NARU_DELEGATE_PROTOCOL = 2;
-export const NARU_MINIMUM_SUBAGENT_DEPTH = 2;
+export const NARU_MINIMUM_SUBAGENT_DEPTH = 1;
 
 export const DEFAULT_MODEL_PROFILES = Object.freeze({
   luna: Object.freeze({ model: 'openai/gpt-5.6-luna-fast', variant: 'high' }),
@@ -20,33 +20,6 @@ export const DEFAULT_AGENT_ASSIGNMENTS = Object.freeze({
 });
 
 export const NARU_AGENT_IDS = Object.freeze([
-  'naru-plan',
-  'naru-plan-architecture',
-  'naru-plan-minimal-change',
-  'naru-plan-risk',
-  'naru-plan-tests',
-  'naru-plan-judge',
-  'naru-impact',
-  'naru-impact-topology',
-  'naru-impact-contracts',
-  'naru-impact-data',
-  'naru-impact-frontend-mobile',
-  'naru-impact-tests-ci',
-  'naru-impact-judge',
-  'naru-triage',
-  'naru-triage-reproduction',
-  'naru-triage-codepath',
-  'naru-triage-regression',
-  'naru-triage-tests',
-  'naru-triage-judge',
-  'naru-review',
-  'naru-review-security',
-  'naru-review-backend',
-  'naru-review-frontend-mobile',
-  'naru-review-integrations',
-  'naru-review-tests-ci',
-  'naru-review-judge',
-  'naru-review-post',
   'naru-orchestrator',
   'naru-minion-scout',
   'naru-minion-investigate',
@@ -58,17 +31,6 @@ export const NARU_AGENT_IDS = Object.freeze([
 ]);
 
 export const SOL_FLOOR_ROLES = Object.freeze([
-  'naru-plan-architecture',
-  'naru-plan-risk',
-  'naru-plan-judge',
-  'naru-impact-contracts',
-  'naru-impact-data',
-  'naru-impact-judge',
-  'naru-triage-judge',
-  'naru-review-security',
-  'naru-review-backend',
-  'naru-review-integrations',
-  'naru-review-judge',
   'naru-minion-architect',
   'naru-minion-judge',
 ]);
@@ -85,39 +47,7 @@ export const LUNA_ELIGIBLE_ROLES = Object.freeze([
 ]);
 
 export const NARU_DISPATCH_GRAPH = Object.freeze({
-  'naru-plan': Object.freeze([
-    'naru-plan-architecture',
-    'naru-plan-minimal-change',
-    'naru-plan-risk',
-    'naru-plan-tests',
-    'naru-plan-judge',
-  ]),
-  'naru-impact': Object.freeze([
-    'naru-impact-topology',
-    'naru-impact-contracts',
-    'naru-impact-data',
-    'naru-impact-frontend-mobile',
-    'naru-impact-tests-ci',
-    'naru-impact-judge',
-  ]),
-  'naru-triage': Object.freeze([
-    'naru-triage-reproduction',
-    'naru-triage-codepath',
-    'naru-triage-regression',
-    'naru-triage-tests',
-    'naru-triage-judge',
-  ]),
-  'naru-review': Object.freeze([
-    'naru-review-security',
-    'naru-review-backend',
-    'naru-review-frontend-mobile',
-    'naru-review-integrations',
-    'naru-review-tests-ci',
-    'naru-review-judge',
-  ]),
-  'naru-review-post': Object.freeze(['naru-review']),
   'naru-orchestrator': Object.freeze([
-    'naru-review',
     'naru-minion-scout',
     'naru-minion-investigate',
     'naru-minion-architect',
@@ -129,8 +59,8 @@ export const NARU_DISPATCH_GRAPH = Object.freeze({
 });
 
 export const NARU_DISPATCH_ENTRY_TOPOLOGY = Object.freeze({
-  root: Object.freeze(['naru-orchestrator', 'naru-review-post']),
-  subtask: Object.freeze(['naru-plan', 'naru-impact', 'naru-triage', 'naru-review']),
+  root: Object.freeze(['naru-orchestrator']),
+  subtask: Object.freeze([]),
 });
 
 const ORCHESTRATOR_MODEL_ROUTED_TARGETS = Object.freeze([
@@ -443,9 +373,6 @@ function setProfile(agent, profile) {
 
 function routingAppendix(caller, policy, overrides) {
   const routes = NARU_DISPATCH_GRAPH[caller].map((target) => {
-    if (caller === 'naru-orchestrator' && target === 'naru-review') {
-      return '- `naru-review`: canonical-only review lane; invoke this exact role with no generated model alias.';
-    }
     const solXhigh = caller === 'naru-orchestrator'
       ? ` Optional Sol xhigh: \`${solXhighAlias(target)}\`.`
       : '';
@@ -519,7 +446,6 @@ export function applyRoutingToConfig(config, overrideValue, { allowExistingAlias
       delete next.permission.task[alias];
     }
     for (const target of targets) {
-      if (caller === 'naru-orchestrator' && target === 'naru-review') continue;
       if (policy.agents[target] !== 'terra') continue;
       if (LUNA_ELIGIBLE_SET.has(target)) next.permission.task[lunaAlias(target)] = 'allow';
       next.permission.task[solAlias(target)] = 'allow';

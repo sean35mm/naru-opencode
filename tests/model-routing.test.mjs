@@ -125,7 +125,7 @@ const MINION_PERMISSIONS = {
 };
 
 function fakeConfig() {
-  const config = { agent: {}, subagent_depth: 2 };
+  const config = { agent: {}, subagent_depth: 1 };
   for (const agent of NARU_AGENT_IDS) {
     config.agent[agent] = {
       description: `Canonical Naru role ${agent}`,
@@ -193,7 +193,7 @@ async function recordSession(plugin, sessions, sessionID, {
 
 test('default policy covers every Naru agent with Luna, Terra, and Sol profiles', () => {
   const policy = resolveRoutingPolicy();
-  assert.equal(Object.keys(policy.agents).length, 35);
+  assert.equal(Object.keys(policy.agents).length, 8);
   assert.equal(policy.schemaVersion, 2);
   assert.deepEqual(policy.profiles, {
     luna: { model: 'openai/gpt-5.6-luna-fast', variant: 'high' },
@@ -220,12 +220,12 @@ test('default policy covers every Naru agent with Luna, Terra, and Sol profiles'
 });
 
 test('canonical dispatch topology derives and locks the required subagent depth', () => {
-  assert.equal(NARU_MINIMUM_SUBAGENT_DEPTH, 2);
-  assert.equal(NARU_REQUIRED_SUBAGENT_DEPTH, 2);
-  assert.equal(deriveAndValidateNaruRequiredDepth(), 2);
+  assert.equal(NARU_MINIMUM_SUBAGENT_DEPTH, 1);
+  assert.equal(NARU_REQUIRED_SUBAGENT_DEPTH, 1);
+  assert.equal(deriveAndValidateNaruRequiredDepth(), 1);
   assert.deepEqual(NARU_DISPATCH_ENTRY_TOPOLOGY, {
-    root: ['naru-orchestrator', 'naru-review-post'],
-    subtask: ['naru-plan', 'naru-impact', 'naru-triage', 'naru-review'],
+    root: ['naru-orchestrator'],
+    subtask: [],
   });
 
   const futureGraph = {
@@ -276,7 +276,7 @@ test('v2 overrides replace profiles and cannot statically assign Luna or downgra
   assert.deepEqual(policy.profiles.sol, DEFAULT_MODEL_PROFILES.sol);
   assert.equal(policy.agents['naru-minion-implement'], 'sol');
   assert.throws(
-    () => parseRoutingOverrides({ schemaVersion: 2, agents: { 'naru-review-security': 'terra' } }),
+    () => parseRoutingOverrides({ schemaVersion: 2, agents: { 'naru-minion-architect': 'terra' } }),
     /cannot downgrade/,
   );
   assert.throws(
@@ -330,20 +330,20 @@ test('v1 overrides normalize Fast and Deep into the v2 policy', () => {
 test('config routing exposes Luna, canonical Terra, and Sol routes only where eligible', () => {
   const config = fakeConfig();
   const leakedXhigh = solXhighAlias('naru-minion-scout');
-  config.agent['naru-plan'].permission.task[leakedXhigh] = 'allow';
+  config.agent['naru-orchestrator'].permission.task[leakedXhigh] = 'allow';
   const summary = applyRoutingToConfig(config);
-  assert.equal(summary.routedAgents, 35);
+  assert.equal(summary.routedAgents, 8);
   assert.equal(summary.lunaAliases, 5);
-  assert.equal(summary.solAliases, 17);
+  assert.equal(summary.solAliases, 5);
   assert.equal(summary.solXhighAliases, 7);
   assert.equal(MANAGED_LUNA_ALIASES.length, 5);
-  assert.equal(MANAGED_SOL_ALIASES.length, 17);
+  assert.equal(MANAGED_SOL_ALIASES.length, 5);
   assert.equal(MANAGED_SOL_XHIGH_ALIASES.length, 7);
-  assert.equal(MANAGED_ROUTING_ALIASES.length, 29);
+  assert.equal(MANAGED_ROUTING_ALIASES.length, 17);
   assert.equal(config.agent['naru-orchestrator'].model, 'openai/gpt-5.6-sol-fast');
   assert.equal(config.agent['naru-orchestrator'].variant, 'high');
   assert.equal(config.agent['naru-minion-implement'].model, 'openai/gpt-5.6-terra-fast');
-  assert.equal(config.agent['naru-review-security'].model, 'openai/gpt-5.6-sol-fast');
+  assert.equal(config.agent['naru-minion-architect'].model, 'openai/gpt-5.6-sol-fast');
 
   const implementLuna = lunaAlias('naru-minion-implement');
   const implementSol = solAlias('naru-minion-implement');
@@ -356,17 +356,8 @@ test('config routing exposes Luna, canonical Terra, and Sol routes only where el
   assert.equal(config.agent[implementSol].variant, 'high');
   assert.equal(config.agent['naru-orchestrator'].permission.task[implementLuna], 'allow');
   assert.equal(config.agent['naru-orchestrator'].permission.task[implementSol], 'allow');
-  assert.equal(config.agent['naru-orchestrator'].permission.task['naru-review'], 'allow');
-  assert.equal(config.agent['naru-orchestrator'].permission.task[lunaAlias('naru-review')], undefined);
-  assert.equal(config.agent['naru-orchestrator'].permission.task[solAlias('naru-review')], undefined);
-  assert.equal(config.agent['naru-orchestrator'].permission.task[solXhighAlias('naru-review')], undefined);
-  assert.equal(config.agent['naru-review-post'].permission.task['naru-review'], 'allow');
-  assert.equal(config.agent['naru-review-post'].permission.task[lunaAlias('naru-review')], undefined);
-  assert.equal(config.agent['naru-review-post'].permission.task[solAlias('naru-review')], 'allow');
-  assert.equal(config.agent['naru-review-post'].permission.task[solXhighAlias('naru-review')], undefined);
   assert.equal(config.agent[lunaAlias('naru-minion-architect')], undefined);
   assert.equal(config.agent[solAlias('naru-minion-architect')], undefined);
-  assert.equal(config.agent[solAlias('naru-review-security')], undefined);
 
   assert.notDeepEqual(
     config.agent['naru-minion-scout'].permission,
@@ -396,10 +387,8 @@ test('config routing exposes Luna, canonical Terra, and Sol routes only where el
     }
   }
   assert.match(config.agent['naru-orchestrator'].prompt, /Sol xhigh routes are optional/);
-  assert.match(config.agent['naru-orchestrator'].prompt, /`naru-review`: canonical-only review lane/);
-  assert.match(config.agent['naru-review-post'].prompt, /`naru-review`: Terra\. Sol: `naru-delegate-sol-review`\./);
   assert.equal(Object.keys(config.agent).some((agent) => agent.includes('sol-max')), false);
-  assert.equal(config.agent['naru-plan'].permission.task[leakedXhigh], undefined);
+  assert.equal(config.agent['naru-orchestrator'].permission.task[leakedXhigh], 'allow');
   assertAliasSkillPermissionClones(config);
 });
 
@@ -413,7 +402,6 @@ test('orchestrator default Sol assignment is overrideable to Terra without chang
   assert.equal(config.agent['naru-orchestrator'].variant, 'high');
   assert.equal(config.agent[solAlias('naru-orchestrator')], undefined);
   assert.deepEqual(NARU_DISPATCH_GRAPH['naru-orchestrator'], [
-    'naru-review',
     'naru-minion-scout',
     'naru-minion-investigate',
     'naru-minion-architect',
@@ -439,7 +427,7 @@ test('routing is idempotent and appends policy only to dispatchers', () => {
   );
   assert.equal(
     Object.keys(config.agent).filter((agent) => agent.startsWith('naru-delegate-sol-')).length,
-    24,
+    12,
   );
   assert.equal(
     Object.keys(config.agent).filter((agent) => agent.startsWith('naru-delegate-sol-xhigh-')).length,
@@ -506,7 +494,7 @@ test('trusted Sol override removes unnecessary Luna and Sol aliases', () => {
 
 test('validation completes before mutating config', () => {
   const config = fakeConfig();
-  delete config.agent['naru-review-judge'];
+  delete config.agent['naru-minion-judge'];
   const before = structuredClone(config);
   assert.throws(() => applyRoutingToConfig(config), /missing Naru agent/);
   assert.deepEqual(config, before);
@@ -543,25 +531,23 @@ test('plugin rejects task_id resume only for Naru routes', async () => {
   );
 });
 
-test('plugin rejects root-only Naru Task targets without affecting native targets or canonical review', async () => {
+test('plugin rejects root-only orchestrator Task launches without affecting minion or native targets', async () => {
   const plugin = await NaruDelegatePlugin({
     client: { app: { log: async () => ({ data: true }) } },
   });
   const config = fakeConfig();
-  config.subagent_depth = 2;
+  config.subagent_depth = 1;
   await plugin.config(config);
-  for (const target of ['naru-orchestrator', 'naru-review-post']) {
-    await assert.rejects(
-      plugin['tool.execute.before'](
-        { tool: 'task' },
-        { args: { subagent_type: target } },
-      ),
-      /root-only; use direct agent selection or its slash command/,
-    );
-  }
+  await assert.rejects(
+    plugin['tool.execute.before'](
+      { tool: 'task' },
+      { args: { subagent_type: 'naru-orchestrator' } },
+    ),
+    /root-only; use direct agent selection/,
+  );
   await plugin['tool.execute.before'](
     { tool: 'task' },
-    { args: { subagent_type: 'naru-review' } },
+    { args: { subagent_type: 'naru-minion-verify' } },
   );
   await plugin['tool.execute.before'](
     { tool: 'task' },
@@ -569,7 +555,7 @@ test('plugin rejects root-only Naru Task targets without affecting native target
   );
 });
 
-test('plugin guards only Naru dispatcher launches when effective subagent depth is incompatible', async () => {
+test('plugin accepts the OpenCode default depth and warns only for invalid explicit depth', async () => {
   const omittedLogs = [];
   const omittedPlugin = await NaruDelegatePlugin({
     client: { app: { log: async (entry) => omittedLogs.push(entry) } },
@@ -580,22 +566,7 @@ test('plugin guards only Naru dispatcher launches when effective subagent depth 
   await omittedPlugin.config(omittedConfig);
   await omittedPlugin.config(omittedConfig);
   assert.equal(Object.hasOwn(omittedConfig, 'subagent_depth'), false);
-  assert.equal(omittedLogs.length, 1);
-  assert.match(omittedLogs[0].body.message, /OpenCode 1\.18\.4 default 1/);
-  await assert.rejects(
-    omittedPlugin['tool.execute.before'](
-      { tool: 'task' },
-      { args: { subagent_type: 'naru-review' } },
-    ),
-    /default 1.*required minimum is 2.*top-level subagent_depth: 2.*restart OpenCode/,
-  );
-  await assert.rejects(
-    omittedPlugin['tool.execute.before'](
-      { tool: 'task' },
-      { args: { subagent_type: solAlias('naru-review') } },
-    ),
-    /required minimum is 2/,
-  );
+  assert.equal(omittedLogs.length, 0);
   await omittedPlugin['tool.execute.before'](
     { tool: 'task' },
     { args: { subagent_type: 'naru-minion-implement' } },
@@ -609,7 +580,7 @@ test('plugin guards only Naru dispatcher launches when effective subagent depth 
     { args: { subagent_type: 'explore' } },
   );
 
-  for (const [value, compatible] of [[1, false], [2, true], [3, true], ['2', false], [2.5, false]]) {
+  for (const [value, compatible] of [[0, false], [1, true], [2, true], ['1', false], [1.5, false]]) {
     const logs = [];
     const plugin = await NaruDelegatePlugin({
       client: { app: { log: async (entry) => logs.push(entry) } },
@@ -622,10 +593,9 @@ test('plugin guards only Naru dispatcher launches when effective subagent depth 
     assert.equal(logs.length, compatible ? 0 : 1);
     const launch = plugin['tool.execute.before'](
       { tool: 'task' },
-      { args: { subagent_type: 'naru-plan' } },
+      { args: { subagent_type: 'naru-minion-scout' } },
     );
-    if (compatible) await launch;
-    else await assert.rejects(launch, /found top-level subagent_depth value .*required minimum is 2/);
+    await launch;
   }
 });
 
@@ -788,8 +758,8 @@ test('multiple plugin scopes merge sparse overrides and invalid later config res
   await projectPlugin.config(config);
   assert.equal(config.agent['naru-minion-scout'].model, 'custom/global-fast');
   assertAliasSkillPermissionClones(config);
-  assert.equal(config.agent['naru-review-security'].model, 'custom/project-sol');
-  assert.equal(config.agent['naru-review-security'].variant, 'max');
+  assert.equal(config.agent['naru-minion-architect'].model, 'custom/project-sol');
+  assert.equal(config.agent['naru-minion-architect'].variant, 'max');
   assert.equal(sharedState.overrides.profiles.deep.model, 'custom/project-sol');
   assert.equal(sharedState.overrides.profiles.deep.variant, 'max');
 
@@ -799,7 +769,7 @@ test('multiple plugin scopes merge sparse overrides and invalid later config res
   );
   await invalidPlugin.config(config);
   assert.equal(config.agent['naru-minion-scout'].model, undefined);
-  assert.equal(config.agent['naru-review-security'].model, undefined);
+  assert.equal(config.agent['naru-minion-architect'].model, undefined);
   assert.equal(config.agent[lunaAlias('naru-minion-scout')], undefined);
   assert.equal(config.agent[solAlias('naru-minion-scout')], undefined);
   for (const agent of NARU_AGENT_IDS) assert.deepEqual(config.agent[agent].permission.skill, { '*': 'allow' });
@@ -809,12 +779,12 @@ test('multiple plugin scopes merge sparse overrides and invalid later config res
 test('plugin failure preserves an originally missing agent as absent', async () => {
   const logs = [];
   const config = fakeConfig();
-  delete config.agent['naru-review-judge'];
+  delete config.agent['naru-minion-judge'];
   const plugin = await NaruDelegatePlugin({
     client: { app: { log: async (entry) => logs.push(entry) } },
   });
   await plugin.config(config);
-  assert.equal(Object.hasOwn(config.agent, 'naru-review-judge'), false);
+  assert.equal(Object.hasOwn(config.agent, 'naru-minion-judge'), false);
   assert.equal(config.agent[lunaAlias('naru-minion-scout')], undefined);
   assert.equal(config.agent[solAlias('naru-minion-scout')], undefined);
   assert.equal(logs.length, 1);

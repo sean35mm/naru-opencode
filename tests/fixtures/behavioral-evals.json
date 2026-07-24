@@ -3,11 +3,11 @@
   "purpose": "Deterministic Naru behavioral contract corpus; not a live model-quality benchmark.",
   "subagentDepthCompatibility": {
     "openCodeVersion": "1.18.4",
-    "openCodeDefault": { "value": 1, "twoLevelWorkflowsCompatible": false },
-    "minimumRequired": 2,
-    "recommended": 2,
+    "openCodeDefault": { "value": 1, "currentTopologyCompatible": true },
+    "minimumRequired": 1,
+    "recommended": 1,
     "configuredAboveMinimum": { "compatible": true, "recommendedByNaru": false },
-    "maximumCurrentNaruTopology": 2
+    "maximumCurrentNaruTopology": 1
   },
   "cases": [
     {
@@ -33,9 +33,9 @@
     {
       "id": "ambiguous-diagnosis",
       "workflow": "triage",
-      "rootAgent": "naru-triage",
+      "skill": "naru-triage",
+      "rootAgent": "naru-orchestrator",
       "input": { "summary": "The service is sometimes slow; no reproduction or target is supplied." },
-      "selection": { "baseline": ["naru-triage-reproduction", "naru-triage-codepath", "naru-triage-judge"], "selected": ["naru-triage-reproduction", "naru-triage-codepath", "naru-triage-judge"], "skipped": ["naru-triage-regression", "naru-triage-tests"], "skippedStatus": "skipped-not-relevant" },
       "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
       "prohibited": { "actions": ["invent a root cause", "edit files"], "routes": ["naru-delegate-sol-xhigh-minion-debug"] },
       "expected": { "status": "clarification-required", "authorization": "read-only" }
@@ -43,9 +43,9 @@
     {
       "id": "security-data-sensitive-change",
       "workflow": "plan",
-      "rootAgent": "naru-plan",
+      "skill": "naru-plan",
+      "rootAgent": "naru-orchestrator",
       "input": { "summary": "Add retention handling for customer account data." },
-      "selection": { "baseline": ["naru-plan-minimal-change", "naru-plan-tests", "naru-plan-judge"], "selected": ["naru-plan-architecture", "naru-plan-minimal-change", "naru-plan-risk", "naru-plan-tests", "naru-plan-judge"], "skipped": [], "skippedStatus": "skipped-not-relevant" },
       "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
       "prohibited": { "actions": ["read secrets", "run migration"], "routes": ["naru-delegate-sol-xhigh-minion-implement"] },
       "expected": { "status": "completed", "authorization": "read-only" }
@@ -53,9 +53,9 @@
     {
       "id": "frontend-review",
       "workflow": "review",
-      "rootAgent": "naru-review",
+      "skill": "naru-review",
+      "rootAgent": "naru-orchestrator",
       "input": { "summary": "Review a PR that changes only a mobile layout component." },
-      "selection": { "baseline": ["naru-review-judge"], "selected": ["naru-review-frontend-mobile", "naru-review-judge"], "skipped": ["naru-review-security", "naru-review-backend", "naru-review-integrations", "naru-review-tests-ci"], "skippedStatus": "skipped-not-relevant" },
       "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
       "prohibited": { "actions": ["post review", "inspect mutable local checkout"], "routes": ["naru-delegate-sol-xhigh-minion-verify"] },
       "expected": { "status": "completed", "authorization": "dry-run" }
@@ -63,9 +63,9 @@
     {
       "id": "backend-review",
       "workflow": "review",
-      "rootAgent": "naru-review",
+      "skill": "naru-review",
+      "rootAgent": "naru-orchestrator",
       "input": { "summary": "Review a PR that changes a server request handler." },
-      "selection": { "baseline": ["naru-review-judge"], "selected": ["naru-review-backend", "naru-review-judge"], "skipped": ["naru-review-security", "naru-review-frontend-mobile", "naru-review-integrations", "naru-review-tests-ci"], "skippedStatus": "skipped-not-relevant" },
       "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
       "prohibited": { "actions": ["post review"], "routes": ["naru-delegate-sol-xhigh-minion-debug"] },
       "expected": { "status": "completed", "authorization": "dry-run" }
@@ -73,9 +73,9 @@
     {
       "id": "cross-service-review",
       "workflow": "review",
-      "rootAgent": "naru-review",
+      "skill": "naru-review",
+      "rootAgent": "naru-orchestrator",
       "input": { "summary": "Review a PR that changes an outbound webhook contract." },
-      "selection": { "baseline": ["naru-review-judge"], "selected": ["naru-review-integrations", "naru-review-judge"], "skipped": ["naru-review-security", "naru-review-backend", "naru-review-frontend-mobile", "naru-review-tests-ci"], "skippedStatus": "skipped-not-relevant" },
       "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
       "prohibited": { "actions": ["post review"], "routes": ["naru-delegate-sol-xhigh-minion-architect"] },
       "expected": { "status": "completed", "authorization": "dry-run" }
@@ -83,17 +83,18 @@
     {
       "id": "provider-failure",
       "workflow": "plan",
-      "rootAgent": "naru-plan",
+      "skill": "naru-plan",
+      "rootAgent": "naru-orchestrator",
       "input": { "summary": "Plan a focused bug fix; the tests specialist fails after one fresh retry." },
-      "selection": { "baseline": ["naru-plan-minimal-change", "naru-plan-tests", "naru-plan-judge"], "selected": ["naru-plan-minimal-change", "naru-plan-tests", "naru-plan-judge"], "skipped": ["naru-plan-architecture", "naru-plan-risk"], "skippedStatus": "skipped-not-relevant" },
       "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
       "prohibited": { "actions": ["automatic model fallback", "claim complete coverage"], "routes": ["naru-delegate-sol-xhigh-minion-implement"] },
-      "expected": { "status": "partial", "authorization": "read-only", "failedSelected": ["naru-plan-tests"] }
+      "expected": { "status": "partial", "authorization": "read-only", "limitations": ["delegated check unavailable"] }
     },
     {
       "id": "missing-context",
       "workflow": "plan",
-      "rootAgent": "naru-plan",
+      "skill": "naru-plan",
+      "rootAgent": "naru-orchestrator",
       "input": { "summary": "" },
       "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
       "prohibited": { "actions": ["invent scope", "delegate without objective"], "routes": ["naru-delegate-sol-xhigh-minion-implement"] },
@@ -102,9 +103,9 @@
     {
       "id": "conditional-specialist-selection",
       "workflow": "impact",
-      "rootAgent": "naru-impact",
+      "skill": "naru-impact",
+      "rootAgent": "naru-orchestrator",
       "input": { "summary": "Assess a local internal refactor with no data, API, or frontend surface." },
-      "selection": { "baseline": ["naru-impact-topology", "naru-impact-tests-ci", "naru-impact-judge"], "selected": ["naru-impact-topology", "naru-impact-tests-ci", "naru-impact-judge"], "skipped": ["naru-impact-contracts", "naru-impact-data", "naru-impact-frontend-mobile"], "skippedStatus": "skipped-not-relevant" },
       "routing": { "root": { "profile": "terra", "variant": "high" }, "children": { "profiles": ["terra", "sol"], "standardVariants": ["high"], "optionalVariants": [] } },
       "prohibited": { "actions": ["mandatory all-specialist fan-out"], "routes": ["naru-delegate-sol-xhigh-minion-scout"] },
       "expected": { "status": "completed", "authorization": "read-only" }
@@ -259,9 +260,9 @@
     {
       "id": "incomplete-degraded-refusal",
       "freshReviewResults": [
-        { "workflow": { "status": "incomplete", "degraded": true }, "snapshotComplete": true },
-        { "workflow": { "status": "complete", "degraded": true }, "snapshotComplete": true },
-        { "workflow": { "status": "complete", "degraded": false }, "snapshotComplete": false }
+        { "coverage": { "complete": false, "limitations": ["backend path unavailable"] }, "snapshotComplete": true },
+        { "coverage": { "complete": true, "limitations": ["tests not inspected"] }, "snapshotComplete": true },
+        { "coverage": { "complete": true, "limitations": [] }, "snapshotComplete": false }
       ],
       "expected": { "postCallsPerResult": [0, 0, 0], "disposition": "refused" },
       "prohibitedActions": ["post incomplete review", "post degraded review", "post incomplete snapshot"]
@@ -269,11 +270,10 @@
     {
       "id": "review-post-depth-topology",
       "paths": {
-        "selectedOrchestrator": ["naru-orchestrator", "naru-review", "naru-review-specialists-or-judge"],
-        "slashCommand": ["naru-review-post", "naru-review", "naru-review-specialists-or-judge"]
+        "selectedOrchestrator": ["naru-orchestrator", "skill:naru-review", "optional-minion-lenses"]
       },
-      "expected": { "orchestratorReviewTarget": "canonical-only", "wrapperReviewTarget": "generated-policy-selected", "wrapperCommandSubtask": false, "rootOnlyTaskTargets": ["naru-orchestrator", "naru-review-post"], "maxTaskDepthAfterRoot": 2, "minimumSubagentDepth": 2, "openCodeDefaultCompatible": false, "disposition": "requires-compatible-depth-config" },
-      "prohibitedActions": ["Task naru-review-post", "generated review alias from orchestrator"]
+      "expected": { "reviewMethod": "native-skill", "postingAgent": "naru-orchestrator", "rootOnlyTaskTargets": ["naru-orchestrator"], "maxTaskDepthAfterRoot": 1, "minimumSubagentDepth": 1, "openCodeDefaultCompatible": true, "disposition": "default-compatible" },
+      "prohibitedActions": ["Task naru-review", "Task naru-review-post", "generated review alias"]
     },
     {
       "id": "mixed-delivery-then-fresh-post",
@@ -346,7 +346,25 @@
         "skipReason": null
       },
       "prohibitedActions": ["second best-of-2 pair", "best-of-2 writers", "automatic xhigh escalation"],
-      "expected": { "maxBestOf2Pairs": 1, "maxConcurrentReadOnly": 4, "disposition": "single-independent-pair" }
+      "expected": { "maxBestOf2Pairs": 1, "maxConcurrentReadOnly": 10, "disposition": "single-independent-pair" }
+    },
+    {
+      "id": "adaptive-explicit-fifty-way-fanout",
+      "scenario": "The user explicitly requests 50 competing analyses of one bounded decision.",
+      "policy": { "mode": "auto", "material": true, "taskShape": "competing-analysis", "explicitFanout": { "requested": 50 } },
+      "decision": {
+        "status": "delegated",
+        "selected": ["naru-minion-architect"],
+        "requestedChildren": 50,
+        "freshDirectChildren": 50,
+        "nestedChildren": 0,
+        "maxConcurrentReadOnly": 50,
+        "rollingWaves": 1,
+        "synthesis": "all-terminal-reports-with-consensus-disagreements-outliers-and-failures",
+        "skipReason": null
+      },
+      "prohibitedActions": ["reduce to best-of-2", "nest analysis children", "reuse task_id", "exceed active cap", "stop after early consensus"],
+      "expected": { "requestedCountHonored": true, "subagentDepth": 1, "disposition": "explicit-concurrent-fanout" }
     },
     {
       "id": "adaptive-foreground-no-background",
@@ -391,7 +409,7 @@
     },
     {
       "id": "adaptive-capacity-seeking-refill",
-      "scenario": "Auto mode fills both useful read-only slots and refills one while a peer remains active.",
+      "scenario": "Auto mode fills every currently ready useful slot and refills one when its packet becomes ready while peers remain active.",
       "policy": { "mode": "auto", "material": true, "taskShape": "mixed-discovery-diagnosis-structure" },
       "timeline": [
         { "at": 0, "event": "packet-ready", "deferred": ["naru-minion-architect"] },
@@ -401,9 +419,9 @@
         { "at": 4, "event": "sufficient-evidence", "activeReadOnly": [] }
       ],
       "decision": { "status": "delegated", "selected": ["naru-minion-scout", "naru-minion-investigate", "naru-minion-debug", "naru-minion-verify", "naru-minion-architect"], "launch": "background", "skipReason": null },
-      "caps": { "maxConcurrentImplement": 2, "maxConcurrentReadOnly": 4, "maxTotalNaruChildren": 6 },
+      "caps": { "maxConcurrentImplement": 10, "maxConcurrentReadOnly": 10, "maxTotalNaruChildren": 10 },
       "prohibitedActions": ["duplicate settled lens", "exceed active cap", "automatic xhigh escalation", "automatic worktree"],
-      "expected": { "initialUsefulSlotsFilled": true, "refilledWhilePeerActive": true, "maxConcurrentReadOnly": 4, "disposition": "capacity-seeking" }
+      "expected": { "initialUsefulSlotsFilled": true, "refilledWhilePeerActive": true, "maxConcurrentReadOnly": 10, "disposition": "capacity-seeking" }
     }
   ],
   "protocol3Cases": [
@@ -437,7 +455,7 @@
       "schedulingProtocol": 3,
       "artifactOrder": ["terminal", "candidate", "shard", "verification-gate", "judgment", "judgment-gate", "completion-gate"],
       "correlation": ["runId", "reportId", "admissionTokenId", "workItemId", "candidateArtifactId", "candidateIdentity", "candidateStateDigest"],
-      "budgets": { "maxConcurrentWriters": 2, "maxConcurrentReadOnly": 4, "maxTotalChildren": 6, "maxJudgePasses": 3 },
+      "budgets": { "maxConcurrentWriters": 10, "maxConcurrentReadOnly": 10, "maxTotalChildren": 10, "maxJudgePasses": 3 },
       "prohibitedActions": ["candidate while writer active", "shared shard mutable resource", "completion without ready judgment", "fourth judge pass"],
       "expected": { "allVerificationNeedsCovered": true, "finalIdentityExact": true, "disposition": "gated" }
     },
@@ -464,7 +482,7 @@
       ],
       "independence": { "cFromActivePeersAtDispatch": true },
       "prohibitedActions": ["wait for cohort drain before starting c", "force split"],
-      "expected": { "startOrder": ["a", "b", "c"], "cStartsWhileBActive": true, "maxConcurrentImplement": 2, "cohortId": "cohort-1", "disposition": "rolling-refill" }
+      "expected": { "startOrder": ["a", "b", "c"], "cStartsWhileBActive": true, "maxConcurrentImplement": 10, "cohortId": "cohort-1", "disposition": "rolling-refill" }
     },
     {
       "id": "scheduler-work-item-contract",
@@ -477,17 +495,16 @@
       "expected": { "schedulingProtocol": 2, "sharedFrozenContractConcurrent": true, "mutableUncertaintySerializes": true, "disposition": "complete-work-items" }
     },
     {
-      "id": "scheduler-cap-two-timeline",
-      "scenario": "Three independent ready items never exceed two active Implement children.",
+      "id": "scheduler-cap-ten-timeline",
+      "scenario": "Eleven independent ready items never exceed ten active same-workspace Implement children.",
       "timeline": [
-        { "at": 0, "event": "start", "workItemId": "a", "activeImplement": ["a"] },
-        { "at": 1, "event": "start", "workItemId": "b", "activeImplement": ["a", "b"] },
-        { "at": 2, "event": "defer-cap", "workItemId": "c", "activeImplement": ["a", "b"] },
-        { "at": 3, "event": "finish-contained", "workItemId": "a", "activeImplement": ["b"] },
-        { "at": 4, "event": "start", "workItemId": "c", "activeImplement": ["b", "c"] }
+        { "at": 0, "event": "start-cohort", "activeImplement": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"] },
+        { "at": 1, "event": "defer-cap", "workItemId": "k", "activeImplement": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"] },
+        { "at": 2, "event": "finish-contained", "workItemId": "a", "activeImplement": ["b", "c", "d", "e", "f", "g", "h", "i", "j"] },
+        { "at": 3, "event": "start", "workItemId": "k", "activeImplement": ["b", "c", "d", "e", "f", "g", "h", "i", "j", "k"] }
       ],
-      "prohibitedActions": ["three concurrent writers"],
-      "expected": { "maxConcurrentImplement": 2, "deferredByCap": ["c"], "disposition": "bounded" }
+      "prohibitedActions": ["eleven concurrent same-workspace writers", "writer edit without Weaver claim"],
+      "expected": { "maxConcurrentImplement": 10, "deferredByCap": ["k"], "disposition": "bounded" }
     },
     {
       "id": "scheduler-active-peer-conflict-defers",
@@ -538,11 +555,11 @@
     {
       "id": "scheduler-read-only-work-stealing",
       "scenario": "Useful preparation work may fill read-only capacity without checking a moving candidate.",
-      "active": { "implement": ["a", "b"], "readOnly": ["prep-manifest", "prep-report", "prep-future", "prep-dependency"], "totalNaruChildren": 6 },
+      "active": { "implement": ["a", "b", "c", "d", "e", "f"], "readOnly": ["prep-manifest", "prep-report", "prep-future", "prep-dependency"], "totalNaruChildren": 10 },
       "allowedKinds": ["future-scope discovery", "manifest or target inspection", "check-plan preparation", "unaffected dependency inspection", "terminal-report static review"],
       "evidence": { "evidenceId": "evidence-1", "observedPaths": ["package.json", "src/future.js"], "basisIdentity": "dispatch-b", "validityKeys": ["package.json@dispatch-b"], "invalidationKeys": ["package.json changed", "src/future.js changed"] },
-      "prohibitedActions": ["edit from preparation child", "run final checks against moving workspace", "exceed four read-only children", "exceed six total Naru children"],
-      "expected": { "maxConcurrentReadOnly": 4, "maxTotalNaruChildren": 6, "changedObservedPathInvalidatesEvidence": true, "disposition": "bounded-preparation" }
+      "prohibitedActions": ["edit from preparation child", "run final checks against moving workspace", "exceed ten automatic total Naru children"],
+      "expected": { "maxConcurrentReadOnly": 10, "maxTotalNaruChildren": 10, "changedObservedPathInvalidatesEvidence": true, "disposition": "bounded-preparation" }
     },
     {
       "id": "scheduler-todo-phase-semantics",
@@ -560,7 +577,7 @@
         { "shardId": "verify-2", "candidateIdentity": "candidate-1", "workItemIds": ["b"], "coveredChecks": ["check-b"], "observedPaths": ["src/b.js", "src/shared.js"], "mutableResourceClaims": ["test-cache-b"] }
       ],
       "prohibitedActions": ["verify while writer active", "share mutable verification resource", "accept shard for another candidate"],
-      "expected": { "maxConcurrentVerify": 2, "readOnlyPathOverlapAllowed": true, "completeShardManifestRequired": true, "reportsValidOnlyForExactCandidate": true, "disposition": "verified-shards" }
+      "expected": { "maxConcurrentVerify": 10, "readOnlyPathOverlapAllowed": true, "completeShardManifestRequired": true, "reportsValidOnlyForExactCandidate": true, "disposition": "verified-shards" }
     },
     {
       "id": "scheduler-final-identity-equality",
@@ -583,7 +600,7 @@
       "id": "scheduler-automatic-isolated-worktrees",
       "scenario": "A clean repository may use one Naru-owned worktree per writer while a dirty repository downgrades without prompting.",
       "prohibitedActions": ["multiple writers in one isolated worktree", "worktree mode on dirty repository", "cleanup before finalization", "delivery commit"],
-      "expected": { "cleanRepositoryWriterLimit": 10, "defaultConcurrentWriters": 6, "writersPerWorktree": 1, "dirtyRepositoryFallback": "shared-two-writer", "userPromptRequired": false, "disposition": "isolated-worktrees" }
+      "expected": { "cleanRepositoryWriterLimit": 50, "defaultConcurrentWriters": 10, "writersPerWorktree": 1, "dirtyRepositoryFallback": "shared-ten-writer", "userPromptRequired": false, "disposition": "isolated-worktrees" }
     }
   ]
 }

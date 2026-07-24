@@ -24,15 +24,13 @@ const MAX_BODY_LENGTH = 64 * 1024;
 const MAX_COMMENT_BODY_LENGTH = 32 * 1024;
 const MAX_COMMENTS = 100;
 const MAX_WARNINGS = 100;
-const MAX_FAILED_SPECIALISTS = 20;
 const MAX_GH_BYTES = 32 * 1024 * 1024;
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
 const SEVERITIES = ['Critical', 'High', 'Medium', 'Low'];
 const CONFIDENCE = ['High', 'Medium', 'Low'];
-const WORKFLOW_STATUSES = ['complete', 'partial', 'incomplete'];
 const SNAPSHOT_ID = /^naru-snap-[0-9a-f]{64}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
-const POSTING_AGENTS = new Set(['naru-review-post', 'naru-orchestrator']);
+const POSTING_AGENTS = new Set(['naru-orchestrator']);
 const MAX_TRACKED_POST_TARGETS = 128;
 const postLocks = new Map();
 const postRecords = new Map();
@@ -76,21 +74,17 @@ function validateSnapshot(raw) {
   };
 }
 
-function validateWorkflow(raw) {
-  assertPlainObject(raw, 'reviewResult.workflow');
-  validateAllowedKeys(raw, ['status', 'degraded', 'failedSpecialists']);
-  const status = requireField(raw, 'status', (value) => WORKFLOW_STATUSES.includes(value));
-  const degraded = requireField(raw, 'degraded', isBoolean);
-  const failedSpecialists = requireStringArray(
-    requireField(raw, 'failedSpecialists', Array.isArray),
-    'reviewResult.workflow.failedSpecialists',
-    MAX_FAILED_SPECIALISTS,
-  );
-  if (status === 'complete' && (degraded || failedSpecialists.length > 0)) {
-    throw new Error('complete workflow cannot be degraded or have failed specialists');
-  }
-  if (status !== 'complete' && !degraded) throw new Error('partial or incomplete workflow must be degraded');
-  return { status, degraded, failedSpecialists };
+function validateCoverage(raw) {
+  assertPlainObject(raw, 'reviewResult.coverage');
+  validateAllowedKeys(raw, ['complete', 'limitations']);
+  return {
+    complete: requireField(raw, 'complete', isBoolean),
+    limitations: requireStringArray(
+      requireField(raw, 'limitations', Array.isArray),
+      'reviewResult.coverage.limitations',
+      MAX_WARNINGS,
+    ),
+  };
 }
 
 function validateComment(raw, index) {
@@ -126,16 +120,16 @@ export function validateReviewPayload(raw) {
     'schemaVersion',
     'target',
     'snapshot',
-    'workflow',
+    'coverage',
     'body',
     'inlineComments',
     'skippedInlineComments',
   ]);
-  if (result.schemaVersion !== 1) throw new Error('reviewResult.schemaVersion must be 1');
+  if (result.schemaVersion !== 2) throw new Error('reviewResult.schemaVersion must be 2');
 
   const target = validateTarget(requireField(result, 'target', (value) => value !== null && typeof value === 'object'));
   const snapshot = validateSnapshot(requireField(result, 'snapshot', (value) => value !== null && typeof value === 'object'));
-  const workflow = validateWorkflow(requireField(result, 'workflow', (value) => value !== null && typeof value === 'object'));
+  const coverage = validateCoverage(requireField(result, 'coverage', (value) => value !== null && typeof value === 'object'));
   const body = requireField(result, 'body', (value) => isBoundedText(value, MAX_BODY_LENGTH - 256));
   if (/<!--\s*naru-review:/i.test(body)) throw new Error('reviewResult.body contains a reserved Naru marker');
 
@@ -145,7 +139,7 @@ export function validateReviewPayload(raw) {
   const skippedRaw = requireField(result, 'skippedInlineComments', Array.isArray);
   if (skippedRaw.length > MAX_COMMENTS) throw new Error(`skippedInlineComments exceeds ${MAX_COMMENTS}`);
   const skippedInlineComments = skippedRaw.map(validateSkippedComment);
-  return { target, snapshot, workflow, body, inlineComments, skippedInlineComments };
+  return { target, snapshot, coverage, body, inlineComments, skippedInlineComments };
 }
 
 function markerDigest(payload, comments) {
@@ -502,12 +496,8 @@ export async function postReview(rawPayload, context, { spawn } = {}) {
     return errEnvelope('naru-github-post-review', `invalid input: ${safeError(error)}`);
   }
 
-  if (payload.workflow.status === 'incomplete') {
-    return errEnvelope('naru-github-post-review', 'review workflow is incomplete; refusing to post');
-  }
-  const degraded = payload.workflow.degraded || !payload.snapshot.complete;
-  if (degraded) {
-    return errEnvelope('naru-github-post-review', 'degraded or incomplete review snapshots cannot be posted');
+  if (!payload.coverage.complete || payload.coverage.limitations.length > 0 || !payload.snapshot.complete) {
+    return errEnvelope('naru-github-post-review', 'incomplete coverage or snapshot cannot be posted');
   }
 
   const key = targetKey(payload.target);

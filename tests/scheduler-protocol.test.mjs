@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   adaptProtocol2Run,
   DEFAULT_SCHEDULER_BUDGETS,
+  MAX_SCHEDULER_BUDGETS,
   validateArtifactV1,
   validateAdmissionTokenV1,
   validateCandidateArtifactV1,
@@ -25,6 +26,7 @@ import {
   loadRuntimeConfigFile,
   parseRuntimeConfig,
   parseSchedulerConfig,
+  resolveSchedulerBudgets,
 } from '../tools/naru-lib/scheduler-config.mjs';
 import {
   admissionDecision,
@@ -91,6 +93,22 @@ function transitionFor(workItemId, admissionTokenId, expectedRevision, toStatus)
     changedPaths: [`src/${workItemId}/index.mjs`],
   };
   return { token, artifact };
+}
+
+function disjointWorkItems(count, prefix) {
+  return Array.from({ length: count }, (_, index) => ({
+    workItemId: `${prefix}-${index + 1}`,
+    dependencies: [],
+    ownedWriteScope: [`src/${prefix}-${index + 1}.js`],
+    frozenContractClaims: ['api-v1'],
+    mutableContractClaims: [`contract-${prefix}-${index + 1}`],
+    generatedArtifactClaims: [],
+    configurationClaims: [],
+    mutableResourceClaims: [`resource-${prefix}-${index + 1}`],
+    exclusions: [],
+    verificationNeeds: [`check-${prefix}-${index + 1}`],
+    status: 'ready',
+  }));
 }
 
 test('Protocol 3 fixture validates without mutating its strict schemas', () => {
@@ -285,17 +303,24 @@ test('Protocol 2 adapter is deterministic for off and observe and refuses enforc
 test('runtime config is off by default, strict, bounded, and explicitly loadable', async () => {
   assert.deepEqual(parseSchedulerConfig(), DEFAULT_SCHEDULER_CONFIG);
   assert.deepEqual(parseRuntimeConfig(), DEFAULT_RUNTIME_CONFIG);
+  assert.deepEqual(resolveSchedulerBudgets(undefined, parseSchedulerConfig()), DEFAULT_SCHEDULER_BUDGETS);
   assert.equal(parseSchedulerConfig({ mode: 'observe' }).mode, 'observe');
   assert.equal(parseSchedulerConfig({ mode: 'enforce' }).legacyProtocol2, 'reject');
   assert.throws(() => parseSchedulerConfig({ mode: 'enabled' }), /must be one of off, observe, enforce/);
   assert.throws(() => parseSchedulerConfig({ extra: true }), /unknown fields/);
-  assert.throws(() => parseSchedulerConfig({ maxConcurrentWriters: 11 }), /from 1 to 10/);
-  assert.throws(() => parseSchedulerConfig({ maxConcurrentReadOnly: 5 }), /from 0 to 4/);
-  assert.throws(() => parseSchedulerConfig({ maxTotalChildren: 15 }), /from 1 to 14/);
-  assert.equal(parseRuntimeConfig({ implementation: { maxConcurrentWriters: 10 } }).implementation.maxConcurrentWriters, 10);
+  assert.deepEqual({
+    maxConcurrentWriters: DEFAULT_SCHEDULER_CONFIG.maxConcurrentWriters,
+    maxConcurrentReadOnly: DEFAULT_SCHEDULER_CONFIG.maxConcurrentReadOnly,
+    maxTotalChildren: DEFAULT_SCHEDULER_CONFIG.maxTotalChildren,
+    maxJudgePasses: DEFAULT_SCHEDULER_CONFIG.maxJudgePasses,
+  }, MAX_SCHEDULER_BUDGETS);
+  assert.throws(() => parseSchedulerConfig({ maxConcurrentWriters: 51 }), /from 1 to 50/);
+  assert.throws(() => parseSchedulerConfig({ maxConcurrentReadOnly: 51 }), /from 0 to 50/);
+  assert.throws(() => parseSchedulerConfig({ maxTotalChildren: 51 }), /from 1 to 50/);
+  assert.equal(parseRuntimeConfig({ implementation: { maxConcurrentWriters: 50 } }).implementation.maxConcurrentWriters, 50);
   assert.throws(
-    () => parseRuntimeConfig({ implementation: { maxConcurrentWriters: 11 } }),
-    /implementation.maxConcurrentWriters must be an integer from 1 to 10/,
+    () => parseRuntimeConfig({ implementation: { maxConcurrentWriters: 51 } }),
+    /implementation.maxConcurrentWriters must be an integer from 1 to 50/,
   );
   assert.throws(
     () => parseRuntimeConfig({ implementation: { cleanWorkspaceRequired: false } }),
@@ -340,40 +365,47 @@ test('state creation and admission are deterministic, CAS-protected, and budgete
   );
 });
 
-test('isolated scheduler budgets admit ten disjoint writers and refuse an eleventh', () => {
-  const workItems = Array.from({ length: 11 }, (_, index) => ({
-    workItemId: `isolated-${index + 1}`,
-    dependencies: [],
-    ownedWriteScope: [`src/isolated-${index + 1}.js`],
-    frozenContractClaims: ['api-v1'],
-    mutableContractClaims: [`contract-${index + 1}`],
-    generatedArtifactClaims: [],
-    configurationClaims: [],
-    mutableResourceClaims: [`resource-${index + 1}`],
-    exclusions: [],
-    verificationNeeds: [`check-${index + 1}`],
-    status: 'ready',
-  }));
-  const manifest = validateRunManifestV1({
+test('automatic scheduler budgets admit ten disjoint writers and refuse an eleventh', () => {
+  const workItems = disjointWorkItems(11, 'shared');
+  let state = createSchedulerState(validateRunManifestV1({
     ...fixture.manifest,
-    budgets: {
-      maxConcurrentWriters: 10,
-      maxConcurrentReadOnly: 4,
-      maxTotalChildren: 14,
-      maxJudgePasses: 3,
-    },
+    budgets: DEFAULT_SCHEDULER_BUDGETS,
     workItems,
-  });
-  let state = createSchedulerState(manifest);
+  }));
   for (const item of workItems.slice(0, 10)) {
     const peers = state.activeAdmissions.map((entry) => entry.workItemId).sort();
     state = admitWorkItem(state, admissionFor(item.workItemId, state.revision, peers), { now: 150 });
   }
   assert.equal(budgetUsage(state).writers, 10);
   const peers = state.activeAdmissions.map((entry) => entry.workItemId).sort();
-  const decision = admissionDecision(state, admissionFor('isolated-11', state.revision, peers), { now: 150 });
+  assert.equal(
+    admissionDecision(state, admissionFor('shared-11', state.revision, peers), { now: 150 }).reason,
+    'total child budget exhausted',
+  );
+});
+
+test('explicit scheduler budgets admit fifty disjoint writers and refuse a fifty-first', () => {
+  const workItems = disjointWorkItems(51, 'isolated');
+  const manifest = validateRunManifestV1({
+    ...fixture.manifest,
+    budgets: {
+      maxConcurrentWriters: 50,
+      maxConcurrentReadOnly: 50,
+      maxTotalChildren: 50,
+      maxJudgePasses: 3,
+    },
+    workItems,
+  });
+  let state = createSchedulerState(manifest);
+  for (const item of workItems.slice(0, 50)) {
+    const peers = state.activeAdmissions.map((entry) => entry.workItemId).sort();
+    state = admitWorkItem(state, admissionFor(item.workItemId, state.revision, peers), { now: 150 });
+  }
+  assert.equal(budgetUsage(state).writers, 50);
+  const peers = state.activeAdmissions.map((entry) => entry.workItemId).sort();
+  const decision = admissionDecision(state, admissionFor('isolated-51', state.revision, peers), { now: 150 });
   assert.equal(decision.allowed, false);
-  assert.equal(decision.reason, 'writer budget exhausted');
+  assert.equal(decision.reason, 'total child budget exhausted');
 });
 
 test('claim and path conflicts are conservative while frozen contracts may overlap', () => {

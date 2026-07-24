@@ -4,6 +4,7 @@ import { basename } from 'node:path';
 
 import {
   DEFAULT_SCHEDULER_BUDGETS,
+  MAX_SCHEDULER_BUDGETS,
   SCHEDULER_PROTOCOL_LIMITS,
   validateSchedulerBudgets,
 } from './scheduler-protocol.mjs';
@@ -15,7 +16,7 @@ const WORKSPACE_MODES = Object.freeze(['auto', 'shared', 'worktree']);
 
 export const DEFAULT_SCHEDULER_CONFIG = Object.freeze({
   mode: 'off',
-  ...DEFAULT_SCHEDULER_BUDGETS,
+  ...MAX_SCHEDULER_BUDGETS,
   maxWorkItems: SCHEDULER_PROTOCOL_LIMITS.maxWorkItems,
   maxManifestBytes: SCHEDULER_PROTOCOL_LIMITS.maxManifestBytes,
   maxArtifactBytes: 64 * 1024,
@@ -29,7 +30,7 @@ export const DEFAULT_RUNTIME_CONFIG = Object.freeze({
   scheduler: DEFAULT_SCHEDULER_CONFIG,
   implementation: Object.freeze({
     workspaceMode: 'auto',
-    maxConcurrentWriters: 6,
+    maxConcurrentWriters: 10,
     maxWritersPerWorktree: 1,
     cleanWorkspaceRequired: true,
   }),
@@ -75,19 +76,19 @@ export function parseSchedulerConfig(value) {
       value.maxConcurrentWriters,
       DEFAULT_SCHEDULER_CONFIG.maxConcurrentWriters,
       'scheduler.maxConcurrentWriters',
-      { minimum: 1, maximum: 10 },
+      { minimum: 1, maximum: MAX_SCHEDULER_BUDGETS.maxConcurrentWriters },
     ),
     maxConcurrentReadOnly: integerOption(
       value.maxConcurrentReadOnly,
       DEFAULT_SCHEDULER_CONFIG.maxConcurrentReadOnly,
       'scheduler.maxConcurrentReadOnly',
-      { minimum: 0, maximum: 4 },
+      { minimum: 0, maximum: MAX_SCHEDULER_BUDGETS.maxConcurrentReadOnly },
     ),
     maxTotalChildren: integerOption(
       value.maxTotalChildren,
       DEFAULT_SCHEDULER_CONFIG.maxTotalChildren,
       'scheduler.maxTotalChildren',
-      { minimum: 1, maximum: 14 },
+      { minimum: 1, maximum: MAX_SCHEDULER_BUDGETS.maxTotalChildren },
     ),
     maxJudgePasses: integerOption(
       value.maxJudgePasses,
@@ -151,7 +152,14 @@ export function resolveSchedulerBudgets(value, config) {
     maxTotalChildren: config.maxTotalChildren,
     maxJudgePasses: config.maxJudgePasses,
   });
-  if (value === undefined) return ceilings;
+  if (value === undefined) {
+    return validateSchedulerBudgets(Object.fromEntries(
+      Object.keys(DEFAULT_SCHEDULER_BUDGETS).map((field) => [
+        field,
+        Math.min(DEFAULT_SCHEDULER_BUDGETS[field], ceilings[field]),
+      ]),
+    ));
+  }
   const budgets = validateSchedulerBudgets(value);
   for (const field of Object.keys(ceilings)) {
     if (budgets[field] > ceilings[field]) {
@@ -194,7 +202,7 @@ export function parseRuntimeConfig(value) {
         implementation.maxConcurrentWriters,
         DEFAULT_RUNTIME_CONFIG.implementation.maxConcurrentWriters,
         'implementation.maxConcurrentWriters',
-        { minimum: 1, maximum: 10 },
+        { minimum: 1, maximum: MAX_SCHEDULER_BUDGETS.maxConcurrentWriters },
       ),
       maxWritersPerWorktree: integerOption(
         implementation.maxWritersPerWorktree,

@@ -14,12 +14,7 @@ import {
 const fixturePath = fileURLToPath(new URL('./fixtures/behavioral-evals.json', import.meta.url));
 const fixture = JSON.parse(await readFile(fixturePath, 'utf8'));
 const canonicalAgents = new Set(NARU_AGENT_IDS);
-const workflowBaselines = {
-  plan: ['naru-plan-minimal-change', 'naru-plan-tests', 'naru-plan-judge'],
-  impact: ['naru-impact-topology', 'naru-impact-tests-ci', 'naru-impact-judge'],
-  triage: ['naru-triage-reproduction', 'naru-triage-codepath', 'naru-triage-judge'],
-  review: ['naru-review-judge'],
-};
+const nativeSkills = new Set(['naru-plan', 'naru-impact', 'naru-triage', 'naru-review']);
 
 function caseByID(id) {
   const item = fixture.cases.find((entry) => entry.id === id);
@@ -67,6 +62,7 @@ test('behavioral contract corpus has a stable, canonical shape', () => {
   for (const entry of fixture.cases) {
     assert.equal(typeof entry.id, 'string');
     assert.ok(canonicalAgents.has(entry.rootAgent), `${entry.id} has a canonical root agent`);
+    if (entry.workflow !== 'implementation') assert.ok(nativeSkills.has(entry.skill), `${entry.id} has a native workflow skill`);
     assert.equal(typeof entry.input?.summary, 'string');
     assert.ok(Array.isArray(entry.prohibited?.actions) && entry.prohibited.actions.length);
     assert.ok(Array.isArray(entry.prohibited?.routes) && entry.prohibited.routes.length);
@@ -81,7 +77,7 @@ test('implementation scheduling corpus keeps schema v1 and covers bounded concur
   const requiredIDs = [
     'scheduler-rolling-refill-timeline',
     'scheduler-work-item-contract',
-    'scheduler-cap-two-timeline',
+    'scheduler-cap-ten-timeline',
     'scheduler-active-peer-conflict-defers',
     'scheduler-baseline-lifecycle',
     'scheduler-provisional-dependency-invalidation',
@@ -98,7 +94,7 @@ test('implementation scheduling corpus keeps schema v1 and covers bounded concur
     assert.ok(Array.isArray(entry.prohibitedActions) && entry.prohibitedActions.length);
     assert.equal(typeof entry.expected, 'object');
     if ('maxConcurrentImplement' in entry.expected) {
-      assert.ok(entry.expected.maxConcurrentImplement <= 2, `${entry.id} respects writer cap`);
+      assert.ok(entry.expected.maxConcurrentImplement <= 10, `${entry.id} respects automatic writer cap`);
     }
   }
 });
@@ -112,6 +108,7 @@ test('adaptive delegation corpus covers every mode and enforces material-task de
     'adaptive-auto-check-design-selection',
     'adaptive-lean-highest-value-one',
     'adaptive-thorough-single-best-of-two',
+    'adaptive-explicit-fifty-way-fanout',
     'adaptive-foreground-no-background',
     'adaptive-off-typed-skip',
     'adaptive-known-scope-no-useful-lens',
@@ -166,7 +163,7 @@ test('adaptive modes bound selection, background behavior, and best-of-2', () =>
   assert.equal(thorough.decision.bestOf2.freshChildren, 2);
   assert.equal(thorough.decision.bestOf2.sameBoundedQuestion, true);
   assert.equal(thorough.decision.bestOf2.independentPackets, true);
-  assert.equal(thorough.expected.maxConcurrentReadOnly, 4);
+  assert.equal(thorough.expected.maxConcurrentReadOnly, 10);
 
   const foreground = adaptiveCaseByID('adaptive-foreground-no-background');
   assert.equal(foreground.decision.launch, 'foreground');
@@ -175,6 +172,19 @@ test('adaptive modes bound selection, background behavior, and best-of-2', () =>
   const off = adaptiveCaseByID('adaptive-off-typed-skip');
   assert.equal(off.decision.skipReason.code, 'mode-off');
   assert.deepEqual(off.requiredStages, ['naru-minion-implement', 'naru-minion-verify', 'naru-minion-judge']);
+});
+
+test('explicit user fan-out supports 50 fresh direct analyses at depth one', () => {
+  const fanout = adaptiveCaseByID('adaptive-explicit-fifty-way-fanout');
+  assert.equal(fanout.policy.explicitFanout.requested, 50);
+  assert.equal(fanout.decision.requestedChildren, 50);
+  assert.equal(fanout.decision.freshDirectChildren, 50);
+  assert.equal(fanout.decision.nestedChildren, 0);
+  assert.equal(fanout.decision.maxConcurrentReadOnly, 50);
+  assert.equal(fanout.decision.rollingWaves, 1);
+  assert.match(fanout.decision.synthesis, /all-terminal-reports/);
+  assert.equal(fanout.expected.subagentDepth, NARU_MINIMUM_SUBAGENT_DEPTH);
+  assert.equal(fanout.expected.requestedCountHonored, true);
 });
 
 test('adaptive delegation launches when its packet exists, refills useful capacity, and preserves all caps', () => {
@@ -193,9 +203,9 @@ test('adaptive delegation launches when its packet exists, refills useful capaci
     'naru-minion-investigate', 'naru-minion-debug', 'naru-minion-verify', 'naru-minion-architect',
   ]);
   assert.deepEqual(refill.caps, {
-    maxConcurrentImplement: 2,
-    maxConcurrentReadOnly: 4,
-    maxTotalNaruChildren: 6,
+    maxConcurrentImplement: 10,
+    maxConcurrentReadOnly: 10,
+    maxTotalNaruChildren: 10,
   });
   assert.equal(refill.expected.initialUsefulSlotsFilled, true);
   assert.equal(refill.expected.refilledWhilePeerActive, true);
@@ -232,9 +242,9 @@ test('Protocol 3 quality gates expose bounded correlation without overstating en
     'terminal', 'candidate', 'shard', 'verification-gate', 'judgment', 'judgment-gate', 'completion-gate',
   ]);
   assert.deepEqual(gated.budgets, {
-    maxConcurrentWriters: 2,
-    maxConcurrentReadOnly: 4,
-    maxTotalChildren: 6,
+    maxConcurrentWriters: 10,
+    maxConcurrentReadOnly: 10,
+    maxTotalChildren: 10,
     maxJudgePasses: 3,
   });
   assert.equal(gated.expected.allVerificationNeedsCovered, true);
@@ -364,21 +374,20 @@ test('posting always uses a fresh result and rejects incomplete or degraded outp
 
   const refusal = reviewPostingCaseByID('incomplete-degraded-refusal');
   assert.deepEqual(refusal.expected.postCallsPerResult, [0, 0, 0]);
-  assert.ok(refusal.freshReviewResults.some((result) => result.workflow.status === 'incomplete'));
-  assert.ok(refusal.freshReviewResults.some((result) => result.workflow.degraded));
+  assert.ok(refusal.freshReviewResults.some((result) => !result.coverage.complete));
+  assert.ok(refusal.freshReviewResults.some((result) => result.coverage.limitations.length > 0));
   assert.ok(refusal.freshReviewResults.some((result) => !result.snapshotComplete));
 });
 
-test('review posting topology requires configured two-level dispatch and mixed delivery posts last', () => {
+test('review posting uses the native skill at default depth and mixed delivery posts last', () => {
   const topology = reviewPostingCaseByID('review-post-depth-topology');
-  assert.equal(topology.expected.orchestratorReviewTarget, 'canonical-only');
-  assert.equal(topology.expected.wrapperReviewTarget, 'generated-policy-selected');
-  assert.equal(topology.expected.wrapperCommandSubtask, false);
-  assert.deepEqual(topology.expected.rootOnlyTaskTargets, ['naru-orchestrator', 'naru-review-post']);
-  assert.equal(topology.expected.maxTaskDepthAfterRoot, 2);
+  assert.equal(topology.expected.reviewMethod, 'native-skill');
+  assert.equal(topology.expected.postingAgent, 'naru-orchestrator');
+  assert.deepEqual(topology.expected.rootOnlyTaskTargets, ['naru-orchestrator']);
+  assert.equal(topology.expected.maxTaskDepthAfterRoot, 1);
   assert.equal(topology.expected.minimumSubagentDepth, NARU_MINIMUM_SUBAGENT_DEPTH);
-  assert.equal(topology.expected.openCodeDefaultCompatible, false);
-  assert.equal(topology.expected.disposition, 'requires-compatible-depth-config');
+  assert.equal(topology.expected.openCodeDefaultCompatible, true);
+  assert.equal(topology.expected.disposition, 'default-compatible');
 
   const mixed = reviewPostingCaseByID('mixed-delivery-then-fresh-post');
   assert.deepEqual(mixed.events.slice(-3), ['git-delivery', 'fresh-canonical-review', 'post-review']);
@@ -391,17 +400,17 @@ test('review posting topology requires configured two-level dispatch and mixed d
 test('subagent depth compatibility reflects the OpenCode default and current Naru topology', () => {
   assert.deepEqual(fixture.subagentDepthCompatibility, {
     openCodeVersion: '1.18.4',
-    openCodeDefault: { value: 1, twoLevelWorkflowsCompatible: false },
-    minimumRequired: 2,
-    recommended: 2,
+    openCodeDefault: { value: 1, currentTopologyCompatible: true },
+    minimumRequired: 1,
+    recommended: 1,
     configuredAboveMinimum: { compatible: true, recommendedByNaru: false },
-    maximumCurrentNaruTopology: 2,
+    maximumCurrentNaruTopology: 1,
   });
-  assert.equal(NARU_MINIMUM_SUBAGENT_DEPTH, 2);
+  assert.equal(NARU_MINIMUM_SUBAGENT_DEPTH, 1);
   assert.equal(NARU_REQUIRED_SUBAGENT_DEPTH, fixture.subagentDepthCompatibility.maximumCurrentNaruTopology);
 });
 
-test('rolling cohorts refill immediately after a contained finish and never exceed two writers', () => {
+test('rolling cohorts refill immediately and never exceed ten same-workspace writers', () => {
   const rolling = schedulingCaseByID('scheduler-rolling-refill-timeline');
   assert.deepEqual(rolling.timeline.map(({ event, workItemId }) => [event, workItemId]), [
     ['start', 'a'],
@@ -414,13 +423,14 @@ test('rolling cohorts refill immediately after a contained finish and never exce
   assert.equal(rolling.timeline[3].activePeer, 'b');
   assert.deepEqual(rolling.timeline[3].activeImplement, ['b', 'c']);
   assert.equal(rolling.expected.cStartsWhileBActive, true);
-  assert.ok(rolling.timeline.every((event) => event.activeImplement.length <= 2));
+  assert.ok(rolling.timeline.every((event) => event.activeImplement.length <= 10));
 
-  const capped = schedulingCaseByID('scheduler-cap-two-timeline');
-  assert.equal(capped.timeline[2].event, 'defer-cap');
-  assert.deepEqual(capped.timeline[2].activeImplement, ['a', 'b']);
-  assert.deepEqual(capped.expected.deferredByCap, ['c']);
-  assert.ok(capped.timeline.every((event) => event.activeImplement.length <= 2));
+  const capped = schedulingCaseByID('scheduler-cap-ten-timeline');
+  assert.equal(capped.timeline[1].event, 'defer-cap');
+  assert.equal(capped.timeline[1].activeImplement.length, 10);
+  assert.deepEqual(capped.expected.deferredByCap, ['k']);
+  assert.ok(capped.timeline.every((event) => event.activeImplement.length <= 10));
+  assert.ok(capped.prohibitedActions.includes('writer edit without Weaver claim'));
 });
 
 test('protocol 2 work items separate frozen reads from every mutable scheduling claim', () => {
@@ -478,14 +488,14 @@ test('terminal dependency reports unlock provisionally and faults freeze refill 
 
 test('read-only work stealing is bounded, evidence-keyed, and invalidated by observed-path changes', () => {
   const stealing = schedulingCaseByID('scheduler-read-only-work-stealing');
-  assert.equal(stealing.active.implement.length, 2);
+  assert.equal(stealing.active.implement.length, 6);
   assert.equal(stealing.active.readOnly.length, 4);
-  assert.equal(stealing.active.totalNaruChildren, 6);
+  assert.equal(stealing.active.totalNaruChildren, 10);
   assert.deepEqual(Object.keys(stealing.evidence).sort(), [
     'basisIdentity', 'evidenceId', 'invalidationKeys', 'observedPaths', 'validityKeys',
   ]);
-  assert.equal(stealing.expected.maxConcurrentReadOnly, 4);
-  assert.equal(stealing.expected.maxTotalNaruChildren, 6);
+  assert.equal(stealing.expected.maxConcurrentReadOnly, 10);
+  assert.equal(stealing.expected.maxTotalNaruChildren, 10);
   assert.equal(stealing.expected.changedObservedPathInvalidatesEvidence, true);
 });
 
@@ -498,14 +508,14 @@ test('TodoWrite exposes one phase summary and completes only at the unchanged fi
   assert.equal(todo.expected.completionPoint, 'unchanged-final-checkpoint');
 });
 
-test('quiescent verification uses at most two exact-candidate shards with disjoint mutable resources', () => {
+test('quiescent verification uses exact-candidate shards within the ten-child automatic budget', () => {
   const verification = schedulingCaseByID('scheduler-quiescent-two-shard-verification');
   assert.deepEqual(verification.candidate.activeImplement, []);
   assert.equal(verification.shards.length, 2);
   assert.ok(verification.shards.every((shard) => shard.candidateIdentity === verification.candidate.candidateIdentity));
   assert.deepEqual(verification.shards[0].observedPaths.slice(-1), verification.shards[1].observedPaths.slice(-1));
   assert.notDeepEqual(verification.shards[0].mutableResourceClaims, verification.shards[1].mutableResourceClaims);
-  assert.equal(verification.expected.maxConcurrentVerify, 2);
+  assert.equal(verification.expected.maxConcurrentVerify, 10);
   assert.equal(verification.expected.completeShardManifestRequired, true);
   assert.equal(verification.expected.reportsValidOnlyForExactCandidate, true);
 });
@@ -527,10 +537,10 @@ test('final identity equality gates todos, serialized remediation and delivery, 
   assert.deepEqual(serialized.phases.slice(-3), ['rejudgment', 'serialized-delivery', 'serialized-review-posting']);
 
   const worktrees = schedulingCaseByID('scheduler-automatic-isolated-worktrees');
-  assert.equal(worktrees.expected.cleanRepositoryWriterLimit, 10);
-  assert.equal(worktrees.expected.defaultConcurrentWriters, 6);
+  assert.equal(worktrees.expected.cleanRepositoryWriterLimit, 50);
+  assert.equal(worktrees.expected.defaultConcurrentWriters, 10);
   assert.equal(worktrees.expected.writersPerWorktree, 1);
-  assert.equal(worktrees.expected.dirtyRepositoryFallback, 'shared-two-writer');
+  assert.equal(worktrees.expected.dirtyRepositoryFallback, 'shared-ten-writer');
   assert.equal(worktrees.expected.userPromptRequired, false);
 });
 
@@ -564,14 +574,12 @@ test('xhigh is optional and only reachable from direct Sol xhigh or max orchestr
   assert.equal(MANAGED_SOL_XHIGH_ALIASES.length, 7);
 });
 
-test('conditional fan-out keeps workflow baselines, selected sets, and skipped-not-relevant semantics', () => {
+test('implementation selections contain only reachable retained minions', () => {
   for (const entry of fixture.cases.filter((item) => item.selection)) {
     const { selected, skipped, baseline, skippedStatus } = entry.selection;
     const rootTargets = NARU_DISPATCH_GRAPH[entry.rootAgent] ?? [];
-    const targets = entry.workflow === 'implementation'
-      ? rootTargets.filter((target) => target.startsWith('naru-minion-'))
-      : rootTargets;
-    assert.deepEqual(baseline, workflowBaselines[entry.workflow] ?? baseline, `${entry.id} baseline`);
+    const targets = rootTargets.filter((target) => target.startsWith('naru-minion-'));
+    assert.equal(entry.workflow, 'implementation');
     assert.equal(skippedStatus, 'skipped-not-relevant');
     for (const specialist of [...selected, ...skipped, ...baseline]) {
       assert.ok(canonicalAgents.has(specialist), `${entry.id} specialist is canonical`);
@@ -581,9 +589,6 @@ test('conditional fan-out keeps workflow baselines, selected sets, and skipped-n
     assert.equal(new Set([...selected, ...skipped]).size, selected.length + skipped.length, `${entry.id} selection sets do not overlap`);
     assert.deepEqual(new Set([...selected, ...skipped]), new Set(targets), `${entry.id} selection sets cover root targets`);
   }
-  assert.deepEqual(caseByID('conditional-specialist-selection').selection.skipped, [
-    'naru-impact-contracts', 'naru-impact-data', 'naru-impact-frontend-mobile',
-  ]);
 });
 
 test('authorization fixtures preserve routine autonomy, local stopping, and explicit delivery', () => {

@@ -2,6 +2,16 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## Unreleased
+
+### Changed
+
+- Migrated from the five retired Core slash commands and workflow-agent tree to four native on-demand skills: `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`.
+- Kept review dry-run by default; only an explicit current natural-language request to the directly selected orchestrator can make one validated `COMMENT`-only post.
+- Simplified the canonical agent surface to `naru-orchestrator` plus seven minions, with depth-1-compatible delegation and optional adaptive lenses.
+- Raised automatic read/write concurrency to a combined ten-child pool, allowed explicit user-requested fan-out up to fifty, and raised coordinated same-workspace writing to ten disjoint Weaver-claimed writers.
+- Reinstall now retires healthy manifest-owned legacy definitions while preserving, reporting, and backing up modified or unowned paths according to the reviewed preview.
+
 ## [0.1.0] - 2026-07-22
 
 ### Added

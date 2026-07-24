@@ -33,6 +33,7 @@ test('compatibility policy fixes approved targets without inventing Git or gh fl
   assert.equal(COMPATIBILITY_POLICY.features.reviewPosting.gh.versionFloor, null);
   assert.equal(COMPATIBILITY_POLICY.features.dashboard.miniTui, 'excluded');
   assert.equal(COMPATIBILITY_POLICY.features.core.providerCalls, false);
+  assert.equal(COMPATIBILITY_POLICY.features.core.minimumSubagentDepth, 1);
 });
 
 test('semantic versions and sanitized observations enforce floor versus exact-current evidence', () => {

@@ -3,7 +3,7 @@ title: Review lane
 description: Keep Naru pull-request review dry by default and posting explicitly validated.
 ---
 
-`/naru-review` is always a dry run. Posting requires either `/naru-review-post` or a directly selected `naru-orchestrator` handling an explicit current request to post.
+`naru-review` is dry-run by default. Posting requires a directly selected `naru-orchestrator` handling an explicit current natural-language request to post; custom agents cannot post.
 
 ```mermaid
 flowchart TD

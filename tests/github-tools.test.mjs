@@ -115,7 +115,7 @@ function reviewInput({
   const meta = pullMeta(head, base, files.length, number);
   return {
     reviewResult: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       target: { owner: 'owner', repo: 'repo', pullNumber: number },
       snapshot: {
         id: snapshotId('owner', 'repo', number, head, base, files),
@@ -125,10 +125,9 @@ function reviewInput({
         complete: snapshotComplete,
         warnings: [],
       },
-      workflow: {
-        status,
-        degraded,
-        failedSpecialists: degraded ? ['naru-review-tests-ci'] : [],
+      coverage: {
+        complete: status === 'complete' && !degraded,
+        limitations: status === 'complete' && !degraded ? [] : ['review coverage is incomplete'],
       },
       body,
       inlineComments: comments ?? [{
@@ -275,11 +274,12 @@ test('strict review payload validates nested schema and rejects unknown fields',
   }), /unknown fields/);
 });
 
-test('post tool accepts exactly its two caller identities and rejects all others before I/O', async () => {
+test('post tool accepts only the orchestrator identity and rejects all others before I/O', async () => {
   const denied = [
     undefined,
     'other',
-    ...NARU_AGENT_IDS.filter((agent) => !['naru-review-post', 'naru-orchestrator'].includes(agent)),
+    'naru-review-post',
+    ...NARU_AGENT_IDS.filter((agent) => agent !== 'naru-orchestrator'),
     ...MANAGED_ROUTING_ALIASES,
     ...LEGACY_DEEP_ALIASES,
   ];
@@ -294,15 +294,13 @@ test('post tool accepts exactly its two caller identities and rejects all others
     assert.match(result.error, /identity/, String(agent));
     assert.equal(ioCalls, 0, String(agent));
   }
-  for (const agent of ['naru-review-post', 'naru-orchestrator']) {
-    const result = await postReview(reviewInput({ status: 'incomplete', degraded: true }), { agent });
-    assert.match(result.error, /incomplete/, agent);
-  }
+  const result = await postReview(reviewInput({ status: 'incomplete', degraded: true }), { agent: 'naru-orchestrator' });
+  assert.match(result.error, /incomplete/);
 });
 
 test('post tool rejects incomplete and degraded reviews before I/O', async () => {
-  assert.match((await postReview(reviewInput({ status: 'incomplete', degraded: true }), { agent: 'naru-review-post' })).error, /incomplete/);
-  assert.match((await postReview(reviewInput({ status: 'partial', degraded: true }), { agent: 'naru-review-post' })).error, /cannot be posted/);
+  assert.match((await postReview(reviewInput({ status: 'incomplete', degraded: true }), { agent: 'naru-orchestrator' })).error, /incomplete/);
+  assert.match((await postReview(reviewInput({ status: 'partial', degraded: true }), { agent: 'naru-orchestrator' })).error, /cannot be posted/);
 });
 
 test('post tool preserves body, hard-codes COMMENT and commit_id, and posts once', async () => {
@@ -319,7 +317,7 @@ test('post tool preserves body, hard-codes COMMENT and commit_id, and posts once
   ];
   const { spawn, calls } = fakeSpawn(handlers);
   const input = reviewInput();
-  const result = await postReview(input, { agent: 'naru-review-post' }, { spawn });
+  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(posted.event, 'COMMENT');
   assert.equal(posted.commit_id, HEAD);
@@ -346,8 +344,8 @@ test('concurrent identical review posts serialize and use the process-local succ
     },
   ]);
   const input = reviewInput({ head });
-  const first = postReview(input, { agent: 'naru-review-post' }, { spawn });
-  const second = postReview(input, { agent: 'naru-review-post' }, { spawn });
+  const first = postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+  const second = postReview(input, { agent: 'naru-orchestrator' }, { spawn });
 
   await postStarted.promise;
   assert.equal(postCalls, 1);
@@ -377,8 +375,8 @@ test('concurrent differing review posts on one head refuse the second digest', a
       },
     },
   ]);
-  const first = postReview(reviewInput({ head, body: 'first result' }), { agent: 'naru-review-post' }, { spawn });
-  const second = postReview(reviewInput({ head, body: 'different result' }), { agent: 'naru-review-post' }, { spawn });
+  const first = postReview(reviewInput({ head, body: 'first result' }), { agent: 'naru-orchestrator' }, { spawn });
+  const second = postReview(reviewInput({ head, body: 'different result' }), { agent: 'naru-orchestrator' }, { spawn });
 
   await postStarted.promise;
   releasePost.resolve();
@@ -408,8 +406,8 @@ test('review post lock releases after a snapshot failure', async () => {
   ]);
   const input = reviewInput({ head });
   const [failed, succeeded] = await Promise.all([
-    postReview(input, { agent: 'naru-review-post' }, { spawn }),
-    postReview(input, { agent: 'naru-review-post' }, { spawn }),
+    postReview(input, { agent: 'naru-orchestrator' }, { spawn }),
+    postReview(input, { agent: 'naru-orchestrator' }, { spawn }),
   ]);
   assert.equal(failed.ok, false);
   assert.match(failed.error, /snapshot failed/);
@@ -435,8 +433,8 @@ test('different pull request keys can post concurrently', { timeout: 1000 }, asy
     },
   ]);
   const results = await Promise.all([
-    postReview(reviewInput({ number: 50, head }), { agent: 'naru-review-post' }, { spawn }),
-    postReview(reviewInput({ number: 51, head }), { agent: 'naru-review-post' }, { spawn }),
+    postReview(reviewInput({ number: 50, head }), { agent: 'naru-orchestrator' }, { spawn }),
+    postReview(reviewInput({ number: 51, head }), { agent: 'naru-orchestrator' }, { spawn }),
   ]);
   assert.equal(started, 2);
   assert.ok(results.every((result) => result.ok), results.map((result) => result.error).join('\n'));
@@ -457,12 +455,12 @@ test('post tool rejects head and feedback drift', async () => {
   const expectedHead = '6'.repeat(40);
   const otherHead = 'd'.repeat(40);
   const headDrift = fakeSpawn(snapshotHandlers({ meta: pullMeta(otherHead) }));
-  assert.match((await postReview(reviewInput({ head: expectedHead }), { agent: 'naru-review-post' }, { spawn: headDrift.spawn })).error, /head SHA mismatch/);
+  assert.match((await postReview(reviewInput({ head: expectedHead }), { agent: 'naru-orchestrator' }, { spawn: headDrift.spawn })).error, /head SHA mismatch/);
 
   const feedbackHead = '7'.repeat(40);
   const comments = [{ id: 10, body: 'new feedback', updated_at: 'now' }];
   const feedbackDrift = fakeSpawn(snapshotHandlers({ meta: pullMeta(feedbackHead), issueComments: comments }));
-  assert.match((await postReview(reviewInput({ head: feedbackHead }), { agent: 'naru-review-post' }, { spawn: feedbackDrift.spawn })).error, /feedback digest mismatch/);
+  assert.match((await postReview(reviewInput({ head: feedbackHead }), { agent: 'naru-orchestrator' }, { spawn: feedbackDrift.spawn })).error, /feedback digest mismatch/);
 });
 
 test('post tool refuses final head and feedback drift without POST', async () => {
@@ -472,7 +470,7 @@ test('post tool refuses final head and feedback drift without POST', async () =>
   const headDrift = fakeSpawn(snapshotHandlers({
     metadataReply: () => response(pullMeta((metadataCalls++ < 2) ? head : movedHead)),
   }));
-  const headResult = await postReview(reviewInput({ head }), { agent: 'naru-review-post' }, { spawn: headDrift.spawn });
+  const headResult = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn: headDrift.spawn });
   assert.equal(headResult.ok, false);
   assert.match(headResult.error, /final snapshot head SHA mismatch/);
   assert.equal(headDrift.calls.filter((call) => call.argv.includes('POST')).length, 0);
@@ -487,7 +485,7 @@ test('post tool refuses final head and feedback drift without POST', async () =>
     },
     ...snapshotHandlers({ meta: pullMeta(feedbackHead) }),
   ]);
-  const feedbackResult = await postReview(reviewInput({ head: feedbackHead }), { agent: 'naru-review-post' }, { spawn: feedbackDrift.spawn });
+  const feedbackResult = await postReview(reviewInput({ head: feedbackHead }), { agent: 'naru-orchestrator' }, { spawn: feedbackDrift.spawn });
   assert.equal(feedbackResult.ok, false);
   assert.match(feedbackResult.error, /final snapshot feedback digest mismatch/);
   assert.equal(feedbackDrift.calls.filter((call) => call.argv.includes('POST')).length, 0);
@@ -507,7 +505,7 @@ test('post tool drops invalid inline locations', async () => {
     { path: 'src/index.js', line: 1, side: 'RIGHT', body: 'valid', priority: 'P1', severity: 'High', confidence: 'High' },
     { path: 'src/index.js', line: 999, side: 'RIGHT', body: 'invalid', priority: 'P2', severity: 'Medium', confidence: 'Medium' },
   ] });
-  const result = await postReview(input, { agent: 'naru-review-post' }, { spawn });
+  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(posted.comments.length, 1);
   assert.equal(result.data.droppedComments.length, 1);
@@ -523,13 +521,13 @@ test('post tool detects an identical existing marker and refuses a conflicting m
       return response({ id: 8 });
     } },
   ]);
-  const firstResult = await postReview(reviewInput({ head }), { agent: 'naru-review-post' }, { spawn: first.spawn });
+  const firstResult = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn: first.spawn });
   assert.equal(firstResult.ok, true, firstResult.error);
   const marker = firstPost.body.match(/^<!-- naru-review:[^>]+-->/)[0];
   const existingReview = [{ id: 8, commit_id: head, body: marker, html_url: 'review-url', user: { login: 'viewer' } }];
   const same = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), reviews: existingReview }));
   const sameInput = reviewInput({ head, reviews: existingReview });
-  const sameResult = await postReview(sameInput, { agent: 'naru-review-post' }, { spawn: same.spawn });
+  const sameResult = await postReview(sameInput, { agent: 'naru-orchestrator' }, { spawn: same.spawn });
   assert.equal(sameResult.ok, true);
   assert.equal(sameResult.data.reason, 'alreadyPosted');
 
@@ -541,7 +539,7 @@ test('post tool detects an identical existing marker and refuses a conflicting m
   }];
   const conflict = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), reviews: conflictReview }));
   const conflictInput = reviewInput({ head, reviews: conflictReview });
-  const conflictResult = await postReview(conflictInput, { agent: 'naru-review-post' }, { spawn: conflict.spawn });
+  const conflictResult = await postReview(conflictInput, { agent: 'naru-orchestrator' }, { spawn: conflict.spawn });
   assert.equal(conflictResult.ok, false);
   assert.match(conflictResult.error, /different Naru review/);
 });
@@ -560,7 +558,7 @@ test('post tool ignores marker-shaped text from another GitHub actor', async () 
   ]);
   const result = await postReview(
     reviewInput({ head, reviews: foreignReview }),
-    { agent: 'naru-review-post' },
+    { agent: 'naru-orchestrator' },
     { spawn },
   );
   assert.equal(result.ok, true, result.error);
@@ -577,7 +575,7 @@ test('ambiguous POST is never retried', async () => {
       return response('gateway timeout', false);
     } },
   ]);
-  const result = await postReview(reviewInput({ head }), { agent: 'naru-review-post' }, { spawn });
+  const result = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn });
   assert.equal(result.ok, false);
   assert.match(result.error, /outcomeUnknown/);
   assert.equal(postCalls, 1);

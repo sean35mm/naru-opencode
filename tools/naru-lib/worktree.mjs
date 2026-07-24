@@ -8,7 +8,7 @@ import { isSchedulerId, isSafeScope } from './scheduler-protocol.mjs';
 import { scopeCoversPath } from './scheduler-state.mjs';
 import { run } from './transport.mjs';
 
-const MAX_WRITERS = 10;
+const MAX_WRITERS = 50;
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // Isolated worktrees are for source changes, not transferring arbitrarily large artifacts.
 const MAX_UNTRACKED_FILE_BYTES = 64 * 1024 * 1024;
@@ -219,7 +219,7 @@ function stateFor(runId, stateRegistry = registry()) {
 async function createWorktreeRunUnlocked({
   directory,
   runId,
-  maxWriters = 6,
+  maxWriters = 10,
   worktreeRoot,
   spawn,
   stateRegistry = registry(),
