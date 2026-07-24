@@ -41,7 +41,8 @@ function requireText(text, path, phrases) {
 }
 
 async function main() {
-  const commandFiles = (await readdir(here('commands'))).filter((name) => name.endsWith('.md'));
+  const commandFiles = (await exists('commands') ? await readdir(here('commands')) : [])
+    .filter((name) => name.endsWith('.md'));
   if (commandFiles.length) fail(`legacy command wrappers remain: ${commandFiles.join(', ')}`);
 
   const actualAgents = (await readdir(here('agents'))).filter((name) => name.endsWith('.md')).map((name) => name.slice(0, -3)).sort();

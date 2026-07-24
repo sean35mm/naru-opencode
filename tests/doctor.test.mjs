@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 async function copyInstallSource(destination) {
-  for (const directory of ['agents', 'commands', 'plugins', 'scripts', 'skills', 'tools']) {
+  for (const directory of ['agents', 'plugins', 'scripts', 'skills', 'tools']) {
     await cp(path.join(root, directory), path.join(destination, directory), { recursive: true });
   }
   await mkdir(path.join(destination, 'tests', 'fixtures'), { recursive: true });

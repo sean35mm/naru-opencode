@@ -262,7 +262,7 @@ async function main() {
     if (!(await exists(path))) fail(`missing expected file: ${path}`);
   }
 
-  const actualCommands = (await readdir(here('commands'))).filter(name => name.endsWith('.md')).sort();
+  const actualCommands = (await collectMarkdown('commands')).sort();
   if (actualCommands.length !== 0) fail('legacy Core command files remain installed');
 
   const actualSkills = (await readdir(here('skills'), { withFileTypes: true }))
