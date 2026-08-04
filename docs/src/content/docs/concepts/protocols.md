@@ -5,6 +5,8 @@ description: Prompt-level rolling cohorts by default, with optional local Protoc
 
 Naru uses Protocol 2 when the scheduler is off. Protocol 3 is selected only in `observe` or `enforce` mode. Both preserve scoped ownership and native Task dispatch. Automatic runs use a combined ten-child pool; a current explicit user request may raise it to fifty. Shared mode permits up to ten writers only when scheduler claims are pairwise disjoint and every writer acquires exact Weaver ownership before editing. Higher writer counts require clean isolated mode with one writer per Naru-owned worktree.
 
+The prompt-local adaptive **Plan → Dispatch → Observe → Revise → Refill → Stop** loop sits above Scheduling Protocols 2 and 3. It guides Naru's planning and evidence decisions but does not replace either protocol's admission, ownership, baseline, containment, or final-candidate safety gates. See [adaptive delegation](/naru-opencode/concepts/adaptive-delegation/) for the conceptual loop.
+
 ## Protocol 2: rolling cohorts
 
 ```mermaid

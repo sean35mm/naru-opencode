@@ -86,6 +86,7 @@ export default defineConfig({
           items: [
             { label: 'Runtime configuration', slug: 'reference/runtime-config' },
             { label: 'Limitations', slug: 'reference/limitations' },
+            { label: 'OpenCode v2 migration', slug: 'reference/opencode-v2-migration' },
             { label: 'For LLMs', slug: 'reference/for-llms' },
           ],
         },

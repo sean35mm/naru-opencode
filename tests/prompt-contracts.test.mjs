@@ -131,6 +131,31 @@ async function main() {
     'Never retry a POST',
     'Only `naru-minion-implement` has technical edit permission',
     'Local changes are the default stopping point',
+    '## Adaptive Coordination Loop',
+    'Start at revision 1 with a compact, provisional plan',
+    'Increase `planRevision` monotonically only for a material observation',
+    'When containment is known, invalidate only affected descendants',
+    'Recompute readiness after every usable terminal observation or material revision',
+    'leave unrelated peers active',
+    'Optional analysis stops when the next required decisions are covered',
+    'Explicit requested fan-out is never truncated',
+    'prevent further optional dispatch and refill',
+    'supersede every undispatched optional item',
+    "OpenCode's native execution surface",
+    'OpenCode remains execution and cancellation owner while Naru owns stop policy',
+    'every requested child requires a terminal, failed, cancelled, or missing disposition',
+    'no active optional child may be orphaned or ignored',
+    'A user cancellation also stops all further dispatch and refill',
+    'must never be reported as successful completion',
+    '## Bounded Transition Summaries',
+    'context-to-implementation',
+    'terminal-child-to-refill',
+    'final-writer-to-candidate',
+    'Verify-to-Judge',
+    'current `planRevision`, retained evidence, invalidated evidence, active items, ready items, blockers',
+    'These internal summaries do not trigger extra TodoWrite updates',
+    'For analysis and preparation packets, also predeclare and match `evidenceId`',
+    'Every analysis or preparation packet also includes `analysisItemId`, `planRevision`, `dependencies`',
     '## Scheduling Protocol 3: Opt-In Runtime Gates',
   ]);
   for (const retiredRoute of ["'naru-plan': allow", "'naru-impact': allow", "'naru-triage': allow", "'naru-review': allow", "'naru-review-post': allow"]) {
@@ -151,6 +176,36 @@ async function main() {
     if (!text.includes('  edit: deny')) fail(`naru-minion-${role} must deny edits`);
     if (!text.includes('  task: deny')) fail(`naru-minion-${role} must deny nested Task`);
   }
+
+  const preparationRoles = ['scout', 'investigate', 'architect', 'debug'];
+  const evidenceFields = ['analysisItemId', 'planRevision', 'preparationEvidence', 'evidenceId', 'basisIdentity', 'observedPaths', 'validityKeys', 'invalidationKeys'];
+  const analysisTerminalFields = [
+    'schedulingProtocol', 'schedulerCorrelation', 'runId', 'reportId', 'admissionTokenId', 'expectedArtifactId',
+    '"outcome": "terminal|blocked|failed|cancelled"',
+  ];
+  for (const role of preparationRoles) {
+    const path = `agents/naru-minion-${role}.md`;
+    const text = await readFile(here(path), 'utf8');
+    requireText(text, path, [
+      ...evidenceFields,
+      ...analysisTerminalFields,
+      'A successful report has outcome `terminal`',
+      '`blocked`, `failed`, and `cancelled` remain distinct terminal dispositions',
+      'Never fabricate `missing`: only the coordinator records a missing report',
+      'Under `schedulingProtocol: 3`, require and echo the predeclared',
+      'Under Protocol 2, emit `"schedulingProtocol": 2` and set `schedulerCorrelation` to `null`',
+    ]);
+  }
+
+  const verify = await readFile(here('agents/naru-minion-verify.md'), 'utf8');
+  requireText(verify, 'agents/naru-minion-verify.md', [
+    ...evidenceFields,
+    'An explicitly labeled `mode: preparation` packet is the only exception to waiting for quiescence',
+    'For candidate-shard mode, `analysisItemId` and `planRevision` are null',
+    '"mode": "candidate-shard|preparation"',
+    'This report is valid only for that candidate',
+    'Any edit or status change invalidates it and every judgment based on it',
+  ]);
 
   const installer = await readFile(here('install.sh'), 'utf8');
   requireText(installer, 'install.sh', [

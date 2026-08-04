@@ -5,6 +5,27 @@ description: How Naru proactively fills bounded read-only capacity before implem
 
 For a material implementation request, `naru-orchestrator` defaults to `auto`: it fills available read-only capacity with distinct useful lenses and queues additional useful questions for rolling refill. It does not launch irrelevant or duplicate specialists. The choice changes discretionary analysis only; it never changes authorization, edit ownership, verification, judgment, routing, or delivery boundaries.
 
+## The adaptive coordination loop
+
+Naru uses a prompt-local, ephemeral coordination plan rather than a durable workflow. The plan begins at revision 1 and contains only enough information to justify the next safe decision. Its loop is:
+
+```mermaid
+flowchart LR
+  A["Plan"] --> B["Dispatch"] --> C["Observe"] --> D["Revise"] --> E["Refill"] --> F["Stop"]
+  D -.->|"retain when no material change"| E
+```
+
+- **Plan:** establish the objective, required outcomes and checks, assumptions, and useful analysis or implementation items. A stable `workItemId` identifies one implementation item through dispatch, reporting, containment, and synthesis. Analysis and Verify-preparation items use their existing `analysisItemId`; final checks use `shardId`. These identifiers are exposed in bounded run summaries so a result can be followed without exposing raw prompt state.
+- **Dispatch:** send only authorized, useful, dependency-ready work with an attributable packet. Independent items may proceed while unrelated analysis remains active. Existing 10-child automatic and 50-child explicitly requested limits still apply.
+- **Observe:** correlate each terminal report with its item and `planRevision`, then check its evidence basis, observed paths, validity keys, and invalidation keys. Correlation identifies the decision a report belongs to; it is not proof that the report is true or still current.
+- **Revise:** increase the revision monotonically only after a material observation, such as conflicting evidence, a changed basis, a failed dependency, or a changed verification need. When containment is known, invalidate only affected descendants and retain valid unrelated work. Unknown containment or workspace safety freezes dispatch rather than guessing.
+- **Refill:** recompute dependency readiness and use newly useful capacity immediately. Refill is rolling, not an arbitrary fixed batch: empty capacity is correct when no ready item has concrete expected value, and valid unrelated peers continue.
+- **Stop:** stop optional analysis when required decisions are covered, no remaining item has concrete expected value, or a safety or authorization boundary blocks progress. An explicit user-requested fan-out is not silently truncated; each requested child receives a terminal, failed, or missing disposition. A user cancellation is an explicit stop that halts further dispatch and refill and records cancellation; it is not a successful completion.
+
+Stopping optional analysis is separate from completing a run. Completion still requires contained terminal work, required checks, a writer-free candidate, final Verify coverage, an independent Judge, and final candidate-identity equality. Run summaries remain bounded: they report the objective, current revision, active and ready items, material evidence and invalidations, blockers, covered checks, and the stop or completion reason rather than dumping the full prompt-local plan.
+
+OpenCode owns task, session, tool, and worktree execution, including execution and cancellation. Naru owns planning, evidence interpretation, adaptive refill and stop policy, verification coverage, and judgment. This documentation describes prompt and fixture policy only; it does not claim that OpenCode v2 gaps are solved, and runtime adapter work is deferred.
+
 ```mermaid
 flowchart TB
   A["Implementation request"]:::entry

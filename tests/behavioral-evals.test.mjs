@@ -34,6 +34,12 @@ function adaptiveCaseByID(id) {
   return item;
 }
 
+function coordinatorCaseByID(id) {
+  const item = fixture.adaptiveCoordinatorCases.find((entry) => entry.id === id);
+  assert.ok(item, `missing adaptive coordinator fixture case: ${id}`);
+  return item;
+}
+
 function protocol3CaseByID(id) {
   const item = fixture.protocol3Cases.find((entry) => entry.id === id);
   assert.ok(item, `missing Protocol 3 fixture case: ${id}`);
@@ -185,6 +191,12 @@ test('explicit user fan-out supports 50 fresh direct analyses at depth one', () 
   assert.match(fanout.decision.synthesis, /all-terminal-reports/);
   assert.equal(fanout.expected.subagentDepth, NARU_MINIMUM_SUBAGENT_DEPTH);
   assert.equal(fanout.expected.requestedCountHonored, true);
+  assert.equal(fanout.childDispositions.length, fanout.policy.explicitFanout.requested);
+  assert.equal(new Set(fanout.childDispositions.map(({ childId }) => childId)).size, 50);
+  for (const [index, child] of fanout.childDispositions.entries()) {
+    assert.equal(child.childId, `analysis-${String(index + 1).padStart(2, '0')}`);
+    assert.ok(['terminal', 'failed', 'cancelled', 'missing'].includes(child.disposition), child.childId);
+  }
 });
 
 test('adaptive delegation launches when its packet exists, refills useful capacity, and preserves all caps', () => {
@@ -194,7 +206,7 @@ test('adaptive delegation launches when its packet exists, refills useful capaci
 
   const refill = adaptiveCaseByID('adaptive-capacity-seeking-refill');
   assert.deepEqual(refill.timeline.map((entry) => entry.event), [
-    'packet-ready', 'start-background', 'finish', 'refill-background', 'sufficient-evidence',
+    'packet-ready', 'start-background', 'finish', 'refill-background', 'stop-analysis', 'cancel-terminal',
   ]);
   assert.deepEqual(refill.timeline[1].activeReadOnly, [
     'naru-minion-scout', 'naru-minion-investigate', 'naru-minion-debug', 'naru-minion-verify',
@@ -202,6 +214,8 @@ test('adaptive delegation launches when its packet exists, refills useful capaci
   assert.deepEqual(refill.timeline[3].activeReadOnly, [
     'naru-minion-investigate', 'naru-minion-debug', 'naru-minion-verify', 'naru-minion-architect',
   ]);
+  assert.deepEqual(refill.timeline[4].cancelRequested, refill.timeline[3].activeReadOnly);
+  assert.deepEqual(refill.timeline.at(-1).activeReadOnly, []);
   assert.deepEqual(refill.caps, {
     maxConcurrentImplement: 10,
     maxConcurrentReadOnly: 10,
@@ -209,8 +223,169 @@ test('adaptive delegation launches when its packet exists, refills useful capaci
   });
   assert.equal(refill.expected.initialUsefulSlotsFilled, true);
   assert.equal(refill.expected.refilledWhilePeerActive, true);
+  assert.deepEqual(Object.keys(refill.terminalDispositions).sort(), [...refill.decision.selected].sort());
+  assert.ok(Object.values(refill.terminalDispositions).every((status) => ['terminal', 'failed', 'cancelled', 'missing'].includes(status)));
   for (const action of ['duplicate settled lens', 'automatic xhigh escalation', 'automatic worktree']) {
     assert.ok(refill.prohibitedActions.includes(action));
+  }
+});
+
+test('adaptive coordinator cases expose stable public IDs and monotonic plan revisions', () => {
+  const requiredIDs = [
+    'coordinator-monotonic-revision-dependency-refill',
+    'coordinator-stale-evidence-targeted-redispatch',
+    'coordinator-sufficient-evidence-explicit-stop',
+    'coordinator-active-capacity-refill-after-terminal',
+    'coordinator-conflicting-evidence-blocks-decision',
+    'coordinator-dependency-failure-unaffected-refill',
+    'coordinator-material-scope-expansion-checkpoint',
+    'coordinator-analysis-stop-final-gates-continue',
+    'coordinator-no-concrete-value-stop',
+  ];
+  assert.deepEqual(fixture.adaptiveCoordinatorCases.map((entry) => entry.id), requiredIDs);
+
+  for (const entry of fixture.adaptiveCoordinatorCases) {
+    const publicIDs = entry.analysisItems.map((item) => item.analysisItemId);
+    assert.deepEqual(publicIDs, entry.expected.publicAnalysisItemIds, entry.id);
+    assert.equal(new Set(publicIDs).size, publicIDs.length, `${entry.id} has unique public IDs`);
+    assert.ok(publicIDs.every((id) => typeof id === 'string' && id.length > 0), entry.id);
+
+    const revisions = entry.timeline.flatMap((event) => (
+      Number.isInteger(event.planRevision) ? [event.planRevision] : []
+    ));
+    assert.ok(revisions.every((revision, index) => index === 0 || revision >= revisions[index - 1]), `${entry.id} revisions are monotonic`);
+    assert.deepEqual([...new Set(revisions)], entry.expected.planRevisions, entry.id);
+    assert.ok(entry.timeline.every((event) => event.activeReadOnly.length <= entry.activeCap), `${entry.id} respects its active cap`);
+    assert.deepEqual(entry.timeline.at(-1).activeReadOnly, entry.expected.orphanedActiveReadOnly, entry.id);
+  }
+});
+
+test('adaptive coordinator dispatches only dependency-ready items and refills active capacity', () => {
+  for (const entry of fixture.adaptiveCoordinatorCases) {
+    for (const dispatch of entry.timeline.filter((event) => event.event === 'dispatch')) {
+      assert.equal(dispatch.dependenciesSatisfied, true, `${entry.id} dispatch is dependency-ready`);
+      for (const analysisItemId of dispatch.analysisItemIds) {
+        assert.ok(entry.expected.publicAnalysisItemIds.includes(analysisItemId), `${entry.id} dispatch uses a public ID`);
+      }
+      for (const dependency of dispatch.terminalDependencies ?? []) {
+        const terminalIndex = entry.timeline.findIndex((event) => event.event === 'terminal' && event.analysisItemId === dependency);
+        assert.ok(terminalIndex >= 0 && terminalIndex < entry.timeline.indexOf(dispatch), `${entry.id} waits for ${dependency}`);
+      }
+    }
+  }
+
+  const revised = coordinatorCaseByID('coordinator-monotonic-revision-dependency-refill');
+  const earlyDispatch = revised.timeline.find((event) => event.event === 'dispatch');
+  const provisionalAtEarlyDispatch = revised.analysisItems
+    .filter((item) => item.initialStatus === 'planned')
+    .map((item) => item.analysisItemId);
+  assert.deepEqual(provisionalAtEarlyDispatch, revised.expected.provisionalAtEarlyDispatch);
+  assert.ok(provisionalAtEarlyDispatch.every((id) => !earlyDispatch.analysisItemIds.includes(id)));
+  assert.ok(revised.timeline.indexOf(earlyDispatch) < revised.timeline.findIndex((event) => event.event === 'terminal'));
+  assert.equal(revised.timeline[3].fromRevision, 1);
+  assert.equal(revised.timeline[3].planRevision, 2);
+  assert.deepEqual(revised.timeline[4].activeReadOnly, ['inspect-tests', 'design-change']);
+  assert.equal(revised.expected.dependentReadyAfter, 'discover-api');
+
+  const refill = coordinatorCaseByID('coordinator-active-capacity-refill-after-terminal');
+  assert.deepEqual(refill.expected.refillAfterTerminal, {
+    terminal: 'analysis-a', started: 'analysis-c', activePeer: 'analysis-b',
+  });
+  assert.deepEqual(refill.timeline[3].activeReadOnly, ['analysis-b', 'analysis-c']);
+});
+
+test('adaptive coordinator invalidates only affected items and redispatches with a fresh ID', () => {
+  const stale = coordinatorCaseByID('coordinator-stale-evidence-targeted-redispatch');
+  const revision = stale.timeline.find((event) => event.event === 'revise');
+  const redispatch = stale.timeline.find((event) => event.redispatchesQuestionFrom);
+  assert.deepEqual(revision.invalidatedAnalysisItemIds, stale.expected.invalidatedOnly);
+  assert.deepEqual(revision.retainedAnalysisItemIds, stale.expected.retainedActive);
+  assert.deepEqual(revision.activeReadOnly, stale.expected.retainedActive);
+  assert.equal(redispatch.redispatchesQuestionFrom, stale.expected.targetedRedispatch.from);
+  assert.deepEqual(redispatch.analysisItemIds, [stale.expected.targetedRedispatch.to]);
+  assert.notEqual(stale.expected.targetedRedispatch.from, stale.expected.targetedRedispatch.to);
+  assert.ok(revision.invalidatedAnalysisItemIds.every((id) => !revision.retainedAnalysisItemIds.includes(id)));
+});
+
+test('adaptive coordinator stop semantics explicitly dispose every read-only item', () => {
+  const stopped = coordinatorCaseByID('coordinator-sufficient-evidence-explicit-stop');
+  const stop = stopped.timeline.find((event) => event.event === 'stop-analysis');
+  const cancel = stopped.timeline.find((event) => event.event === 'cancel-terminal');
+  assert.equal(stop.reason, stopped.expected.stopReason);
+  assert.deepEqual(stop.cancelRequested, stopped.expected.explicitCancel);
+  assert.equal(cancel.analysisItemId, stopped.expected.explicitCancel[0]);
+  assert.deepEqual(cancel.activeReadOnly, []);
+  assert.deepEqual(Object.keys(stopped.terminalDispositions).sort(), [...stopped.expected.publicAnalysisItemIds].sort());
+  assert.ok(Object.values(stopped.terminalDispositions).every((status) => ['terminal', 'cancelled', 'superseded'].includes(status)));
+});
+
+test('adaptive coordinator handles conflict, dependency failure, and scope expansion structurally', () => {
+  const conflict = coordinatorCaseByID('coordinator-conflicting-evidence-blocks-decision');
+  const conflictRevision = conflict.timeline.find((event) => event.event === 'revise');
+  assert.deepEqual(conflictRevision.conflictingAnalysisItemIds, conflict.expected.conflictingOnly);
+  assert.deepEqual(conflictRevision.blockedAnalysisItemIds, [conflict.expected.blockedDecision]);
+  assert.deepEqual(conflictRevision.activeReadOnly, conflict.expected.retainedActive);
+  assert.ok(!conflict.timeline.some((event) => event.event === 'dispatch' && event.analysisItemIds.includes(conflict.expected.blockedDecision)));
+
+  const failure = coordinatorCaseByID('coordinator-dependency-failure-unaffected-refill');
+  const failedTerminal = failure.timeline.find((event) => event.classification === 'failed');
+  const failureRevision = failure.timeline.find((event) => event.event === 'revise');
+  const failureRefill = failure.timeline.find((event) => event.transition === 'terminal-child-to-refill');
+  assert.equal(failedTerminal.analysisItemId, 'failing-prerequisite');
+  assert.deepEqual(failureRevision.blockedAnalysisItemIds, failure.expected.blockedBranch);
+  assert.deepEqual(failureRevision.activeReadOnly, failure.expected.retainedActive);
+  assert.deepEqual(failureRefill.analysisItemIds, [failure.expected.refilledWith]);
+  assert.ok(failureRefill.activeReadOnly.includes(failure.expected.retainedActive[0]));
+  assert.deepEqual(Object.keys(failure.terminalDispositions).sort(), [...failure.expected.publicAnalysisItemIds].sort());
+
+  const expansion = coordinatorCaseByID('coordinator-material-scope-expansion-checkpoint');
+  const checkpoint = expansion.timeline.find((event) => event.event === 'user-checkpoint');
+  assert.equal(checkpoint.reason, 'material-scope-expansion');
+  assert.equal(checkpoint.dispatchStopped, true);
+  assert.deepEqual(checkpoint.readyAnalysisItemIds, expansion.expected.expandedItemsReady);
+  assert.ok(!expansion.timeline.some((event) => event.event === 'dispatch' && event.analysisItemIds.includes('analyze-expanded-scope')));
+});
+
+test('optional-analysis stops remain distinct from final gates and no-value stops dispatch nothing', () => {
+  const finalGates = coordinatorCaseByID('coordinator-analysis-stop-final-gates-continue');
+  const stopIndex = finalGates.timeline.findIndex((event) => event.event === 'stop-analysis');
+  const observedFinalGates = finalGates.timeline
+    .slice(stopIndex + 1)
+    .map((event) => event.event)
+    .filter((event) => finalGates.expected.finalGateSequence.includes(event));
+  assert.deepEqual(observedFinalGates, finalGates.expected.finalGateSequence);
+  assert.equal(finalGates.timeline[stopIndex].dispatchStopped, true);
+  assert.equal(finalGates.expected.successfulCompletionAfterGates, true);
+
+  const noValue = coordinatorCaseByID('coordinator-no-concrete-value-stop');
+  assert.equal(noValue.expected.automaticDispatchCount, 0);
+  assert.equal(noValue.timeline.filter((event) => event.event === 'dispatch').length, 0);
+  assert.equal(noValue.timeline.at(-1).reason, noValue.expected.stopReason);
+  assert.ok(noValue.timeline.at(-1).evidenceBasis.length > 0);
+  assert.equal(noValue.timeline.at(-1).dispatchStopped, true);
+});
+
+test('bounded summaries structurally cover every required coordinator transition', () => {
+  const summaries = fixture.adaptiveCoordinatorCases.flatMap((entry) => entry.timeline
+    .filter((event) => event.transitionSummary)
+    .map((event) => ({ transition: event.transition, summary: event.transitionSummary })));
+  assert.deepEqual(new Set(summaries.map(({ transition }) => transition)), new Set([
+    'context-to-implementation',
+    'terminal-child-to-refill',
+    'final-writer-to-candidate',
+    'Verify-to-Judge',
+  ]));
+  const summaryFields = [
+    'activeItems', 'blockers', 'invalidatedEvidence', 'planRevision', 'readyItems', 'reason', 'retainedEvidence',
+  ];
+  for (const { transition, summary } of summaries) {
+    assert.deepEqual(Object.keys(summary).sort(), summaryFields, transition);
+    assert.ok(Number.isInteger(summary.planRevision) && summary.planRevision > 0, transition);
+    for (const field of ['retainedEvidence', 'invalidatedEvidence', 'activeItems', 'readyItems', 'blockers']) {
+      assert.ok(Array.isArray(summary[field]), `${transition} ${field}`);
+    }
+    assert.equal(typeof summary.reason, 'string', transition);
+    assert.ok(summary.reason.length > 0, transition);
   }
 });
 

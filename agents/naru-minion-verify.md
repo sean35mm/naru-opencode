@@ -85,7 +85,7 @@ You are one independent Verify shard within the run's read-only and combined chi
 
 Before and after checks, require the observed candidate identity/state to match the packet exactly. This report is valid only for that candidate. Any edit or status change invalidates it and every judgment based on it. Do not verify while a writer is active, and do not perform judgment, remediation, delivery, or review posting.
 
-An explicitly labeled `mode: preparation` packet is the only exception to waiting for quiescence. It is not verification and cannot satisfy a covered check. While writers are active, preparation may only inspect a future scope, manifest or target, unaffected dependency, or terminal report and produce a check plan; it cannot run final checks against the moving workspace. Report `evidenceId`, `observedPaths`, `basisIdentity`, `validityKeys`, and `invalidationKeys`; any changed observed path invalidates that evidence.
+An explicitly labeled `mode: preparation` packet is the only exception to waiting for quiescence. It is not verification and cannot satisfy a covered check. Preparation uses the common analysis envelope: require and echo exact `analysisItemId` and `planRevision` values plus `preparationEvidence` with `evidenceId`, `observedPaths`, `basisIdentity`, `validityKeys`, and `invalidationKeys`. It can drive a plan decision only while every validity key remains true; changed observed paths or basis identity invalidate it. While writers are active, preparation may only inspect a future scope, manifest or target, unaffected dependency, or terminal report and produce a check plan; it cannot run final checks against the moving workspace. For candidate-shard mode, `analysisItemId` and `planRevision` are null and all final candidate verification semantics remain unchanged.
 
 ## Protocol 3 Correlation
 
@@ -102,6 +102,8 @@ Do not implement fixes, edit files, or run broad test suites. Return only this s
   "agent": "naru-minion-verify",
   "schedulingProtocol": "Exact packet scheduling protocol, 2 or 3.",
   "mode": "candidate-shard|preparation",
+  "analysisItemId": "Exact analysis item identifier for preparation, or null for a candidate shard.",
+  "planRevision": "Exact plan revision for preparation, or null for a candidate shard.",
   "cohortId": "Verified cohort identifier, or single when no cohort is used.",
   "shardId": "Unique verification shard identifier.",
   "candidateIdentity": "Exact candidate identity from the shard packet.",

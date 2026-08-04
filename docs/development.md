@@ -74,6 +74,21 @@ Dispatch authorization is fixed, but adaptive lenses are optional and selected o
 
 OpenCode's native Task implementation remains responsible for permission evaluation, cancellation, retries, background work, and child-session handling. Naru Delegate mutates runtime agent configuration; it does not create sessions itself.
 
+## Adaptive coordinator contract
+
+The coordinator's adaptive loop is a prompt and fixture contract, not a new durable workflow engine or runtime scheduler. Maintain the same **Plan → Dispatch → Observe → Revise → Refill → Stop** semantics when changing prompts, deterministic fixtures, or documentation:
+
+- Keep the plan ephemeral and bounded. Start at revision 1 and increase `planRevision` monotonically only for a material observation. Never persist prompt-local plan state or turn it into a workflow DSL.
+- Preserve identity and dependency semantics. Keep one `workItemId` for an implementation item across dispatch, report, containment, and synthesis. Dispatch only authorized, useful, dependency-ready work with disjoint mutable scope and a complete packet.
+- Require attributable evidence. Reports must correlate to their item and revision and carry an evidence basis, observed paths, validity keys, and invalidation keys. Correlation is not proof; stale or incomplete evidence cannot unlock dependent work.
+- Invalidate narrowly. When containment is known, invalidate only affected descendants and keep valid unrelated work running. Unknown containment, ownership drift, workspace safety, or candidate identity freezes further dispatch.
+- Refill by evidence, not by slot pressure. Recompute readiness after terminal observations or material revisions, respect the existing 10 automatic and 50 explicitly requested caps, and do not invent irrelevant fan-out. Explicit requested breadth receives a terminal, failed, or missing disposition for every requested child.
+- Separate stop from completion. Optional analysis may stop when required decisions are covered, no item has concrete expected value, or a safety boundary blocks progress. Completion still requires contained work, required checks, a quiescent candidate, final Verify coverage, an independent Judge, and final identity equality. Todo remains presentation-only.
+
+OpenCode owns task, session, tool, and worktree execution, including cancellation. Naru owns planning, evidence interpretation, adaptive refill and stop policy, verification coverage, and judgment. Runtime adapter work for future OpenCode surfaces is deferred; this contract does not claim that OpenCode v2 gaps are solved. Protocol 2 and Protocol 3 remain the execution-admission and safety boundaries, and the adaptive loop sits above them rather than replacing them.
+
+The prompt and fixture contract must not grow a durable plan store, background-job registry, runtime scheduler, or alternate admission path. If a proposed change needs one of those, update the scope and compatibility plan before editing implementation or runtime files. Documentation describes these invariants but does not replace the canonical prompts, fixtures, or runtime contracts.
+
 ## Source-of-truth map
 
 | Concern | Source of truth |

@@ -79,11 +79,33 @@ Use graph results only when the indexed canonical root matches the workspace and
 
 ## Output
 
-Do not implement fixes, edit files, or run broad test suites. Return only this structured report:
+Do not implement fixes, edit files, or run broad test suites. Echo packet correlation fields exactly. Preparation-evidence validity must describe factual observations; matching an ID is not proof. A successful report has outcome `terminal`; `blocked`, `failed`, and `cancelled` remain distinct terminal dispositions. Never fabricate `missing`: only the coordinator records a missing report.
+
+Under `schedulingProtocol: 3`, require and echo the predeclared `runId`, `reportId`, `evidenceId`, `admissionTokenId`, `expectedArtifactId`, and `read-only` lane. Do not call `naru-scheduler`, invent IDs, alter an admission marker, append an artifact, or treat correlation as proof. Under Protocol 2, emit `"schedulingProtocol": 2` and set `schedulerCorrelation` to `null`.
+
+Return only this structured report:
 
 ```json
 {
   "agent": "naru-minion-debug",
+  "schedulingProtocol": "Exact packet scheduling protocol, 2 or 3.",
+  "analysisItemId": "Exact analysis item identifier from the packet.",
+  "planRevision": "Exact plan revision from the packet.",
+  "schedulerCorrelation": {
+    "runId": "Predeclared Protocol 3 run ID.",
+    "reportId": "Predeclared analysis report ID.",
+    "evidenceId": "Predeclared evidence ID.",
+    "admissionTokenId": "Read-only admission token ID from the packet.",
+    "expectedArtifactId": "Predeclared evidence artifact ID."
+  },
+  "outcome": "terminal|blocked|failed|cancelled",
+  "preparationEvidence": {
+    "evidenceId": "Preparation evidence identifier from the packet.",
+    "observedPaths": ["Paths observed during analysis."],
+    "basisIdentity": "Workspace or source identity actually observed.",
+    "validityKeys": ["Facts that keep this evidence valid."],
+    "invalidationKeys": ["Changes that invalidate this evidence."]
+  },
   "summary": "Concise debugging conclusion.",
   "observations": [
     { "source": "path, command, or log", "finding": "Specific observed fact." }

@@ -363,6 +363,58 @@
         "synthesis": "all-terminal-reports-with-consensus-disagreements-outliers-and-failures",
         "skipReason": null
       },
+      "childDispositions": [
+        { "childId": "analysis-01", "disposition": "terminal" },
+        { "childId": "analysis-02", "disposition": "terminal" },
+        { "childId": "analysis-03", "disposition": "terminal" },
+        { "childId": "analysis-04", "disposition": "terminal" },
+        { "childId": "analysis-05", "disposition": "terminal" },
+        { "childId": "analysis-06", "disposition": "terminal" },
+        { "childId": "analysis-07", "disposition": "terminal" },
+        { "childId": "analysis-08", "disposition": "terminal" },
+        { "childId": "analysis-09", "disposition": "terminal" },
+        { "childId": "analysis-10", "disposition": "terminal" },
+        { "childId": "analysis-11", "disposition": "terminal" },
+        { "childId": "analysis-12", "disposition": "terminal" },
+        { "childId": "analysis-13", "disposition": "terminal" },
+        { "childId": "analysis-14", "disposition": "terminal" },
+        { "childId": "analysis-15", "disposition": "terminal" },
+        { "childId": "analysis-16", "disposition": "terminal" },
+        { "childId": "analysis-17", "disposition": "terminal" },
+        { "childId": "analysis-18", "disposition": "terminal" },
+        { "childId": "analysis-19", "disposition": "terminal" },
+        { "childId": "analysis-20", "disposition": "terminal" },
+        { "childId": "analysis-21", "disposition": "terminal" },
+        { "childId": "analysis-22", "disposition": "terminal" },
+        { "childId": "analysis-23", "disposition": "terminal" },
+        { "childId": "analysis-24", "disposition": "terminal" },
+        { "childId": "analysis-25", "disposition": "terminal" },
+        { "childId": "analysis-26", "disposition": "terminal" },
+        { "childId": "analysis-27", "disposition": "terminal" },
+        { "childId": "analysis-28", "disposition": "terminal" },
+        { "childId": "analysis-29", "disposition": "terminal" },
+        { "childId": "analysis-30", "disposition": "terminal" },
+        { "childId": "analysis-31", "disposition": "terminal" },
+        { "childId": "analysis-32", "disposition": "terminal" },
+        { "childId": "analysis-33", "disposition": "terminal" },
+        { "childId": "analysis-34", "disposition": "terminal" },
+        { "childId": "analysis-35", "disposition": "terminal" },
+        { "childId": "analysis-36", "disposition": "terminal" },
+        { "childId": "analysis-37", "disposition": "terminal" },
+        { "childId": "analysis-38", "disposition": "terminal" },
+        { "childId": "analysis-39", "disposition": "terminal" },
+        { "childId": "analysis-40", "disposition": "terminal" },
+        { "childId": "analysis-41", "disposition": "terminal" },
+        { "childId": "analysis-42", "disposition": "terminal" },
+        { "childId": "analysis-43", "disposition": "terminal" },
+        { "childId": "analysis-44", "disposition": "terminal" },
+        { "childId": "analysis-45", "disposition": "terminal" },
+        { "childId": "analysis-46", "disposition": "terminal" },
+        { "childId": "analysis-47", "disposition": "failed" },
+        { "childId": "analysis-48", "disposition": "cancelled" },
+        { "childId": "analysis-49", "disposition": "missing" },
+        { "childId": "analysis-50", "disposition": "terminal" }
+      ],
       "prohibitedActions": ["reduce to best-of-2", "nest analysis children", "reuse task_id", "exceed active cap", "stop after early consensus"],
       "expected": { "requestedCountHonored": true, "subagentDepth": 1, "disposition": "explicit-concurrent-fanout" }
     },
@@ -416,12 +468,192 @@
         { "at": 1, "event": "start-background", "selected": ["naru-minion-scout", "naru-minion-investigate", "naru-minion-debug", "naru-minion-verify"], "activeReadOnly": ["naru-minion-scout", "naru-minion-investigate", "naru-minion-debug", "naru-minion-verify"] },
         { "at": 2, "event": "finish", "selected": ["naru-minion-scout"], "activeReadOnly": ["naru-minion-investigate", "naru-minion-debug", "naru-minion-verify"] },
         { "at": 3, "event": "refill-background", "selected": ["naru-minion-architect"], "activeReadOnly": ["naru-minion-investigate", "naru-minion-debug", "naru-minion-verify", "naru-minion-architect"] },
-        { "at": 4, "event": "sufficient-evidence", "activeReadOnly": [] }
+        { "at": 4, "event": "stop-analysis", "reason": "sufficient-evidence", "cancelRequested": ["naru-minion-investigate", "naru-minion-debug", "naru-minion-verify", "naru-minion-architect"], "activeReadOnly": ["naru-minion-investigate", "naru-minion-debug", "naru-minion-verify", "naru-minion-architect"] },
+        { "at": 5, "event": "cancel-terminal", "selected": ["naru-minion-investigate", "naru-minion-debug", "naru-minion-verify", "naru-minion-architect"], "activeReadOnly": [] }
       ],
       "decision": { "status": "delegated", "selected": ["naru-minion-scout", "naru-minion-investigate", "naru-minion-debug", "naru-minion-verify", "naru-minion-architect"], "launch": "background", "skipReason": null },
+      "terminalDispositions": { "naru-minion-scout": "terminal", "naru-minion-investigate": "cancelled", "naru-minion-debug": "cancelled", "naru-minion-verify": "cancelled", "naru-minion-architect": "cancelled" },
       "caps": { "maxConcurrentImplement": 10, "maxConcurrentReadOnly": 10, "maxTotalNaruChildren": 10 },
       "prohibitedActions": ["duplicate settled lens", "exceed active cap", "automatic xhigh escalation", "automatic worktree"],
       "expected": { "initialUsefulSlotsFilled": true, "refilledWhilePeerActive": true, "maxConcurrentReadOnly": 10, "disposition": "capacity-seeking" }
+    }
+  ],
+  "adaptiveCoordinatorCases": [
+    {
+      "id": "coordinator-monotonic-revision-dependency-refill",
+      "scenario": "A usable discovery materially revises the plan, unlocks its dependent design item, and refills capacity while an unrelated child remains active.",
+      "activeCap": 2,
+      "analysisItems": [
+        { "analysisItemId": "discover-api", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "inspect-tests", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "design-change", "dependencies": ["discover-api"], "initialStatus": "planned" }
+      ],
+      "timeline": [
+        { "at": 0, "event": "plan", "planRevision": 1, "activeReadOnly": [] },
+        { "at": 1, "event": "dispatch", "analysisItemIds": ["discover-api", "inspect-tests"], "dependenciesSatisfied": true, "activeReadOnly": ["discover-api", "inspect-tests"] },
+        { "at": 2, "event": "terminal", "analysisItemId": "discover-api", "classification": "usable", "planRevision": 1, "preparationEvidence": { "evidenceId": "evidence-discover-api-r1", "basisIdentity": "workspace-r1", "observedPaths": ["src/api.mjs"], "validityKeys": ["src/api.mjs@workspace-r1"], "invalidationKeys": ["src/api.mjs changed", "basis identity changed"] }, "activeReadOnly": ["inspect-tests"] },
+        { "at": 3, "event": "revise", "fromRevision": 1, "planRevision": 2, "cause": "The discovered API boundary changes the dependent design decision.", "invalidatedAnalysisItemIds": [], "activeReadOnly": ["inspect-tests"] },
+        { "at": 4, "event": "dispatch", "analysisItemIds": ["design-change"], "dependenciesSatisfied": true, "terminalDependencies": ["discover-api"], "activeReadOnly": ["inspect-tests", "design-change"] },
+        { "at": 5, "event": "terminal", "analysisItemId": "inspect-tests", "classification": "usable", "planRevision": 2, "activeReadOnly": ["design-change"] },
+        { "at": 6, "event": "terminal", "analysisItemId": "design-change", "classification": "usable", "planRevision": 2, "activeReadOnly": [] }
+      ],
+      "expected": { "publicAnalysisItemIds": ["discover-api", "inspect-tests", "design-change"], "planRevisions": [1, 2], "provisionalAtEarlyDispatch": ["design-change"], "dependentReadyAfter": "discover-api", "refilledWhilePeerActive": "inspect-tests", "orphanedActiveReadOnly": [], "disposition": "completed" }
+    },
+    {
+      "id": "coordinator-stale-evidence-targeted-redispatch",
+      "scenario": "Stale evidence invalidates only its dependent branch; an unaffected peer continues while a fresh public item is dispatched for the affected question.",
+      "activeCap": 2,
+      "analysisItems": [
+        { "analysisItemId": "inspect-a-r1", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "inspect-b", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "decide-a-r1", "dependencies": ["inspect-a-r1"], "initialStatus": "planned" },
+        { "analysisItemId": "inspect-a-r2", "dependencies": [], "initialStatus": "planned" },
+        { "analysisItemId": "decide-a-r2", "dependencies": ["inspect-a-r2"], "initialStatus": "planned" }
+      ],
+      "timeline": [
+        { "at": 0, "event": "plan", "planRevision": 1, "activeReadOnly": [] },
+        { "at": 1, "event": "dispatch", "analysisItemIds": ["inspect-a-r1", "inspect-b"], "dependenciesSatisfied": true, "activeReadOnly": ["inspect-a-r1", "inspect-b"] },
+        { "at": 2, "event": "terminal", "analysisItemId": "inspect-a-r1", "classification": "stale", "planRevision": 1, "preparationEvidence": { "evidenceId": "evidence-inspect-a-r1", "basisIdentity": "workspace-r0", "observedPaths": ["src/a.mjs"], "validityKeys": ["src/a.mjs@workspace-r0"], "invalidationKeys": ["src/a.mjs changed", "basis identity changed"] }, "activeReadOnly": ["inspect-b"] },
+        { "at": 3, "event": "revise", "fromRevision": 1, "planRevision": 2, "cause": "The observed path changed after inspect-a-r1 captured evidence.", "invalidatedAnalysisItemIds": ["inspect-a-r1", "decide-a-r1"], "retainedAnalysisItemIds": ["inspect-b"], "activeReadOnly": ["inspect-b"] },
+        { "at": 4, "event": "dispatch", "analysisItemIds": ["inspect-a-r2"], "dependenciesSatisfied": true, "redispatchesQuestionFrom": "inspect-a-r1", "activeReadOnly": ["inspect-b", "inspect-a-r2"] },
+        { "at": 5, "event": "terminal", "analysisItemId": "inspect-b", "classification": "usable", "planRevision": 2, "activeReadOnly": ["inspect-a-r2"] },
+        { "at": 6, "event": "terminal", "analysisItemId": "inspect-a-r2", "classification": "usable", "planRevision": 2, "activeReadOnly": [] },
+        { "at": 7, "event": "dispatch", "analysisItemIds": ["decide-a-r2"], "dependenciesSatisfied": true, "terminalDependencies": ["inspect-a-r2"], "activeReadOnly": ["decide-a-r2"] },
+        { "at": 8, "event": "terminal", "analysisItemId": "decide-a-r2", "classification": "usable", "planRevision": 2, "activeReadOnly": [] }
+      ],
+      "expected": { "publicAnalysisItemIds": ["inspect-a-r1", "inspect-b", "decide-a-r1", "inspect-a-r2", "decide-a-r2"], "planRevisions": [1, 2], "invalidatedOnly": ["inspect-a-r1", "decide-a-r1"], "retainedActive": ["inspect-b"], "targetedRedispatch": { "from": "inspect-a-r1", "to": "inspect-a-r2" }, "orphanedActiveReadOnly": [], "disposition": "targeted-redispatch" }
+    },
+    {
+      "id": "coordinator-sufficient-evidence-explicit-stop",
+      "scenario": "Sufficient evidence stops optional analysis, explicitly cancels active read-only work, and supersedes an unstarted item without leaving an orphan.",
+      "activeCap": 2,
+      "analysisItems": [
+        { "analysisItemId": "inspect-api", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "inspect-tests", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "inspect-docs", "dependencies": [], "initialStatus": "planned" }
+      ],
+      "timeline": [
+        { "at": 0, "event": "plan", "planRevision": 1, "activeReadOnly": [] },
+        { "at": 1, "event": "dispatch", "analysisItemIds": ["inspect-api", "inspect-tests"], "dependenciesSatisfied": true, "activeReadOnly": ["inspect-api", "inspect-tests"] },
+        { "at": 2, "event": "terminal", "analysisItemId": "inspect-api", "classification": "usable", "planRevision": 1, "activeReadOnly": ["inspect-tests"] },
+        { "at": 3, "event": "stop-analysis", "reason": "required-decisions-covered", "cancelRequested": ["inspect-tests"], "supersededAnalysisItemIds": ["inspect-docs"], "activeReadOnly": ["inspect-tests"] },
+        { "at": 4, "event": "cancel-terminal", "analysisItemId": "inspect-tests", "activeReadOnly": [] }
+      ],
+      "terminalDispositions": { "inspect-api": "terminal", "inspect-tests": "cancelled", "inspect-docs": "superseded" },
+      "expected": { "publicAnalysisItemIds": ["inspect-api", "inspect-tests", "inspect-docs"], "planRevisions": [1], "stopReason": "required-decisions-covered", "explicitCancel": ["inspect-tests"], "orphanedActiveReadOnly": [], "disposition": "stopped" }
+    },
+    {
+      "id": "coordinator-active-capacity-refill-after-terminal",
+      "scenario": "A terminal child frees one active slot and the next ready independent item starts immediately while the other child remains active.",
+      "activeCap": 2,
+      "analysisItems": [
+        { "analysisItemId": "analysis-a", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "analysis-b", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "analysis-c", "dependencies": [], "initialStatus": "ready" }
+      ],
+      "timeline": [
+        { "at": 0, "event": "plan", "planRevision": 1, "activeReadOnly": [] },
+        { "at": 1, "event": "dispatch", "analysisItemIds": ["analysis-a", "analysis-b"], "dependenciesSatisfied": true, "activeReadOnly": ["analysis-a", "analysis-b"] },
+        { "at": 2, "event": "terminal", "analysisItemId": "analysis-a", "classification": "usable", "planRevision": 1, "activeReadOnly": ["analysis-b"] },
+        { "at": 3, "event": "dispatch", "analysisItemIds": ["analysis-c"], "dependenciesSatisfied": true, "activeReadOnly": ["analysis-b", "analysis-c"] },
+        { "at": 4, "event": "terminal", "analysisItemId": "analysis-b", "classification": "usable", "planRevision": 1, "activeReadOnly": ["analysis-c"] },
+        { "at": 5, "event": "terminal", "analysisItemId": "analysis-c", "classification": "usable", "planRevision": 1, "activeReadOnly": [] }
+      ],
+      "expected": { "publicAnalysisItemIds": ["analysis-a", "analysis-b", "analysis-c"], "planRevisions": [1], "refillAfterTerminal": { "terminal": "analysis-a", "started": "analysis-c", "activePeer": "analysis-b" }, "orphanedActiveReadOnly": [], "disposition": "refilled" }
+    },
+    {
+      "id": "coordinator-conflicting-evidence-blocks-decision",
+      "scenario": "Two still-credible reports conflict, so the affected decision is blocked while unrelated analysis continues.",
+      "activeCap": 3,
+      "analysisItems": [
+        { "analysisItemId": "contract-report-a", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "contract-report-b", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "unrelated-tests", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "decide-contract", "dependencies": ["contract-report-a", "contract-report-b"], "initialStatus": "planned" }
+      ],
+      "timeline": [
+        { "at": 0, "event": "plan", "planRevision": 1, "activeReadOnly": [] },
+        { "at": 1, "event": "dispatch", "analysisItemIds": ["contract-report-a", "contract-report-b", "unrelated-tests"], "dependenciesSatisfied": true, "activeReadOnly": ["contract-report-a", "contract-report-b", "unrelated-tests"] },
+        { "at": 2, "event": "terminal", "analysisItemId": "contract-report-a", "classification": "usable", "planRevision": 1, "activeReadOnly": ["contract-report-b", "unrelated-tests"] },
+        { "at": 3, "event": "terminal", "analysisItemId": "contract-report-b", "classification": "conflicting", "planRevision": 1, "conflictsWith": "contract-report-a", "activeReadOnly": ["unrelated-tests"] },
+        { "at": 4, "event": "revise", "fromRevision": 1, "planRevision": 2, "cause": "Credible reports conflict on the contract decision.", "conflictingAnalysisItemIds": ["contract-report-a", "contract-report-b"], "blockedAnalysisItemIds": ["decide-contract"], "retainedAnalysisItemIds": ["unrelated-tests"], "activeReadOnly": ["unrelated-tests"] },
+        { "at": 5, "event": "terminal", "analysisItemId": "unrelated-tests", "classification": "usable", "planRevision": 2, "activeReadOnly": [] }
+      ],
+      "expected": { "publicAnalysisItemIds": ["contract-report-a", "contract-report-b", "unrelated-tests", "decide-contract"], "planRevisions": [1, 2], "conflictingOnly": ["contract-report-a", "contract-report-b"], "blockedDecision": "decide-contract", "retainedActive": ["unrelated-tests"], "orphanedActiveReadOnly": [], "disposition": "conflict-blocked" }
+    },
+    {
+      "id": "coordinator-dependency-failure-unaffected-refill",
+      "scenario": "A failed prerequisite blocks only its branch and the coordinator refills useful unaffected capacity while a peer remains active.",
+      "activeCap": 2,
+      "analysisItems": [
+        { "analysisItemId": "failing-prerequisite", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "dependent-design", "dependencies": ["failing-prerequisite"], "initialStatus": "planned" },
+        { "analysisItemId": "unaffected-active", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "unaffected-refill", "dependencies": [], "initialStatus": "ready" }
+      ],
+      "timeline": [
+        { "at": 0, "event": "plan", "planRevision": 1, "activeReadOnly": [] },
+        { "at": 1, "event": "dispatch", "analysisItemIds": ["failing-prerequisite", "unaffected-active"], "dependenciesSatisfied": true, "activeReadOnly": ["failing-prerequisite", "unaffected-active"] },
+        { "at": 2, "event": "terminal", "analysisItemId": "failing-prerequisite", "classification": "failed", "planRevision": 1, "activeReadOnly": ["unaffected-active"] },
+        { "at": 3, "event": "revise", "fromRevision": 1, "planRevision": 2, "cause": "The prerequisite failed.", "blockedAnalysisItemIds": ["dependent-design"], "retainedAnalysisItemIds": ["unaffected-active", "unaffected-refill"], "activeReadOnly": ["unaffected-active"] },
+        { "at": 4, "event": "dispatch", "analysisItemIds": ["unaffected-refill"], "dependenciesSatisfied": true, "transition": "terminal-child-to-refill", "transitionSummary": { "planRevision": 2, "retainedEvidence": ["unaffected-active"], "invalidatedEvidence": ["failing-prerequisite", "dependent-design"], "activeItems": ["unaffected-active"], "readyItems": ["unaffected-refill"], "blockers": ["dependent-design prerequisite failed"], "reason": "Refill the free slot with unaffected useful work." }, "activeReadOnly": ["unaffected-active", "unaffected-refill"] },
+        { "at": 5, "event": "terminal", "analysisItemId": "unaffected-active", "classification": "usable", "planRevision": 2, "activeReadOnly": ["unaffected-refill"] },
+        { "at": 6, "event": "terminal", "analysisItemId": "unaffected-refill", "classification": "usable", "planRevision": 2, "activeReadOnly": [] }
+      ],
+      "terminalDispositions": { "failing-prerequisite": "failed", "dependent-design": "blocked", "unaffected-active": "terminal", "unaffected-refill": "terminal" },
+      "expected": { "publicAnalysisItemIds": ["failing-prerequisite", "dependent-design", "unaffected-active", "unaffected-refill"], "planRevisions": [1, 2], "blockedBranch": ["dependent-design"], "refilledWith": "unaffected-refill", "retainedActive": ["unaffected-active"], "orphanedActiveReadOnly": [], "disposition": "failed-branch-refilled" }
+    },
+    {
+      "id": "coordinator-material-scope-expansion-checkpoint",
+      "scenario": "Evidence reveals a consequential scope expansion, so expanded dispatch stops for a user checkpoint.",
+      "activeCap": 1,
+      "analysisItems": [
+        { "analysisItemId": "inspect-request", "dependencies": [], "initialStatus": "ready" },
+        { "analysisItemId": "analyze-expanded-scope", "dependencies": ["inspect-request"], "initialStatus": "planned" }
+      ],
+      "timeline": [
+        { "at": 0, "event": "plan", "planRevision": 1, "activeReadOnly": [] },
+        { "at": 1, "event": "dispatch", "analysisItemIds": ["inspect-request"], "dependenciesSatisfied": true, "activeReadOnly": ["inspect-request"] },
+        { "at": 2, "event": "terminal", "analysisItemId": "inspect-request", "classification": "usable", "planRevision": 1, "reveals": "material-scope-expansion", "activeReadOnly": [] },
+        { "at": 3, "event": "revise", "fromRevision": 1, "planRevision": 2, "cause": "The requested outcome requires consequential work outside authorized scope.", "blockedAnalysisItemIds": ["analyze-expanded-scope"], "activeReadOnly": [] },
+        { "at": 4, "event": "user-checkpoint", "reason": "material-scope-expansion", "dispatchStopped": true, "readyAnalysisItemIds": [], "activeReadOnly": [] }
+      ],
+      "expected": { "publicAnalysisItemIds": ["inspect-request", "analyze-expanded-scope"], "planRevisions": [1, 2], "userCheckpointRequired": true, "expandedItemsReady": [], "dispatchStopped": true, "orphanedActiveReadOnly": [], "disposition": "checkpoint-required" }
+    },
+    {
+      "id": "coordinator-analysis-stop-final-gates-continue",
+      "scenario": "Optional analysis stops after required coverage, but implementation and every final candidate gate still run.",
+      "activeCap": 1,
+      "analysisItems": [
+        { "analysisItemId": "optional-extra-lens", "dependencies": [], "initialStatus": "planned" }
+      ],
+      "timeline": [
+        { "at": 0, "event": "plan", "planRevision": 1, "activeReadOnly": [] },
+        { "at": 1, "event": "stop-analysis", "reason": "required-decisions-covered", "supersededAnalysisItemIds": ["optional-extra-lens"], "dispatchStopped": true, "activeReadOnly": [] },
+        { "at": 2, "event": "implementation-dispatch", "transition": "context-to-implementation", "transitionSummary": { "planRevision": 1, "retainedEvidence": ["required-coverage"], "invalidatedEvidence": [], "activeItems": [], "readyItems": ["implementation-a"], "blockers": [], "reason": "Required decisions are covered and implementation is ready." }, "activeReadOnly": [] },
+        { "at": 3, "event": "writers-terminal", "workItemIds": ["implementation-a"], "activeReadOnly": [] },
+        { "at": 4, "event": "candidate", "transition": "final-writer-to-candidate", "transitionSummary": { "planRevision": 1, "retainedEvidence": ["implementation-a terminal report"], "invalidatedEvidence": [], "activeItems": [], "readyItems": ["candidate-capture"], "blockers": [], "reason": "All writers are terminal and the workspace is quiescent." }, "activeReadOnly": [] },
+        { "at": 5, "event": "targeted-checks", "result": "passed", "activeReadOnly": [] },
+        { "at": 6, "event": "verify", "result": "passed", "activeReadOnly": [] },
+        { "at": 7, "event": "judge", "transition": "Verify-to-Judge", "transitionSummary": { "planRevision": 1, "retainedEvidence": ["passing exact-candidate Verify manifest"], "invalidatedEvidence": [], "activeItems": [], "readyItems": ["judge"], "blockers": [], "reason": "Every required Verify shard is valid for the exact candidate." }, "result": "ready", "activeReadOnly": [] },
+        { "at": 8, "event": "final-identity-equality", "result": "equal", "activeReadOnly": [] }
+      ],
+      "terminalDispositions": { "optional-extra-lens": "superseded" },
+      "expected": { "publicAnalysisItemIds": ["optional-extra-lens"], "planRevisions": [1], "analysisStopReason": "required-decisions-covered", "finalGateSequence": ["writers-terminal", "candidate", "targeted-checks", "verify", "judge", "final-identity-equality"], "successfulCompletionAfterGates": true, "orphanedActiveReadOnly": [], "disposition": "analysis-stopped-run-completed" }
+    },
+    {
+      "id": "coordinator-no-concrete-value-stop",
+      "scenario": "No remaining optional child has concrete expected value, so no duplicate lens is dispatched merely to fill capacity.",
+      "activeCap": 2,
+      "analysisItems": [
+        { "analysisItemId": "duplicate-settled-lens", "dependencies": [], "initialStatus": "planned" }
+      ],
+      "timeline": [
+        { "at": 0, "event": "plan", "planRevision": 1, "activeReadOnly": [] },
+        { "at": 1, "event": "stop-analysis", "reason": "no-concrete-expected-value", "evidenceBasis": ["The same bounded question is already settled by valid evidence."], "supersededAnalysisItemIds": ["duplicate-settled-lens"], "dispatchStopped": true, "activeReadOnly": [] }
+      ],
+      "terminalDispositions": { "duplicate-settled-lens": "superseded" },
+      "expected": { "publicAnalysisItemIds": ["duplicate-settled-lens"], "planRevisions": [1], "automaticDispatchCount": 0, "stopReason": "no-concrete-expected-value", "orphanedActiveReadOnly": [], "disposition": "no-value-stop" }
     }
   ],
   "protocol3Cases": [

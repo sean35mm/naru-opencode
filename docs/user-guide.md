@@ -228,7 +228,7 @@ The posting path normalizes every accepted user-authored URL, `OWNER/REPO#NUMBER
 
 ### Adaptive analysis
 
-Skills and the selected orchestrator may use zero, one, or multiple independent lenses when useful. They do not require specialist fan-out, a judge, retries, status bookkeeping, or fixed workflow phases. Review retains its fresh-snapshot and validated posting boundaries.
+Skills and the selected orchestrator may use zero, one, or multiple independent lenses when useful. For implementation work, the selected orchestrator runs a prompt-local adaptive loop: **Plan → Dispatch → Observe → Revise → Refill → Stop**. This is an ephemeral policy aid, not a durable workflow or runtime scheduler. Review retains its fresh-snapshot and validated posting boundaries.
 
 An explicit user request for a concrete number of independent or competing analyses overrides the default relevance and best-of-2 limits. For example, asking the selected orchestrator for 50 competing analyses may produce 50 fresh direct read-only child sessions concurrently, followed by synthesis of all terminal reports. The depth setting limits child-of-child nesting; it does not cap direct orchestrator breadth. Safety, provider availability, and configured hard protocol limits still apply and are reported rather than silently reducing the request.
 
@@ -251,6 +251,16 @@ For implementation work, the orchestrator resolves one user preference or defaul
 - `off` disables only discretionary read-only analysis. Required Implement, final Verify, Judge, and canonical review work remain enabled.
 
 These modes do not change authorization, model eligibility, edit ownership, verification, judgment, scheduler mode, or review posting. For a material task the orchestrator either uses a useful read-only worker or records one bounded reason: `mode-off`, `not-material`, `no-useful-independent-lens`, or `safety-blocked`.
+
+### What to expect during implementation
+
+By default, useful background analysis can begin as soon as its dependencies and safety gates are ready; the orchestrator does not wait for one arbitrary fixed batch before moving forward. It observes returned evidence against the item and plan revision that requested it, revises only affected work when a material fact changes, and refills capacity with newly useful independent items while unrelated work continues. Empty capacity is normal when no remaining item has concrete expected value.
+
+If you explicitly request a concrete number of independent or competing analyses, Naru preserves that request and schedules fresh children in rolling waves under the configured limits. It does not stop early just because an intermediate result looks sufficient. Every requested child receives a terminal, failed, or missing disposition in the bounded run summary.
+
+Optional analysis stopping does not skip the final gates. OpenCode owns task, session, tool, and worktree execution, while Naru owns planning, evidence interpretation, adaptive refill and stop policy, verification coverage, and judgment. Before an implementation is considered complete, writers must be terminal and contained, the candidate must be quiescent, final Verify shards must cover the required checks, an independent Judge must assess that candidate, and final candidate identity must still match. A user cancellation explicitly stops further dispatch and refill and is reported as cancellation, not success.
+
+This loop does not claim to solve OpenCode v2 execution gaps. Runtime adapter work is deferred; the current behavior is prompt and fixture policy layered over OpenCode's existing execution surface.
 
 ### Optional Protocol 3 runtime
 
