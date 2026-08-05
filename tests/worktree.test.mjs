@@ -253,7 +253,7 @@ test('worktree creation rejects a symlinked repository-name ancestor before exte
   assert.equal(stateRegistry.size, 0);
 });
 
-test('Naru worktree creation disables checkout hooks only on worktree add', async (t) => {
+test('Naru worktree creation defaults to fifty writers and disables checkout hooks only on worktree add', async (t) => {
   const { root, repository, worktreeRoot } = await fixture();
   t.after(() => rm(root, { recursive: true, force: true }));
   const marker = join(root, 'checkout-hook-ran');
@@ -266,13 +266,14 @@ test('Naru worktree creation disables checkout hooks only on worktree add', asyn
     return nodeSpawn(argv, options);
   };
   const stateRegistry = new Map();
-  await createWorktreeRun({
+  const run = await createWorktreeRun({
     directory: repository,
     runId: 'run-hooks',
     worktreeRoot,
     spawn: trackedSpawn,
     stateRegistry,
   });
+  assert.equal(run.maxWriters, 50);
   await createWriterWorktree({
     runId: 'run-hooks',
     itemId: 'item',

@@ -93,6 +93,9 @@ test('reusable specification planning is deterministic and omits captures', () =
 
 test('schema v1 readers retain validation, scoring, and dry-run compatibility', () => {
   assert.deepEqual(validateCapturedRunSummaryV1(capturedRun), capturedRun);
+  const turboRun = { ...capturedRun, mode: 'turbo' };
+  assert.deepEqual(validateCapturedRunSummaryV1(turboRun), turboRun);
+  assert.throws(() => validateCapturedRunSummaryV1({ ...capturedRun, mode: 'unknown' }), /mode is invalid/);
   assert.equal(validateEvaluationManifestV1(legacyFixture).schemaVersion, 1);
   assert.equal(scoreEvaluationCase(legacyFixture.cases[0]).passed, true);
   const report = evaluateManifest(legacyFixture);

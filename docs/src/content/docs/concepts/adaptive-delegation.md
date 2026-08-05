@@ -1,9 +1,9 @@
 ---
 title: Adaptive delegation
-description: How Naru proactively fills bounded read-only capacity before implementation.
+description: How Naru proactively fills useful bounded capacity before and during implementation.
 ---
 
-For a material implementation request, `naru-orchestrator` defaults to `auto`: it fills available read-only capacity with distinct useful lenses and queues additional useful questions for rolling refill. It does not launch irrelevant or duplicate specialists. The choice changes discretionary analysis only; it never changes authorization, edit ownership, verification, judgment, routing, or delivery boundaries.
+For a material implementation request, `naru-orchestrator` defaults to `turbo`: it can use up to 50 combined active children, but launches only ready independent work with concrete expected value and queues additional useful questions for rolling refill. Empty capacity is correct when no useful work is ready, and no speed guarantee is made. Explicit `auto`, `lean`, `thorough`, `foreground`, and `off` remain 10-child compatibility profiles. The choice changes discretionary analysis only; it never changes authorization, edit ownership, verification, judgment, routing, or delivery boundaries.
 
 ## The adaptive coordination loop
 
@@ -16,11 +16,11 @@ flowchart LR
 ```
 
 - **Plan:** establish the objective, required outcomes and checks, assumptions, and useful analysis or implementation items. A stable `workItemId` identifies one implementation item through dispatch, reporting, containment, and synthesis. Analysis and Verify-preparation items use their existing `analysisItemId`; final checks use `shardId`. These identifiers are exposed in bounded run summaries so a result can be followed without exposing raw prompt state.
-- **Dispatch:** send only authorized, useful, dependency-ready work with an attributable packet. Independent items may proceed while unrelated analysis remains active. Existing 10-child automatic and 50-child explicitly requested limits still apply.
+- **Dispatch:** send only authorized, useful, dependency-ready work with an attributable packet. Independent items may proceed while unrelated analysis remains active. Default `turbo` uses up to 50 combined active children when useful work is ready; explicit `auto` and lower modes retain the 10-child compatibility profile.
 - **Observe:** correlate each terminal report with its item and `planRevision`, then check its evidence basis, observed paths, validity keys, and invalidation keys. Correlation identifies the decision a report belongs to; it is not proof that the report is true or still current.
 - **Revise:** increase the revision monotonically only after a material observation, such as conflicting evidence, a changed basis, a failed dependency, or a changed verification need. When containment is known, invalidate only affected descendants and retain valid unrelated work. Unknown containment or workspace safety freezes dispatch rather than guessing.
 - **Refill:** recompute dependency readiness and use newly useful capacity immediately. Refill is rolling, not an arbitrary fixed batch: empty capacity is correct when no ready item has concrete expected value, and valid unrelated peers continue.
-- **Stop:** stop optional analysis when required decisions are covered, no remaining item has concrete expected value, or a safety or authorization boundary blocks progress. An explicit user-requested fan-out is not silently truncated; each requested child receives a terminal, failed, or missing disposition. A user cancellation is an explicit stop that halts further dispatch and refill and records cancellation; it is not a successful completion.
+- **Stop:** stop optional analysis when required decisions are covered, no remaining item has concrete expected value, or a safety or authorization boundary blocks progress. An explicit concrete fan-out is separate from adaptive turbo capacity and is not silently truncated; each requested child receives a terminal, failed, or missing disposition. A user cancellation is an explicit stop that halts further dispatch and refill and records cancellation; it is not a successful completion.
 
 Stopping optional analysis is separate from completing a run. Completion still requires contained terminal work, required checks, a writer-free candidate, final Verify coverage, an independent Judge, and final candidate-identity equality. Run summaries remain bounded: they report the objective, current revision, active and ready items, material evidence and invalidations, blockers, covered checks, and the stop or completion reason rather than dumping the full prompt-local plan.
 
@@ -55,11 +55,12 @@ flowchart TB
 
 | Preference | Optional read-only analysis |
 | --- | --- |
+| `turbo` | Up to 50 combined active children when ready work has concrete expected value; this is the default. |
 | `off` | None. Records mode-off and proceeds. |
-| `lean` | At most one useful lens. |
-| `auto` | The smallest useful lens set. This is the default. |
-| `thorough` | Complementary lenses, or one justified best-of-2 pair. |
-| `foreground` | Applies `auto` and finishes it before continuing. |
+| `lean` | 10-child compatibility profile; at most one useful lens. |
+| `auto` | 10-child compatibility profile; the smallest useful lens set and prior best-of-2 behavior. |
+| `thorough` | 10-child compatibility profile; complementary lenses, or one justified best-of-2 pair. |
+| `foreground` | 10-child compatibility profile; applies `auto` and finishes it before continuing. |
 
 Every branch converges on the same scoped implementation step, because the preference changes only how much read-only evidence is gathered first. None of these branches can widen what the implementation step is allowed to touch.
 
@@ -103,6 +104,6 @@ flowchart TB
 | Judge | Final judgment on the candidate | No |
 | **Implement** | Scoped edits inside an approved packet | **Yes — only this one** |
 
-Naru proactively fills a combined ten-child automatic pool with distinct useful read-only and writer work but does not invent irrelevant fan-out. A current explicit user request may raise combined concurrency to fifty. Same-workspace writers remain capped at ten and require disjoint scheduler claims plus exact Weaver ownership before editing. Read the canonical [user guide](/naru-opencode/user-guide/) for the complete selection rules.
+Naru proactively fills turbo's combined capacity of up to 50 active children with distinct useful read-only and writer work but does not invent irrelevant fan-out. Same-workspace writers remain capped at ten while useful read-only work may use remaining capacity; clean isolated mode can use up to 50 disjoint writers, one per worktree. Dirty or unsupported isolation downgrades writers to shared ten without prompting. Read the canonical [user guide](/naru-opencode/user-guide/) for the complete selection rules.
 
 Those limits are concurrent ceilings, not lifetime child-count ceilings. If the user explicitly requests a concrete number of independent or competing analyses, the orchestrator may intentionally repeat a lens and launches the requested number of fresh direct children in rolling waves before synthesizing all terminal reports. `subagent_depth` limits nesting, so depth `1` supports this breadth while preventing those children from spawning grandchildren.

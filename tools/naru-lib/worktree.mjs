@@ -219,7 +219,7 @@ function stateFor(runId, stateRegistry = registry()) {
 async function createWorktreeRunUnlocked({
   directory,
   runId,
-  maxWriters = 10,
+  maxWriters = 50,
   worktreeRoot,
   spawn,
   stateRegistry = registry(),

@@ -34,7 +34,7 @@ These capabilities are not yet a complete Naru runtime:
 
 ## Build now
 
-Keep Naru's policy runtime-neutral. Use a Codex-Ultra-style adaptive coordinator as the behavioral reference: issue tight packets, refill a rolling cohort, prioritize relevant evidence, stop early when confidence is sufficient, and preserve the limits of **10 automatic children** and **50 only when explicitly requested**. Writer ownership, Verify, and an independent Judge remain required.
+Keep Naru's policy runtime-neutral. Use a Codex-Ultra-style adaptive coordinator as the behavioral reference: issue tight packets, refill a rolling cohort, prioritize relevant evidence, stop when no ready work has concrete expected value, and preserve default `turbo` capacity of **up to 50 combined active children** without promising speed. Explicit `auto` remains a **10-child compatibility mode**; concrete user-requested fan-out is separate and fully accounted. Writer ownership, Verify, and an independent Judge remain required.
 
 Borrow the useful parts of Claude-style dynamic workflows—explicit IDs, dependencies, status summaries, and an inspectable run shape—without creating an executable workflow DSL. Protocol and agent identifiers remain compatibility contracts rather than v2 implementation details.
 

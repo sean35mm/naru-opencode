@@ -9,6 +9,20 @@
     "configuredAboveMinimum": { "compatible": true, "recommendedByNaru": false },
     "maximumCurrentNaruTopology": 1
   },
+  "adaptiveModeContract": {
+    "modes": ["turbo", "auto", "lean", "thorough", "foreground", "off"],
+    "omittedPreferenceResolvesTo": "turbo",
+    "profiles": {
+      "turbo": { "combinedActiveCeiling": 50, "fixedChildCountTarget": false, "dispatchPolicy": "every-ready-independent-item-with-concrete-expected-value" },
+      "auto": { "combinedActiveCeiling": 10, "selectionPolicy": "previous-useful-lens-compatibility", "maxBestOf2Pairs": 1 },
+      "lean": { "combinedActiveCeiling": 10 },
+      "thorough": { "combinedActiveCeiling": 10 },
+      "foreground": { "combinedActiveCeiling": 10 },
+      "off": { "combinedActiveCeiling": 10 }
+    },
+    "explicitConcreteFanout": { "overridesDefaultRelevanceLimits": true, "overridesDefaultDuplicateLimits": true, "maximum": "hard-or-configured-capacity-up-to-50", "dispositionRequiredForEveryChild": true },
+    "finalGateContract": { "modeInvariant": true, "sequence": ["Verify", "Judge", "final-identity-equality"], "maxJudgePasses": 3 }
+  },
   "cases": [
     {
       "id": "narrow-implementation",
@@ -285,6 +299,35 @@
   ],
   "adaptiveDelegationCases": [
     {
+      "id": "adaptive-turbo-fifty-useful-items",
+      "scenario": "Default turbo can fill all 50 active slots when 50 independent packet-complete items have concrete expected value.",
+      "policy": { "mode": "turbo", "preference": "omitted", "material": true, "taskShape": "fifty-independent-useful-items" },
+      "readyItemIds": ["useful-01", "useful-02", "useful-03", "useful-04", "useful-05", "useful-06", "useful-07", "useful-08", "useful-09", "useful-10", "useful-11", "useful-12", "useful-13", "useful-14", "useful-15", "useful-16", "useful-17", "useful-18", "useful-19", "useful-20", "useful-21", "useful-22", "useful-23", "useful-24", "useful-25", "useful-26", "useful-27", "useful-28", "useful-29", "useful-30", "useful-31", "useful-32", "useful-33", "useful-34", "useful-35", "useful-36", "useful-37", "useful-38", "useful-39", "useful-40", "useful-41", "useful-42", "useful-43", "useful-44", "useful-45", "useful-46", "useful-47", "useful-48", "useful-49", "useful-50"],
+      "eligibility": { "allIndependent": true, "allPacketComplete": true, "allConcreteExpectedValue": true },
+      "decision": { "status": "delegated", "selected": ["naru-minion-architect"], "selectedItemIds": ["useful-01", "useful-02", "useful-03", "useful-04", "useful-05", "useful-06", "useful-07", "useful-08", "useful-09", "useful-10", "useful-11", "useful-12", "useful-13", "useful-14", "useful-15", "useful-16", "useful-17", "useful-18", "useful-19", "useful-20", "useful-21", "useful-22", "useful-23", "useful-24", "useful-25", "useful-26", "useful-27", "useful-28", "useful-29", "useful-30", "useful-31", "useful-32", "useful-33", "useful-34", "useful-35", "useful-36", "useful-37", "useful-38", "useful-39", "useful-40", "useful-41", "useful-42", "useful-43", "useful-44", "useful-45", "useful-46", "useful-47", "useful-48", "useful-49", "useful-50"], "combinedActive": 50, "launch": "background", "skipReason": null },
+      "prohibitedActions": ["treat fifty as a fixed target", "invent optional child", "automatic xhigh escalation"],
+      "expected": { "dispatchedCount": 50, "combinedActiveCeiling": 50, "fixedChildCountTarget": false, "disposition": "turbo-full-useful-capacity" }
+    },
+    {
+      "id": "adaptive-turbo-three-useful-items",
+      "scenario": "Turbo dispatches only the three useful independent items and leaves the other 47 slots empty.",
+      "policy": { "mode": "turbo", "material": true, "taskShape": "three-independent-useful-items" },
+      "readyItemIds": ["discover-entry", "decide-contract", "prepare-check"],
+      "eligibility": { "allIndependent": true, "allPacketComplete": true, "allConcreteExpectedValue": true },
+      "decision": { "status": "delegated", "selected": ["naru-minion-scout", "naru-minion-architect", "naru-minion-verify"], "selectedItemIds": ["discover-entry", "decide-contract", "prepare-check"], "combinedActive": 3, "emptySlots": 47, "launch": "background", "skipReason": null },
+      "prohibitedActions": ["invent forty-seven children", "duplicate settled lens", "fixed child-count target"],
+      "expected": { "dispatchedCount": 3, "emptySlots": 47, "fixedChildCountTarget": false, "disposition": "turbo-useful-only" }
+    },
+    {
+      "id": "adaptive-auto-compatibility-cap-ten",
+      "scenario": "Explicit auto retains the previous useful-lens profile and its ten-child combined ceiling.",
+      "policy": { "mode": "auto", "preference": "explicit", "material": true, "taskShape": "eleven-independent-useful-questions" },
+      "readyItemIds": ["question-01", "question-02", "question-03", "question-04", "question-05", "question-06", "question-07", "question-08", "question-09", "question-10", "question-11"],
+      "decision": { "status": "delegated", "selected": ["naru-minion-scout", "naru-minion-investigate", "naru-minion-debug", "naru-minion-architect", "naru-minion-verify", "naru-minion-scout", "naru-minion-investigate", "naru-minion-debug", "naru-minion-architect", "naru-minion-verify"], "selectedItemIds": ["question-01", "question-02", "question-03", "question-04", "question-05", "question-06", "question-07", "question-08", "question-09", "question-10"], "deferredItemIds": ["question-11"], "combinedActive": 10, "bestOf2Pairs": 1, "launch": "background", "skipReason": null },
+      "prohibitedActions": ["use turbo fifty-child ceiling", "second best-of-2 pair", "automatic xhigh escalation"],
+      "expected": { "combinedActiveCeiling": 10, "maxBestOf2Pairs": 1, "disposition": "auto-compatibility" }
+    },
+    {
       "id": "adaptive-auto-discovery-background",
       "scenario": "Auto mode starts discovery as soon as its bounded packet exists.",
       "policy": { "mode": "auto", "material": true, "taskShape": "discovery" },
@@ -436,9 +479,9 @@
       "expected": { "disposition": "typed-skip" }
     },
     {
-      "id": "adaptive-known-scope-no-useful-lens",
-      "scenario": "A clear mechanical change does not invent read-only work solely to fan out.",
-      "policy": { "mode": "auto", "material": true, "taskShape": "known-mechanical" },
+      "id": "adaptive-turbo-known-scope-no-useful-lens",
+      "scenario": "Turbo does not invent read-only work for a clear mechanical change solely to fill its ceiling.",
+      "policy": { "mode": "turbo", "material": true, "taskShape": "known-mechanical" },
       "decision": { "status": "skipped", "selected": [], "launch": "none", "skipReason": { "code": "no-useful-independent-lens", "detail": "Scope, behavior, and check path are already clear." } },
       "prohibitedActions": ["forced fan-out", "invent discovery", "create worktree"],
       "expected": { "disposition": "typed-skip" }
@@ -682,8 +725,41 @@
       "expected": { "taskProceeds": false, "protocol2Accepted": false, "disposition": "refused" }
     },
     {
+      "id": "protocol3-turbo-shared-budgets",
+      "mode": "enforce",
+      "adaptiveMode": "turbo",
+      "workspaceMode": "shared",
+      "schedulingProtocol": 3,
+      "budgets": { "maxConcurrentWriters": 10, "maxConcurrentReadOnly": 50, "maxTotalChildren": 50, "maxJudgePasses": 3 },
+      "prohibitedActions": ["declare fifty shared writers", "reduce read-only budget to ten", "fourth judge pass"],
+      "expected": { "sharedWriterCeilingDeclared": 10, "combinedTurboCapacity": 50, "disposition": "mode-workspace-budget" }
+    },
+    {
+      "id": "protocol3-turbo-isolated-budgets",
+      "mode": "enforce",
+      "adaptiveMode": "turbo",
+      "workspaceMode": "isolated-worktree",
+      "repositoryState": "clean",
+      "schedulingProtocol": 3,
+      "budgets": { "maxConcurrentWriters": 50, "maxConcurrentReadOnly": 50, "maxTotalChildren": 50, "maxJudgePasses": 3 },
+      "prohibitedActions": ["share isolated worktree", "exceed configured ceiling", "fourth judge pass"],
+      "expected": { "writersPerWorktree": 1, "combinedTurboCapacity": 50, "disposition": "mode-workspace-budget" }
+    },
+    {
+      "id": "protocol3-auto-compatibility-budgets",
+      "mode": "enforce",
+      "adaptiveMode": "auto",
+      "adaptivePreference": "explicit",
+      "workspaceMode": "shared",
+      "schedulingProtocol": 3,
+      "budgets": { "maxConcurrentWriters": 10, "maxConcurrentReadOnly": 10, "maxTotalChildren": 10, "maxJudgePasses": 3 },
+      "prohibitedActions": ["apply turbo budgets", "second best-of-2 pair", "fourth judge pass"],
+      "expected": { "previousCompatibilityProfile": true, "disposition": "mode-workspace-budget" }
+    },
+    {
       "id": "protocol3-correlated-quality-gates",
       "mode": "enforce",
+      "adaptiveMode": "auto",
       "schedulingProtocol": 3,
       "artifactOrder": ["terminal", "candidate", "shard", "verification-gate", "judgment", "judgment-gate", "completion-gate"],
       "correlation": ["runId", "reportId", "admissionTokenId", "workItemId", "candidateArtifactId", "candidateIdentity", "candidateStateDigest"],
@@ -787,6 +863,7 @@
     {
       "id": "scheduler-read-only-work-stealing",
       "scenario": "Useful preparation work may fill read-only capacity without checking a moving candidate.",
+      "mode": "auto",
       "active": { "implement": ["a", "b", "c", "d", "e", "f"], "readOnly": ["prep-manifest", "prep-report", "prep-future", "prep-dependency"], "totalNaruChildren": 10 },
       "allowedKinds": ["future-scope discovery", "manifest or target inspection", "check-plan preparation", "unaffected dependency inspection", "terminal-report static review"],
       "evidence": { "evidenceId": "evidence-1", "observedPaths": ["package.json", "src/future.js"], "basisIdentity": "dispatch-b", "validityKeys": ["package.json@dispatch-b"], "invalidationKeys": ["package.json changed", "src/future.js changed"] },
@@ -803,6 +880,7 @@
     {
       "id": "scheduler-quiescent-two-shard-verification",
       "scenario": "Two independent verification shards run only against one exact quiescent candidate.",
+      "mode": "auto",
       "candidate": { "candidateIdentity": "candidate-1", "candidateState": { "status": "dirty", "changedPaths": ["src/a.js", "src/b.js"], "diffSnapshot": "candidate-diff" }, "activeImplement": [] },
       "shards": [
         { "shardId": "verify-1", "candidateIdentity": "candidate-1", "workItemIds": ["a"], "coveredChecks": ["check-a"], "observedPaths": ["src/a.js", "src/shared.js"], "mutableResourceClaims": ["test-cache-a"] },
@@ -829,10 +907,43 @@
       "expected": { "remediationConcurrency": 1, "deliveryConcurrency": 1, "postingConcurrency": 1, "maxJudges": 3, "disposition": "serialized" }
     },
     {
+      "id": "scheduler-turbo-shared-mixed-capacity",
+      "scenario": "Shared turbo can use 50 combined slots while admitting no more than ten writers.",
+      "mode": "turbo",
+      "workspaceMode": "shared",
+      "active": { "implement": ["writer-01", "writer-02", "writer-03", "writer-04", "writer-05", "writer-06", "writer-07", "writer-08", "writer-09", "writer-10"], "readOnlyCount": 40, "totalNaruChildren": 50 },
+      "deferred": [{ "workItemId": "writer-11", "reason": "shared-writer-ceiling" }],
+      "prohibitedActions": ["eleventh shared writer", "reduce total turbo capacity to ten", "invent read-only work"],
+      "expected": { "maxConcurrentImplement": 10, "maxConcurrentReadOnly": 50, "maxTotalNaruChildren": 50, "disposition": "shared-turbo-mix" }
+    },
+    {
+      "id": "scheduler-turbo-clean-isolated-capacity",
+      "scenario": "Clean isolated turbo may admit 50 genuinely disjoint writers with one writer per Naru-owned worktree.",
+      "mode": "turbo",
+      "workspaceMode": "isolated-worktree",
+      "repositoryState": "clean",
+      "readyIndependentWriterCount": 50,
+      "activeWriterCount": 50,
+      "prohibitedActions": ["multiple writers in one isolated worktree", "overlapping mutable claims", "fixed writer-count target"],
+      "expected": { "maxConcurrentImplement": 50, "writersPerWorktree": 1, "requiresGenuinelyDisjointWork": true, "disposition": "isolated-turbo-capacity" }
+    },
+    {
+      "id": "scheduler-turbo-dirty-isolation-fallback",
+      "scenario": "Dirty or unsupported isolation falls back to shared ten-writer admission while useful read-only work can use the remaining turbo capacity.",
+      "mode": "turbo",
+      "requestedWorkspaceMode": "isolated-worktree",
+      "resolvedWorkspaceMode": "shared",
+      "repositoryState": "dirty-or-unsupported",
+      "active": { "implementCount": 10, "readOnlyCount": 40, "totalNaruChildren": 50 },
+      "prohibitedActions": ["prompt user for fallback", "eleventh shared writer", "discard remaining read-only capacity"],
+      "expected": { "maxConcurrentImplement": 10, "maxConcurrentReadOnly": 50, "maxTotalNaruChildren": 50, "userPromptRequired": false, "disposition": "shared-turbo-fallback" }
+    },
+    {
       "id": "scheduler-automatic-isolated-worktrees",
-      "scenario": "A clean repository may use one Naru-owned worktree per writer while a dirty repository downgrades without prompting.",
+      "scenario": "Explicit auto retains its ten-child compatibility profile when clean worktrees are available or a dirty repository downgrades without prompting.",
+      "mode": "auto",
       "prohibitedActions": ["multiple writers in one isolated worktree", "worktree mode on dirty repository", "cleanup before finalization", "delivery commit"],
-      "expected": { "cleanRepositoryWriterLimit": 50, "defaultConcurrentWriters": 10, "writersPerWorktree": 1, "dirtyRepositoryFallback": "shared-ten-writer", "userPromptRequired": false, "disposition": "isolated-worktrees" }
+      "expected": { "cleanRepositoryWriterLimit": 10, "defaultConcurrentWriters": 10, "writersPerWorktree": 1, "dirtyRepositoryFallback": "shared-ten-writer", "userPromptRequired": false, "disposition": "isolated-worktrees" }
     }
   ]
 }

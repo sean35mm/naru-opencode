@@ -317,6 +317,7 @@ test('runtime config is off by default, strict, bounded, and explicitly loadable
   assert.throws(() => parseSchedulerConfig({ maxConcurrentWriters: 51 }), /from 1 to 50/);
   assert.throws(() => parseSchedulerConfig({ maxConcurrentReadOnly: 51 }), /from 0 to 50/);
   assert.throws(() => parseSchedulerConfig({ maxTotalChildren: 51 }), /from 1 to 50/);
+  assert.equal(parseRuntimeConfig().implementation.maxConcurrentWriters, 50);
   assert.equal(parseRuntimeConfig({ implementation: { maxConcurrentWriters: 50 } }).implementation.maxConcurrentWriters, 50);
   assert.throws(
     () => parseRuntimeConfig({ implementation: { maxConcurrentWriters: 51 } }),
@@ -335,6 +336,7 @@ test('runtime config is off by default, strict, bounded, and explicitly loadable
   const loaded = await loadRuntimeConfigFile(examplePath);
   assert.deepEqual(loaded, parseRuntimeConfig(JSON.parse(await readFile(examplePath, 'utf8'))));
   assert.equal(loaded.scheduler.mode, 'off');
+  assert.equal(loaded.implementation.maxConcurrentWriters, 50);
 });
 
 test('state creation and admission are deterministic, CAS-protected, and budgeted', () => {
@@ -365,45 +367,45 @@ test('state creation and admission are deterministic, CAS-protected, and budgete
   );
 });
 
-test('automatic scheduler budgets admit ten disjoint writers and refuse an eleventh', () => {
-  const workItems = disjointWorkItems(11, 'shared');
+test('omitted scheduler budgets admit fifty disjoint writers and refuse a fifty-first', () => {
+  const workItems = disjointWorkItems(51, 'default');
   let state = createSchedulerState(validateRunManifestV1({
     ...fixture.manifest,
-    budgets: DEFAULT_SCHEDULER_BUDGETS,
+    budgets: resolveSchedulerBudgets(undefined, parseSchedulerConfig()),
     workItems,
   }));
-  for (const item of workItems.slice(0, 10)) {
-    const peers = state.activeAdmissions.map((entry) => entry.workItemId).sort();
-    state = admitWorkItem(state, admissionFor(item.workItemId, state.revision, peers), { now: 150 });
-  }
-  assert.equal(budgetUsage(state).writers, 10);
-  const peers = state.activeAdmissions.map((entry) => entry.workItemId).sort();
-  assert.equal(
-    admissionDecision(state, admissionFor('shared-11', state.revision, peers), { now: 150 }).reason,
-    'total child budget exhausted',
-  );
-});
-
-test('explicit scheduler budgets admit fifty disjoint writers and refuse a fifty-first', () => {
-  const workItems = disjointWorkItems(51, 'isolated');
-  const manifest = validateRunManifestV1({
-    ...fixture.manifest,
-    budgets: {
-      maxConcurrentWriters: 50,
-      maxConcurrentReadOnly: 50,
-      maxTotalChildren: 50,
-      maxJudgePasses: 3,
-    },
-    workItems,
-  });
-  let state = createSchedulerState(manifest);
   for (const item of workItems.slice(0, 50)) {
     const peers = state.activeAdmissions.map((entry) => entry.workItemId).sort();
     state = admitWorkItem(state, admissionFor(item.workItemId, state.revision, peers), { now: 150 });
   }
   assert.equal(budgetUsage(state).writers, 50);
   const peers = state.activeAdmissions.map((entry) => entry.workItemId).sort();
-  const decision = admissionDecision(state, admissionFor('isolated-51', state.revision, peers), { now: 150 });
+  assert.equal(
+    admissionDecision(state, admissionFor('default-51', state.revision, peers), { now: 150 }).reason,
+    'total child budget exhausted',
+  );
+});
+
+test('explicit lower scheduler budgets admit ten disjoint writers and refuse an eleventh', () => {
+  const workItems = disjointWorkItems(11, 'lower');
+  const manifest = validateRunManifestV1({
+    ...fixture.manifest,
+    budgets: {
+      maxConcurrentWriters: 10,
+      maxConcurrentReadOnly: 10,
+      maxTotalChildren: 10,
+      maxJudgePasses: 3,
+    },
+    workItems,
+  });
+  let state = createSchedulerState(manifest);
+  for (const item of workItems.slice(0, 10)) {
+    const peers = state.activeAdmissions.map((entry) => entry.workItemId).sort();
+    state = admitWorkItem(state, admissionFor(item.workItemId, state.revision, peers), { now: 150 });
+  }
+  assert.equal(budgetUsage(state).writers, 10);
+  const peers = state.activeAdmissions.map((entry) => entry.workItemId).sort();
+  const decision = admissionDecision(state, admissionFor('lower-11', state.revision, peers), { now: 150 });
   assert.equal(decision.allowed, false);
   assert.equal(decision.reason, 'total child budget exhausted');
 });

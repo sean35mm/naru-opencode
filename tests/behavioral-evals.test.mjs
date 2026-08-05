@@ -92,6 +92,9 @@ test('implementation scheduling corpus keeps schema v1 and covers bounded concur
     'scheduler-quiescent-two-shard-verification',
     'scheduler-final-identity-equality',
     'scheduler-remediation-delivery-serialized',
+    'scheduler-turbo-shared-mixed-capacity',
+    'scheduler-turbo-clean-isolated-capacity',
+    'scheduler-turbo-dirty-isolation-fallback',
     'scheduler-automatic-isolated-worktrees',
   ];
   assert.deepEqual(fixture.implementationSchedulingCases.map((entry) => entry.id), requiredIDs);
@@ -100,13 +103,47 @@ test('implementation scheduling corpus keeps schema v1 and covers bounded concur
     assert.ok(Array.isArray(entry.prohibitedActions) && entry.prohibitedActions.length);
     assert.equal(typeof entry.expected, 'object');
     if ('maxConcurrentImplement' in entry.expected) {
-      assert.ok(entry.expected.maxConcurrentImplement <= 10, `${entry.id} respects automatic writer cap`);
+      const writerCap = entry.mode === 'turbo' && entry.workspaceMode === 'isolated-worktree' ? 50 : 10;
+      assert.ok(entry.expected.maxConcurrentImplement <= writerCap, `${entry.id} respects its mode and workspace writer cap`);
     }
   }
 });
 
+test('adaptive mode contract defaults omitted preference to turbo and preserves compatibility profiles', () => {
+  const contract = fixture.adaptiveModeContract;
+  assert.deepEqual(contract.modes, ['turbo', 'auto', 'lean', 'thorough', 'foreground', 'off']);
+  assert.equal(contract.omittedPreferenceResolvesTo, 'turbo');
+  assert.deepEqual(contract.profiles.turbo, {
+    combinedActiveCeiling: 50,
+    fixedChildCountTarget: false,
+    dispatchPolicy: 'every-ready-independent-item-with-concrete-expected-value',
+  });
+  assert.deepEqual(contract.profiles.auto, {
+    combinedActiveCeiling: 10,
+    selectionPolicy: 'previous-useful-lens-compatibility',
+    maxBestOf2Pairs: 1,
+  });
+  for (const mode of ['lean', 'thorough', 'foreground', 'off']) {
+    assert.equal(contract.profiles[mode].combinedActiveCeiling, 10, mode);
+  }
+  assert.deepEqual(contract.explicitConcreteFanout, {
+    overridesDefaultRelevanceLimits: true,
+    overridesDefaultDuplicateLimits: true,
+    maximum: 'hard-or-configured-capacity-up-to-50',
+    dispositionRequiredForEveryChild: true,
+  });
+  assert.deepEqual(contract.finalGateContract, {
+    modeInvariant: true,
+    sequence: ['Verify', 'Judge', 'final-identity-equality'],
+    maxJudgePasses: 3,
+  });
+});
+
 test('adaptive delegation corpus covers every mode and enforces material-task decisions', () => {
   const requiredIDs = [
+    'adaptive-turbo-fifty-useful-items',
+    'adaptive-turbo-three-useful-items',
+    'adaptive-auto-compatibility-cap-ten',
     'adaptive-auto-discovery-background',
     'adaptive-auto-diagnosis-selection',
     'adaptive-auto-command-diagnosis-selection',
@@ -117,14 +154,14 @@ test('adaptive delegation corpus covers every mode and enforces material-task de
     'adaptive-explicit-fifty-way-fanout',
     'adaptive-foreground-no-background',
     'adaptive-off-typed-skip',
-    'adaptive-known-scope-no-useful-lens',
+    'adaptive-turbo-known-scope-no-useful-lens',
     'adaptive-non-material-typed-skip',
     'adaptive-safety-blocked-typed-skip',
     'adaptive-capacity-seeking-refill',
   ];
   assert.deepEqual(fixture.adaptiveDelegationCases.map((entry) => entry.id), requiredIDs);
   assert.deepEqual(new Set(fixture.adaptiveDelegationCases.map((entry) => entry.policy.mode)), new Set([
-    'auto', 'lean', 'thorough', 'foreground', 'off',
+    'turbo', 'auto', 'lean', 'thorough', 'foreground', 'off',
   ]));
 
   const allowedSkipReasons = new Set(['mode-off', 'not-material', 'no-useful-independent-lens', 'safety-blocked']);
@@ -141,6 +178,43 @@ test('adaptive delegation corpus covers every mode and enforces material-task de
       }
     }
   }
+});
+
+test('turbo fills only ready independent items with concrete expected value', () => {
+  const full = adaptiveCaseByID('adaptive-turbo-fifty-useful-items');
+  assert.equal(full.policy.preference, 'omitted');
+  assert.equal(full.readyItemIds.length, 50);
+  assert.equal(new Set(full.readyItemIds).size, 50);
+  assert.deepEqual(full.decision.selectedItemIds, full.readyItemIds);
+  assert.deepEqual(full.eligibility, {
+    allIndependent: true,
+    allPacketComplete: true,
+    allConcreteExpectedValue: true,
+  });
+  assert.equal(full.decision.combinedActive, 50);
+  assert.equal(full.expected.fixedChildCountTarget, false);
+
+  const three = adaptiveCaseByID('adaptive-turbo-three-useful-items');
+  assert.deepEqual(three.decision.selectedItemIds, three.readyItemIds);
+  assert.equal(three.decision.combinedActive, 3);
+  assert.equal(three.decision.emptySlots, 47);
+  assert.equal(three.expected.dispatchedCount, 3);
+
+  const mechanical = adaptiveCaseByID('adaptive-turbo-known-scope-no-useful-lens');
+  assert.equal(mechanical.decision.status, 'skipped');
+  assert.deepEqual(mechanical.decision.selected, []);
+  assert.equal(mechanical.decision.skipReason.code, 'no-useful-independent-lens');
+});
+
+test('explicit auto remains the ten-child useful-lens compatibility profile', () => {
+  const auto = adaptiveCaseByID('adaptive-auto-compatibility-cap-ten');
+  assert.equal(auto.policy.preference, 'explicit');
+  assert.equal(auto.readyItemIds.length, 11);
+  assert.equal(auto.decision.selectedItemIds.length, 10);
+  assert.deepEqual(auto.decision.deferredItemIds, ['question-11']);
+  assert.equal(auto.decision.combinedActive, 10);
+  assert.equal(auto.decision.bestOf2Pairs, 1);
+  assert.equal(auto.expected.combinedActiveCeiling, 10);
 });
 
 test('adaptive auto mode selects the exact useful role from task shape', () => {
@@ -394,6 +468,9 @@ test('Protocol 3 corpus preserves off compatibility and distinct observe and enf
     'protocol3-off-keeps-protocol2',
     'protocol3-observe-fails-open',
     'protocol3-enforce-fails-closed',
+    'protocol3-turbo-shared-budgets',
+    'protocol3-turbo-isolated-budgets',
+    'protocol3-auto-compatibility-budgets',
     'protocol3-correlated-quality-gates',
     'protocol3-honest-process-local-limit',
   ]);
@@ -409,6 +486,40 @@ test('Protocol 3 corpus preserves off compatibility and distinct observe and enf
   const enforce = protocol3CaseByID('protocol3-enforce-fails-closed');
   assert.equal(enforce.expected.taskProceeds, false);
   assert.equal(enforce.expected.protocol2Accepted, false);
+});
+
+test('Protocol 3 requests deterministic mode and workspace aware budgets', () => {
+  const sharedTurbo = protocol3CaseByID('protocol3-turbo-shared-budgets');
+  assert.equal(sharedTurbo.adaptiveMode, 'turbo');
+  assert.equal(sharedTurbo.workspaceMode, 'shared');
+  assert.deepEqual(sharedTurbo.budgets, {
+    maxConcurrentWriters: 10,
+    maxConcurrentReadOnly: 50,
+    maxTotalChildren: 50,
+    maxJudgePasses: 3,
+  });
+
+  const isolatedTurbo = protocol3CaseByID('protocol3-turbo-isolated-budgets');
+  assert.equal(isolatedTurbo.repositoryState, 'clean');
+  assert.deepEqual(isolatedTurbo.budgets, {
+    maxConcurrentWriters: 50,
+    maxConcurrentReadOnly: 50,
+    maxTotalChildren: 50,
+    maxJudgePasses: 3,
+  });
+  assert.equal(isolatedTurbo.expected.writersPerWorktree, 1);
+
+  const auto = protocol3CaseByID('protocol3-auto-compatibility-budgets');
+  assert.equal(auto.adaptivePreference, 'explicit');
+  assert.deepEqual(auto.budgets, {
+    maxConcurrentWriters: 10,
+    maxConcurrentReadOnly: 10,
+    maxTotalChildren: 10,
+    maxJudgePasses: 3,
+  });
+  for (const entry of fixture.protocol3Cases.filter(({ budgets }) => budgets)) {
+    assert.equal(entry.budgets.maxJudgePasses, 3, entry.id);
+  }
 });
 
 test('Protocol 3 quality gates expose bounded correlation without overstating enforcement', () => {
@@ -663,6 +774,7 @@ test('terminal dependency reports unlock provisionally and faults freeze refill 
 
 test('read-only work stealing is bounded, evidence-keyed, and invalidated by observed-path changes', () => {
   const stealing = schedulingCaseByID('scheduler-read-only-work-stealing');
+  assert.equal(stealing.mode, 'auto');
   assert.equal(stealing.active.implement.length, 6);
   assert.equal(stealing.active.readOnly.length, 4);
   assert.equal(stealing.active.totalNaruChildren, 10);
@@ -683,8 +795,9 @@ test('TodoWrite exposes one phase summary and completes only at the unchanged fi
   assert.equal(todo.expected.completionPoint, 'unchanged-final-checkpoint');
 });
 
-test('quiescent verification uses exact-candidate shards within the ten-child automatic budget', () => {
+test('quiescent verification keeps exact-candidate shards within the explicit auto budget', () => {
   const verification = schedulingCaseByID('scheduler-quiescent-two-shard-verification');
+  assert.equal(verification.mode, 'auto');
   assert.deepEqual(verification.candidate.activeImplement, []);
   assert.equal(verification.shards.length, 2);
   assert.ok(verification.shards.every((shard) => shard.candidateIdentity === verification.candidate.candidateIdentity));
@@ -695,7 +808,7 @@ test('quiescent verification uses exact-candidate shards within the ten-child au
   assert.equal(verification.expected.reportsValidOnlyForExactCandidate, true);
 });
 
-test('final identity equality gates todos, serialized remediation and delivery, and worktree behavior', () => {
+test('final identity equality gates todos, serialized remediation and delivery, and auto worktree behavior', () => {
   const equality = schedulingCaseByID('scheduler-final-identity-equality');
   assert.equal(equality.checkpoints[0].result, 'complete');
   assert.equal(equality.checkpoints[0].candidateIdentity, equality.checkpoints[0].finalIdentity);
@@ -712,11 +825,37 @@ test('final identity equality gates todos, serialized remediation and delivery, 
   assert.deepEqual(serialized.phases.slice(-3), ['rejudgment', 'serialized-delivery', 'serialized-review-posting']);
 
   const worktrees = schedulingCaseByID('scheduler-automatic-isolated-worktrees');
-  assert.equal(worktrees.expected.cleanRepositoryWriterLimit, 50);
+  assert.equal(worktrees.mode, 'auto');
+  assert.equal(worktrees.expected.cleanRepositoryWriterLimit, 10);
   assert.equal(worktrees.expected.defaultConcurrentWriters, 10);
   assert.equal(worktrees.expected.writersPerWorktree, 1);
   assert.equal(worktrees.expected.dirtyRepositoryFallback, 'shared-ten-writer');
   assert.equal(worktrees.expected.userPromptRequired, false);
+});
+
+test('Protocol 2 turbo separates shared, clean isolated, and dirty fallback capacity', () => {
+  const shared = schedulingCaseByID('scheduler-turbo-shared-mixed-capacity');
+  assert.equal(shared.active.implement.length, 10);
+  assert.equal(shared.active.readOnlyCount, 40);
+  assert.equal(shared.active.totalNaruChildren, 50);
+  assert.deepEqual(shared.deferred, [{ workItemId: 'writer-11', reason: 'shared-writer-ceiling' }]);
+  assert.equal(shared.expected.maxConcurrentImplement, 10);
+  assert.equal(shared.expected.maxTotalNaruChildren, 50);
+
+  const isolated = schedulingCaseByID('scheduler-turbo-clean-isolated-capacity');
+  assert.equal(isolated.repositoryState, 'clean');
+  assert.equal(isolated.readyIndependentWriterCount, 50);
+  assert.equal(isolated.activeWriterCount, 50);
+  assert.equal(isolated.expected.maxConcurrentImplement, 50);
+  assert.equal(isolated.expected.writersPerWorktree, 1);
+  assert.equal(isolated.expected.requiresGenuinelyDisjointWork, true);
+
+  const fallback = schedulingCaseByID('scheduler-turbo-dirty-isolation-fallback');
+  assert.equal(fallback.resolvedWorkspaceMode, 'shared');
+  assert.equal(fallback.active.implementCount, 10);
+  assert.equal(fallback.active.readOnlyCount, 40);
+  assert.equal(fallback.active.totalNaruChildren, 50);
+  assert.equal(fallback.expected.userPromptRequired, false);
 });
 
 test('model-route variants preserve high defaults and never create Max children', () => {

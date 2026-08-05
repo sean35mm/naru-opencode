@@ -27,9 +27,9 @@ export const QUALITY_ARTIFACT_TYPES = Object.freeze([
 ]);
 
 export const DEFAULT_SCHEDULER_BUDGETS = Object.freeze({
-  maxConcurrentWriters: 10,
-  maxConcurrentReadOnly: 10,
-  maxTotalChildren: 10,
+  maxConcurrentWriters: 50,
+  maxConcurrentReadOnly: 50,
+  maxTotalChildren: 50,
   maxJudgePasses: 3,
 });
 

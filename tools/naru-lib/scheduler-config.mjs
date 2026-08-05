@@ -30,7 +30,7 @@ export const DEFAULT_RUNTIME_CONFIG = Object.freeze({
   scheduler: DEFAULT_SCHEDULER_CONFIG,
   implementation: Object.freeze({
     workspaceMode: 'auto',
-    maxConcurrentWriters: 10,
+    maxConcurrentWriters: 50,
     maxWritersPerWorktree: 1,
     cleanWorkspaceRequired: true,
   }),
