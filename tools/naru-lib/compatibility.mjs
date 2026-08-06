@@ -48,7 +48,6 @@ export const COMPATIBILITY_POLICY = deepFreeze({
             git: { prerequisite: true, versionFloor: null },
             providerCalls: false,
             minimumSubagentDepth: 1,
-            schedulerDefault: 'off',
         },
         reviewPosting: {
             git: { prerequisite: true, versionFloor: null },

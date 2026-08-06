@@ -424,7 +424,7 @@ export async function runCompatibilitySmoke(options, hooks = {}) {
                         && reportRecord.readOnly === true
                         && typeof depth.effective === 'number'
                         && depth.effective >= COMPATIBILITY_POLICY.features.core.minimumSubagentDepth
-                        && runtime.schedulerMode === 'off';
+                        && typeof runtime.workspaceMode === 'string';
                 }
                 catch {
                     doctorValid = false;

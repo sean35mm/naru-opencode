@@ -53,7 +53,7 @@ while [ $# -gt 0 ]; do
       TARGET="$1"
       LOCATION_MODE=custom
       ;;
-    --with-dashboard) WITH_DASHBOARD=true; INSTALL_OPTION_REQUESTED=true ;;
+    --with-dashboard) echo "install.sh: --with-dashboard is deprecated and ignored; the dashboard plugin was removed" >&2 ;;
     --migrate-orchestrator) MIGRATE_ORCHESTRATOR=true; INSTALL_OPTION_REQUESTED=true ;;
     --configure-subagent-depth) CONFIGURE_SUBAGENT_DEPTH=true; INSTALL_OPTION_REQUESTED=true ;;
     --rollback)
@@ -538,34 +538,23 @@ add_md "${SRC_DIR}/skills/naru-triage/SKILL.md"   "skills/naru-triage/SKILL.md"
 add_md "${SRC_DIR}/skills/naru-review/SKILL.md"   "skills/naru-review/SKILL.md"
 
 # Provider-neutral orchestrator and minions.
-add_md "${SRC_DIR}/agents/naru-orchestrator.md"  "agents/naru-orchestrator.md"
-add_md "${SRC_DIR}/agents/naru-minion-scout.md"  "agents/naru-minion-scout.md"
-add_md "${SRC_DIR}/agents/naru-minion-investigate.md" "agents/naru-minion-investigate.md"
-add_md "${SRC_DIR}/agents/naru-minion-architect.md"   "agents/naru-minion-architect.md"
-add_md "${SRC_DIR}/agents/naru-minion-implement.md"   "agents/naru-minion-implement.md"
-add_md "${SRC_DIR}/agents/naru-minion-debug.md"  "agents/naru-minion-debug.md"
-add_md "${SRC_DIR}/agents/naru-minion-verify.md" "agents/naru-minion-verify.md"
-add_md "${SRC_DIR}/agents/naru-minion-judge.md"  "agents/naru-minion-judge.md"
+add_md "${SRC_DIR}/agents/naru-orchestrator.md" "agents/naru-orchestrator.md"
+add_md "${SRC_DIR}/agents/naru-reader.md"       "agents/naru-reader.md"
+add_md "${SRC_DIR}/agents/naru-reader-deep.md"  "agents/naru-reader-deep.md"
+add_md "${SRC_DIR}/agents/naru-runner.md"       "agents/naru-runner.md"
+add_md "${SRC_DIR}/agents/naru-writer.md"       "agents/naru-writer.md"
 
 # Tools and helper library (always copy-pinned).
 add_copy "${SRC_DIR}/tools/naru-git-read.js"          "tools/naru-git-read.js"
 add_copy "${SRC_DIR}/tools/naru-github-read.js"       "tools/naru-github-read.js"
 add_copy "${SRC_DIR}/tools/naru-github-post-review.js" "tools/naru-github-post-review.js"
 add_copy "${SRC_DIR}/tools/naru-doctor.js"            "tools/naru-doctor.js"
-add_copy "${SRC_DIR}/tools/naru-scheduler.js"         "tools/naru-scheduler.js"
 add_copy "${SRC_DIR}/tools/naru-worktree.js"          "tools/naru-worktree.js"
 add_copy "${SRC_DIR}/tools/package.json"               "tools/package.json"
 add_copy "${SRC_DIR}/tools/naru-lib"                  "tools/naru-lib"
 
-# Runtime plugins (always copy-pinned and installed by default). The scheduler
-# remains inert unless naru-runtime.json explicitly selects observe or enforce.
-add_copy "${SRC_DIR}/plugins/naru-delegate.js" "plugins/naru-delegate.js"
-add_copy "${SRC_DIR}/plugins/naru-scheduler.js" "plugins/naru-scheduler.js"
-
-# Runtime configuration example and bounded local evaluation assets.
+# Runtime configuration example.
 add_copy "${SRC_DIR}/naru-runtime.example.json"         "naru-runtime.example.json"
-add_copy "${SRC_DIR}/scripts/naru-live-eval.mjs"        "scripts/naru-live-eval.mjs"
-add_copy "${SRC_DIR}/tests/fixtures/live-evals.json"    "scripts/live-evals.example.json"
 
 # Optional dashboard plugin (always copy-pinned).
 if [ "$WITH_DASHBOARD" = true ]; then

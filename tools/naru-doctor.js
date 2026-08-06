@@ -6,8 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { INSTALL_MANIFEST_FILE, inferInstallSourceRoot, inspectInstallManifest, loadInstallManifest, } from './naru-lib/install-manifest.mjs';
-import { parseRoutingOverrides } from './naru-lib/model-routing.mjs';
-import { loadRuntimeConfigFile } from './naru-lib/scheduler-config.mjs';
+import { loadRuntimeConfigFile } from './naru-lib/runtime-config.mjs';
 const REPORT_SCHEMA_VERSION = 1;
 const MIN_OPENCODE_VERSION = '1.18.4';
 const MAX_CONFIG_BYTES = 64 * 1024;
@@ -288,65 +287,21 @@ function countBy(values, field) {
     }
     return counts;
 }
-async function routingState(target) {
-    const file = path.join(target, 'naru-models.json');
-    if (await statOrNull(file) === null)
-        return { status: 'default', schemaVersion: null };
-    try {
-        const value = await loadJsonConfig(file);
-        const parsed = parseRoutingOverrides(value);
-        return { status: 'custom-valid', schemaVersion: parsed.schemaVersion };
-    }
-    catch {
-        return { status: 'invalid', schemaVersion: null };
-    }
-}
 async function runtimeState(target) {
     const file = path.join(target, 'naru-runtime.json');
     if (await statOrNull(file) === null) {
-        return { status: 'default', schedulerMode: 'off', workspaceMode: 'auto' };
+        return { status: 'default', workspaceMode: 'auto' };
     }
     try {
         const value = await loadRuntimeConfigFile(file);
         return {
             status: 'custom-valid',
-            schedulerMode: value.scheduler.mode,
             workspaceMode: value.implementation.workspaceMode,
         };
     }
     catch {
-        return { status: 'invalid', schedulerMode: null, workspaceMode: null };
+        return { status: 'invalid', workspaceMode: null };
     }
-}
-function dashboardEntryMatches(entry) {
-    const candidate = Array.isArray(entry) ? entry[0] : entry;
-    return typeof candidate === 'string'
-        && candidate.replaceAll('\\', '/').replace(/^\.\//, '') === 'plugins/naru-minions-dashboard.tsx';
-}
-async function dashboardState(target) {
-    const plugin = await statOrNull(path.join(target, 'plugins', 'naru-minions-dashboard.tsx'));
-    const installed = plugin?.isFile() === true;
-    let registered = false;
-    let configStatus = 'absent';
-    const candidates = [
-        { name: 'tui.jsonc', jsonc: true },
-        { name: 'tui.json', jsonc: false },
-    ];
-    for (const candidate of candidates) {
-        const file = path.join(target, candidate.name);
-        if (await statOrNull(file) === null)
-            continue;
-        try {
-            const value = await loadJsonConfig(file, { jsonc: candidate.jsonc });
-            configStatus = 'valid';
-            if (Array.isArray(value?.plugin) && value.plugin.some(dashboardEntryMatches))
-                registered = true;
-        }
-        catch {
-            configStatus = 'invalid';
-        }
-    }
-    return { installed, registered, configStatus };
 }
 async function inspectScope(candidate, options, issues) {
     let manifest;
@@ -366,9 +321,7 @@ async function inspectScope(candidate, options, issues) {
             options: null,
             assets: null,
             issuePaths: [],
-            routing: await routingState(candidate.target),
             runtime: await runtimeState(candidate.target),
-            dashboard: await dashboardState(candidate.target),
         };
     }
     if (manifest === null) {
@@ -383,9 +336,7 @@ async function inspectScope(candidate, options, issues) {
             options: null,
             assets: null,
             issuePaths: [],
-            routing: await routingState(candidate.target),
             runtime: await runtimeState(candidate.target),
-            dashboard: await dashboardState(candidate.target),
         };
     }
     let sourceRoot;
@@ -417,9 +368,7 @@ async function inspectScope(candidate, options, issues) {
                 inspectionStatus: 'failed',
             },
             issuePaths: [],
-            routing: await routingState(candidate.target),
             runtime: await runtimeState(candidate.target),
-            dashboard: await dashboardState(candidate.target),
         };
     }
     const installedCounts = countBy(inspected, 'installedStatus');
@@ -437,17 +386,9 @@ async function inspectScope(candidate, options, issues) {
     if ((sourceCounts['copy-stale'] ?? 0) > 0 && inspected.some(entry => entry.method === 'symlink')) {
         addIssue(issues, 'mixed-generation-install', candidate.id, 'live symlinks and copy-pinned assets are from different source generations');
     }
-    const routing = await routingState(candidate.target);
     const runtime = await runtimeState(candidate.target);
-    const dashboard = await dashboardState(candidate.target);
-    if (routing.status === 'invalid')
-        addIssue(issues, 'invalid-routing-config', candidate.id, 'naru-models.json is invalid');
     if (runtime.status === 'invalid')
         addIssue(issues, 'invalid-runtime-config', candidate.id, 'naru-runtime.json is invalid');
-    if (dashboard.configStatus === 'invalid')
-        addIssue(issues, 'invalid-dashboard-config', candidate.id, 'a TUI config is invalid');
-    if (dashboard.installed !== dashboard.registered)
-        addIssue(issues, 'dashboard-registration-mismatch', candidate.id, 'dashboard installation and registration do not match');
     return {
         id: candidate.id,
         loadState: candidate.loadState,
@@ -465,9 +406,7 @@ async function inspectScope(candidate, options, issues) {
             inspectionStatus: 'complete',
         },
         issuePaths,
-        routing,
         runtime,
-        dashboard,
     };
 }
 async function depthState(options, issues) {
@@ -553,7 +492,7 @@ function renderPlain(report) {
         if (scope.assets !== null) {
             lines.push(`  assets: ${scope.assets.installed.healthy ?? 0}/${scope.assets.total} healthy; source comparison ${scope.assets.sourceCompared ? 'available' : 'unavailable'}`);
         }
-        lines.push(`  routing: ${scope.routing.status}; scheduler: ${scope.runtime.schedulerMode ?? 'unknown'}; dashboard: ${scope.dashboard.installed ? 'installed' : 'not installed'}/${scope.dashboard.registered ? 'registered' : 'not registered'}`);
+        lines.push(`  runtime: ${scope.runtime.status}; workspace mode: ${scope.runtime.workspaceMode ?? 'unknown'}`);
         if (scope.issuePaths.length > 0)
             lines.push(`  issue paths: ${scope.issuePaths.join(', ')}`);
     }

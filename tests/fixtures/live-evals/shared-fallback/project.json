@@ -1,4 +1,0 @@
-{
-  "name": "shared-fallback-fixture",
-  "owned": ["src/state.mjs"]
-}

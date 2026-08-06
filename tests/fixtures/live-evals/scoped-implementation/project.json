@@ -1,4 +1,0 @@
-{
-  "name": "scoped-implementation-fixture",
-  "owned": ["src/value.mjs"]
-}

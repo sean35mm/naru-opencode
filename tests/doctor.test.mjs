@@ -17,14 +17,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 async function copyInstallSource(destination) {
-  for (const directory of ['agents', 'plugins', 'scripts', 'skills', 'tools']) {
+  for (const directory of ['agents', 'skills', 'tools']) {
     await cp(path.join(root, directory), path.join(destination, directory), { recursive: true });
   }
-  await mkdir(path.join(destination, 'tests', 'fixtures'), { recursive: true });
-  await cp(
-    path.join(root, 'tests', 'fixtures', 'live-evals.json'),
-    path.join(destination, 'tests', 'fixtures', 'live-evals.json'),
-  );
   await cp(path.join(root, 'install.sh'), path.join(destination, 'install.sh'));
   await cp(path.join(root, 'naru-runtime.example.json'), path.join(destination, 'naru-runtime.example.json'));
 }
@@ -59,7 +54,7 @@ test('CLI helper modules tolerate virtual Bun argv when imported as tools', asyn
   }
 });
 
-test('doctor is read-only and diagnoses scope, default depth, source generation, and dashboard state', async () => {
+test('doctor is read-only and diagnoses scope, default depth, and source generation', async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-doctor-test-'));
   try {
     const source = path.join(temporary, 'source');
@@ -73,7 +68,6 @@ test('doctor is read-only and diagnoses scope, default depth, source generation,
     const install = spawnSync('sh', [
       path.join(source, 'install.sh'),
       '--apply',
-      '--with-dashboard',
     ], {
       cwd: source,
       env: { ...process.env, HOME: home },
@@ -101,10 +95,8 @@ test('doctor is read-only and diagnoses scope, default depth, source generation,
     assert.equal(globalScope.installMode, 'symlink');
     assert.equal(globalScope.assets.installed.healthy, globalScope.assets.total);
     assert.equal(globalScope.assets.source.matched, globalScope.assets.total);
-    assert.equal(globalScope.routing.status, 'default');
-    assert.equal(globalScope.runtime.schedulerMode, 'off');
-    assert.equal(globalScope.dashboard.installed, true);
-    assert.equal(globalScope.dashboard.registered, true);
+    assert.equal(globalScope.runtime.status, 'default');
+    assert.equal(globalScope.runtime.workspaceMode, 'auto');
     assert.equal(JSON.stringify(report).includes(temporary), false);
     assert.equal(await readFile(manifestPath, 'utf8'), manifestBefore);
 
@@ -113,18 +105,18 @@ test('doctor is read-only and diagnoses scope, default depth, source generation,
     assert.equal(report.depth.effective, 4);
     assert.equal(report.depth.source, 'project:opencode.jsonc');
 
-    const sourcePlugin = path.join(source, 'plugins', 'naru-delegate.js');
-    const originalPlugin = await readFile(sourcePlugin);
-    await appendFile(sourcePlugin, '\n// newer source generation\n');
+    const sourceAsset = path.join(source, 'tools', 'naru-git-read.js');
+    const originalAsset = await readFile(sourceAsset);
+    await appendFile(sourceAsset, '\n// newer source generation\n');
     report = runDoctor(doctor, { home, project, source });
     assert.ok(report.issues.some(issue => issue.code === 'copy-pinned-assets-stale'));
     assert.ok(report.issues.some(issue => issue.code === 'mixed-generation-install'));
-    await writeFile(sourcePlugin, originalPlugin);
+    await writeFile(sourceAsset, originalAsset);
 
-    await appendFile(path.join(target, 'plugins', 'naru-delegate.js'), '\n// local modification\n');
+    await appendFile(path.join(target, 'tools', 'naru-git-read.js'), '\n// local modification\n');
     report = runDoctor(doctor, { home, project, source });
     assert.ok(report.issues.some(issue => issue.code === 'managed-assets-modified'));
-    assert.ok(report.scopes.find(scope => scope.id === 'global').issuePaths.includes('plugins/naru-delegate.js'));
+    assert.ok(report.scopes.find(scope => scope.id === 'global').issuePaths.includes('tools/naru-git-read.js'));
 
     await writeFile(manifestPath, '{ invalid\n');
     report = runDoctor(doctor, { home, project, source });

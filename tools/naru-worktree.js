@@ -3,7 +3,7 @@ import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { errEnvelope, okEnvelope } from './naru-lib/output.mjs';
 import { cleanupWorktreeRun, createWorktreeRun, createWriterWorktree, finalizeWorktreeRun, integrateWriterWorktree, recoverWorktreeRun, worktreeRunSnapshot, } from './naru-lib/worktree.mjs';
-import { loadRuntimeConfigFile, parseRuntimeConfig } from './naru-lib/scheduler-config.mjs';
+import { loadRuntimeConfigFile, parseRuntimeConfig } from './naru-lib/runtime-config.mjs';
 const TOOL_ID = 'naru-worktree';
 const DEFAULT_CONFIG_PATH = fileURLToPath(new URL('../naru-runtime.json', import.meta.url));
 const OPERATIONS = Object.freeze([

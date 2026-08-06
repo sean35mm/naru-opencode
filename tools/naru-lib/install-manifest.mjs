@@ -65,6 +65,22 @@ export const RETIRED_MANAGED_PATHS = new Set([
     'agents/naru-review-tests-ci.md',
     'agents/naru-review-judge.md',
     'agents/naru-review-post.md',
+    // Retired with the v-next simplification: seven minions collapsed into
+    // reader/runner/writer, and the plugin runtime was removed entirely.
+    'agents/naru-minion-scout.md',
+    'agents/naru-minion-investigate.md',
+    'agents/naru-minion-architect.md',
+    'agents/naru-minion-implement.md',
+    'agents/naru-minion-debug.md',
+    'agents/naru-minion-verify.md',
+    'agents/naru-minion-judge.md',
+    'plugins/naru-delegate.js',
+    'plugins/naru-scheduler.js',
+    'plugins/naru-minions-dashboard.tsx',
+    'plugins/naru-minions-dashboard-state.mjs',
+    'tools/naru-scheduler.js',
+    'scripts/naru-live-eval.mjs',
+    'scripts/live-evals.example.json',
 ]);
 function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);

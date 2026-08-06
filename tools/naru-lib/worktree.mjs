@@ -3,8 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
-import { isSchedulerId, isSafeScope } from './scheduler-protocol.mjs';
-import { scopeCoversPath } from './scheduler-state.mjs';
+import { isRunId, isSafeScope, scopeCoversPath } from './validate.mjs';
 import { run } from './transport.mjs';
 const MAX_WRITERS = 50;
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -52,7 +51,7 @@ async function withRunLock(runId, operation) {
     }
 }
 function safeId(value, label) {
-    if (!isSchedulerId(value))
+    if (!isRunId(value))
         throw new Error(`${label} is not a safe identifier`);
     return value;
 }

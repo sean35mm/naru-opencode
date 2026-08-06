@@ -13,7 +13,15 @@ import { postReview, validateReviewPayload } from '../tools/naru-lib/review.mjs'
 import gitReadTool from '../tools/naru-git-read.js';
 import githubReadTool from '../tools/naru-github-read.js';
 import githubPostReviewTool from '../tools/naru-github-post-review.js';
-import { LEGACY_DEEP_ALIASES, MANAGED_ROUTING_ALIASES, NARU_AGENT_IDS } from '../tools/naru-lib/model-routing.mjs';
+const NON_POSTING_AGENTS = Object.freeze([
+  'naru-reader',
+  'naru-runner',
+  'naru-writer',
+  'naru-reader-sol',
+  'naru-writer-sol',
+  'naru-minion-implement',
+  'naru-minion-judge',
+]);
 
 const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -279,9 +287,7 @@ test('post tool accepts only the orchestrator identity and rejects all others be
     undefined,
     'other',
     'naru-review-post',
-    ...NARU_AGENT_IDS.filter((agent) => agent !== 'naru-orchestrator'),
-    ...MANAGED_ROUTING_ALIASES,
-    ...LEGACY_DEEP_ALIASES,
+    ...NON_POSTING_AGENTS,
   ];
   for (const agent of denied) {
     let ioCalls = 0;

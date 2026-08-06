@@ -229,3 +229,57 @@ export function guardInputSize(obj, max = MAX_REASONABLE_SIZE) {
         throw new Error('input too large');
     }
 }
+// Ownership-scope helpers. Used by the worktree lifecycle to validate run
+// identifiers and to test whether an owned scope covers a changed path.
+const MAX_ID_LENGTH = 128;
+function isTrimmedString(value, maximum) {
+    return (typeof value === 'string'
+        && value.length > 0
+        && value.length <= maximum
+        && value.trim() === value
+        && !hasControl(value));
+}
+export function isRunId(value) {
+    return (isTrimmedString(value, MAX_ID_LENGTH)
+        && /^[A-Za-z0-9](?:[A-Za-z0-9._:-]*[A-Za-z0-9])?$/.test(value));
+}
+export function isSafeScope(value, { allowGlob = true } = {}) {
+    if (!isTrimmedString(value, 1024) || value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value))
+        return false;
+    const normalized = value.replaceAll('\\', '/');
+    if (/[{}[\]]/.test(normalized) || (!allowGlob && /[*?]/.test(normalized)))
+        return false;
+    const parts = normalized.split('/');
+    if (parts.some((part) => part === '' || part === '.' || part === '..'))
+        return false;
+    return !parts.some((part) => /^(?:\.env(?:\..*)?|\.git|\.ssh|\.aws|\.kube|\.gnupg)$/i.test(part));
+}
+function wildcardRegex(pattern) {
+    let source = '';
+    for (let index = 0; index < pattern.length; index += 1) {
+        const character = pattern[index];
+        if (character === undefined)
+            continue;
+        if (character === '*' && pattern[index + 1] === '*') {
+            source += '.*';
+            index += 1;
+        }
+        else if (character === '*') {
+            source += '[^/]*';
+        }
+        else if (character === '?') {
+            source += '[^/]';
+        }
+        else {
+            source += character.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+    }
+    return new RegExp(`^${source}$`);
+}
+export function scopeCoversPath(scope, path) {
+    if (scope === path)
+        return true;
+    if (!/[*?{[]/.test(scope))
+        return false;
+    return wildcardRegex(scope).test(path);
+}

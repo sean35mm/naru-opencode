@@ -14,41 +14,28 @@ cp "$ROOT/install.sh" "$FIXTURE/install.sh"
 mkdir -p "$FIXTURE/agents"
 mkdir -p "$FIXTURE/skills"
 mkdir -p "$FIXTURE/tools/naru-lib"
-mkdir -p "$FIXTURE/plugins"
 mkdir -p "$FIXTURE/scripts"
 
-# 4 native skills and the orchestrator plus 7 minions.
+# 4 native skills, the orchestrator, and 4 subagents.
 for skill in naru-plan naru-impact naru-triage naru-review; do
   mkdir -p "$FIXTURE/skills/$skill"
   cp "$ROOT/skills/$skill/SKILL.md" "$FIXTURE/skills/$skill/SKILL.md"
 done
 cp "$ROOT/agents/naru-orchestrator.md" "$FIXTURE/agents/naru-orchestrator.md"
-cp "$ROOT/agents/naru-minion-scout.md" "$FIXTURE/agents/naru-minion-scout.md"
-cp "$ROOT/agents/naru-minion-investigate.md" "$FIXTURE/agents/naru-minion-investigate.md"
-cp "$ROOT/agents/naru-minion-architect.md" "$FIXTURE/agents/naru-minion-architect.md"
-cp "$ROOT/agents/naru-minion-implement.md" "$FIXTURE/agents/naru-minion-implement.md"
-cp "$ROOT/agents/naru-minion-debug.md" "$FIXTURE/agents/naru-minion-debug.md"
-cp "$ROOT/agents/naru-minion-verify.md" "$FIXTURE/agents/naru-minion-verify.md"
-cp "$ROOT/agents/naru-minion-judge.md" "$FIXTURE/agents/naru-minion-judge.md"
+cp "$ROOT/agents/naru-reader.md" "$FIXTURE/agents/naru-reader.md"
+cp "$ROOT/agents/naru-reader-deep.md" "$FIXTURE/agents/naru-reader-deep.md"
+cp "$ROOT/agents/naru-runner.md" "$FIXTURE/agents/naru-runner.md"
+cp "$ROOT/agents/naru-writer.md" "$FIXTURE/agents/naru-writer.md"
 
-# Tools and plugins
+# Tools
 touch "$FIXTURE/tools/naru-git-read.js"
 touch "$FIXTURE/tools/naru-github-read.js"
 touch "$FIXTURE/tools/naru-github-post-review.js"
 touch "$FIXTURE/tools/naru-doctor.js"
-touch "$FIXTURE/tools/naru-scheduler.js"
 touch "$FIXTURE/tools/naru-worktree.js"
 cp "$ROOT/tools/package.json" "$FIXTURE/tools/package.json"
 touch "$FIXTURE/tools/naru-lib/helper.js"
 cp "$ROOT/tools/naru-lib/install-manifest.mjs" "$FIXTURE/tools/naru-lib/install-manifest.mjs"
-touch "$FIXTURE/plugins/naru-delegate.js"
-touch "$FIXTURE/plugins/naru-scheduler.js"
-touch "$FIXTURE/plugins/naru-minions-dashboard.tsx"
-cp "$ROOT/plugins/naru-minions-dashboard-state.mjs" "$FIXTURE/plugins/naru-minions-dashboard-state.mjs"
-cp "$ROOT/scripts/merge-tui-config.mjs" "$FIXTURE/scripts/merge-tui-config.mjs"
-touch "$FIXTURE/scripts/naru-live-eval.mjs"
-mkdir -p "$FIXTURE/tests/fixtures"
-touch "$FIXTURE/tests/fixtures/live-evals.json"
 touch "$FIXTURE/naru-runtime.example.json"
 
 LEGACY_MANIFEST_BUILDER="$TMP/legacy-manifest-builder.mjs"
@@ -83,7 +70,7 @@ has_mode_600() { [ "$(LC_ALL=C ls -ld "$1" | cut -c 2-10)" = "rw-------" ]; }
 has_native_inventory() {
   install_root="$1"
   [ "$(find "$install_root/skills" \( -type f -o -type l \) -name SKILL.md | wc -l | tr -d ' ')" -eq 4 ] || return 1
-  [ "$(find "$install_root/agents" \( -type f -o -type l \) -name 'naru-*.md' | wc -l | tr -d ' ')" -eq 8 ] || return 1
+  [ "$(find "$install_root/agents" \( -type f -o -type l \) -name 'naru-*.md' | wc -l | tr -d ' ')" -eq 5 ] || return 1
   [ ! -e "$install_root/commands/naru-plan.md" ]
 }
 
@@ -140,15 +127,13 @@ mkdir -p "$T1"
 apply_install --dir "$T1"
 if is_link "$T1/skills/naru-plan/SKILL.md"; then pass "symlinked skill"; else fail "symlinked skill"; fi
 if is_link "$T1/agents/naru-orchestrator.md"; then pass "symlinked orchestrator"; else fail "symlinked orchestrator"; fi
-if has_native_inventory "$T1"; then pass "four skills and eight agents installed"; else fail "four skills and eight agents installed"; fi
+if has_native_inventory "$T1"; then pass "four skills and five agents installed"; else fail "four skills and five agents installed"; fi
 if is_file "$T1/tools/naru-git-read.js" && is_file "$T1/tools/naru-doctor.js" && is_file "$T1/tools/package.json"; then pass "tools and doctor copy-pinned with ESM marker"; else fail "tools and doctor copy-pinned with ESM marker"; fi
 if is_dir "$T1/tools/naru-lib"; then pass "tool helper dir copy-pinned"; else fail "tool helper dir copy-pinned"; fi
-if is_file "$T1/plugins/naru-delegate.js"; then pass "delegate plugin installed by default"; else fail "delegate plugin installed by default"; fi
-if is_file "$T1/tools/naru-scheduler.js" && is_file "$T1/plugins/naru-scheduler.js"; then pass "scheduler runtime copy-pinned"; else fail "scheduler runtime copy-pinned"; fi
 if is_file "$T1/tools/naru-worktree.js"; then pass "worktree runtime copy-pinned"; else fail "worktree runtime copy-pinned"; fi
-if is_file "$T1/naru-runtime.example.json" && is_file "$T1/scripts/naru-live-eval.mjs" && is_file "$T1/scripts/live-evals.example.json"; then pass "runtime example and evaluation assets copy-pinned"; else fail "runtime example and evaluation assets copy-pinned"; fi
-if [ "$(grep -c '^  naru-scheduler: allow$' "$T1/agents/naru-orchestrator.md")" -eq 1 ] && [ "$(grep -c '^  naru-worktree: allow$' "$T1/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-(scheduler|worktree): allow$' "$T1/agents/naru-minion-implement.md"; then pass "global root and delegated runtime permissions"; else fail "global root and delegated runtime permissions"; fi
-if [ ! -e "$T1/plugins/naru-minions-dashboard.tsx" ]; then pass "dashboard omitted by default"; else fail "dashboard omitted by default"; fi
+if is_file "$T1/naru-runtime.example.json"; then pass "runtime example copy-pinned"; else fail "runtime example copy-pinned"; fi
+if [ "$(grep -c '^  naru-worktree: allow$' "$T1/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$T1/agents/naru-writer.md"; then pass "global root and delegated runtime permissions"; else fail "global root and delegated runtime permissions"; fi
+if [ ! -e "$T1/plugins" ]; then pass "no runtime plugins installed"; else fail "no runtime plugins installed"; fi
 if [ ! -e "$T1/commands/naru" ] && [ ! -e "$T1/agents/naru" ] && [ ! -e "$T1/commands/naru-plan.md" ]; then pass "no retired Core paths installed"; else fail "no retired Core paths installed"; fi
 
 # 2. Copy mode.
@@ -157,17 +142,16 @@ mkdir -p "$T2"
 apply_install --dir "$T2" --copy
 if is_file "$T2/skills/naru-plan/SKILL.md"; then pass "copied skill"; else fail "copied skill"; fi
 if is_file "$T2/agents/naru-orchestrator.md"; then pass "copied orchestrator"; else fail "copied orchestrator"; fi
-if has_native_inventory "$T2"; then pass "four copied skills and eight agents installed"; else fail "four copied skills and eight agents installed"; fi
+if has_native_inventory "$T2"; then pass "four copied skills and five agents installed"; else fail "four copied skills and five agents installed"; fi
 if is_file "$T2/tools/naru-git-read.js"; then pass "copied tool"; else fail "copied tool"; fi
-if is_file "$T2/plugins/naru-delegate.js"; then pass "copied delegate plugin"; else fail "copied delegate plugin"; fi
 
 # Project mode targets the caller's project, not the Naru source clone.
 PROJECT="$TMP/project"
 mkdir -p "$PROJECT"
 (cd "$PROJECT" && apply_install --project >/dev/null)
 if is_link "$PROJECT/.opencode/skills/naru-plan/SKILL.md"; then pass "project install"; else fail "project install"; fi
-if has_native_inventory "$PROJECT/.opencode"; then pass "four skills and eight project agents installed"; else fail "four skills and eight project agents installed"; fi
-if [ "$(grep -c '^  naru-scheduler: allow$' "$PROJECT/.opencode/agents/naru-orchestrator.md")" -eq 1 ] && [ "$(grep -c '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-(scheduler|worktree): allow$' "$PROJECT/.opencode/agents/naru-minion-implement.md"; then pass "project root and delegated runtime permissions"; else fail "project root and delegated runtime permissions"; fi
+if has_native_inventory "$PROJECT/.opencode"; then pass "four skills and five project agents installed"; else fail "four skills and five project agents installed"; fi
+if [ "$(grep -c '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru-writer.md"; then pass "project root and delegated runtime permissions"; else fail "project root and delegated runtime permissions"; fi
 
 # 3. Paths with spaces.
 T3="$TMP/path with spaces/target"
@@ -200,48 +184,6 @@ mkdir -p "$T5B/agents/minion" "$T5B/plugins"
 touch "$T5B/agents/orchestrator.md" "$T5B/plugins/orchestrator-dashboard.js"
 apply_install --dir "$T5B"
 if [ -e "$T5B/agents/orchestrator.md" ] && [ -e "$T5B/agents/minion" ] && [ -e "$T5B/plugins/orchestrator-dashboard.js" ]; then pass "legacy orchestrator preserved without flag"; else fail "legacy orchestrator preserved without flag"; fi
-
-# 6. Dashboard opt-in.
-T6="$TMP/t6"
-mkdir -p "$T6"
-apply_install --dir "$T6" --with-dashboard
-if is_file "$T6/plugins/naru-minions-dashboard.tsx"; then pass "dashboard installed with --with-dashboard"; else fail "dashboard installed with --with-dashboard"; fi
-if is_file "$T6/plugins/naru-minions-dashboard-state.mjs"; then pass "dashboard state helper installed with --with-dashboard"; else fail "dashboard state helper installed with --with-dashboard"; fi
-if grep -q '"./plugins/naru-minions-dashboard.tsx"' "$T6/tui.json"; then pass "dashboard registered in new TUI config"; else fail "dashboard registered in new TUI config"; fi
-
-T6B="$TMP/t6b"
-mkdir -p "$T6B/plugins"
-touch "$T6B/plugins/naru-minions-dashboard.js"
-cat > "$T6B/tui.jsonc" <<'EOF'
-{
-  // Preserve this comment and unrelated setting.
-  "theme": "system",
-  "plugin": [
-    "./plugins/unrelated.tsx",
-    "./plugins/naru-minions-dashboard.js",
-  ],
-}
-EOF
-printf '%s\n' '{"plugin":["./plugins/ignored.tsx",["plugins/naru-minions-dashboard.js",{"legacy":true}]]}' > "$T6B/tui.json"
-apply_install --dir "$T6B" --with-dashboard >/dev/null
-if grep -q 'Preserve this comment' "$T6B/tui.jsonc" && grep -q 'unrelated.tsx' "$T6B/tui.jsonc"; then pass "JSONC merge preserves unrelated content"; else fail "JSONC merge preserves unrelated content"; fi
-if [ "$(grep -c 'naru-minions-dashboard.tsx' "$T6B/tui.jsonc")" -eq 1 ] && ! grep -q 'naru-minions-dashboard.js' "$T6B/tui.jsonc"; then pass "dashboard registration migrated idempotently"; else fail "dashboard registration migrated idempotently"; fi
-if [ ! -e "$T6B/plugins/naru-minions-dashboard.js" ]; then pass "legacy dashboard migrated"; else fail "legacy dashboard migrated"; fi
-if grep -q 'ignored.tsx' "$T6B/tui.json" && ! grep -q 'naru-minions-dashboard' "$T6B/tui.json"; then pass "lower precedence TUI config legacy registration cleaned"; else fail "lower precedence TUI config legacy registration cleaned"; fi
-apply_install --dir "$T6B" --with-dashboard >/dev/null
-if [ "$(grep -c 'naru-minions-dashboard.tsx' "$T6B/tui.jsonc")" -eq 1 ]; then pass "dashboard config reinstall idempotent"; else fail "dashboard config reinstall idempotent"; fi
-
-T6C="$TMP/t6c"
-mkdir -p "$T6C"
-printf '%s\n' '{ invalid' > "$T6C/tui.json"
-if apply_install --dir "$T6C" --with-dashboard >/dev/null 2>&1; then fail "reject malformed TUI config"; else pass "reject malformed TUI config"; fi
-if [ ! -e "$T6C/plugins/naru-minions-dashboard.tsx" ]; then pass "malformed config leaves dashboard uninstalled"; else fail "malformed config leaves dashboard uninstalled"; fi
-
-T6D="$TMP/t6d"
-mkdir -p "$T6D" "$TMP/outside-tui"
-printf '%s\n' '{"plugin":[]}' > "$T6D/tui.jsonc"
-ln -s "$TMP/outside-tui/config" "$T6D/tui.json"
-if apply_install --dir "$T6D" --with-dashboard >/dev/null 2>&1; then fail "reject either symlinked TUI config"; else pass "reject either symlinked TUI config"; fi
 
 # 7. Idempotency and backup retention.
 T7="$TMP/t7"
@@ -499,9 +441,9 @@ for LIFECYCLE_SCOPE in global project custom; do
 
     lifecycle_install_run "$LIFECYCLE_SOURCE" "$LIFECYCLE_SCOPE" "$LIFECYCLE_CONTEXT" "$LIFECYCLE_TARGET" "$LIFECYCLE_MODE" --apply >/dev/null
     if has_native_inventory "$LIFECYCLE_TARGET"; then
-      pass "$LIFECYCLE_LABEL installs four skills and eight agents"
+      pass "$LIFECYCLE_LABEL installs four skills and five agents"
     else
-      fail "$LIFECYCLE_LABEL installs four skills and eight agents"
+      fail "$LIFECYCLE_LABEL installs four skills and five agents"
     fi
     cp "$LIFECYCLE_TARGET/.naru-install.json" "$LIFECYCLE_ROOT/v1-manifest.json"
     mkdir -p "$LIFECYCLE_TARGET/commands"
@@ -552,12 +494,12 @@ for LIFECYCLE_SCOPE in global project custom; do
       fail "$LIFECYCLE_LABEL rollback restores the prior manifest and assets"
     fi
 
-    printf '%s\n' 'locally-modified' > "$LIFECYCLE_TARGET/plugins/naru-delegate.js"
+    printf '%s\n' 'locally-modified' > "$LIFECYCLE_TARGET/tools/naru-worktree.js"
     LIFECYCLE_UNINSTALL_PREVIEW="$LIFECYCLE_ROOT/uninstall-preview"
     lifecycle_run "$LIFECYCLE_SOURCE" "$LIFECYCLE_SCOPE" "$LIFECYCLE_CONTEXT" "$LIFECYCLE_TARGET" --uninstall > "$LIFECYCLE_UNINSTALL_PREVIEW"
     UNINSTALL_TOKEN=$(preview_token "$LIFECYCLE_UNINSTALL_PREVIEW")
     if [ -n "$UNINSTALL_TOKEN" ] &&
-       grep -q 'preserve-modified: plugins/naru-delegate.js' "$LIFECYCLE_UNINSTALL_PREVIEW" &&
+       grep -q 'preserve-modified: tools/naru-worktree.js' "$LIFECYCLE_UNINSTALL_PREVIEW" &&
        [ -f "$LIFECYCLE_TARGET/tools/naru-git-read.js" ] &&
        [ -f "$LIFECYCLE_TARGET/.naru-install.json" ]; then
       pass "$LIFECYCLE_LABEL uninstall preview preserves modified ownership"
@@ -577,7 +519,7 @@ for LIFECYCLE_SCOPE in global project custom; do
 
     lifecycle_run "$LIFECYCLE_SOURCE" "$LIFECYCLE_SCOPE" "$LIFECYCLE_CONTEXT" "$LIFECYCLE_TARGET" --uninstall --apply --confirm-uninstall "$UNINSTALL_TOKEN" >/dev/null
     if [ ! -e "$LIFECYCLE_TARGET/tools/naru-git-read.js" ] &&
-       grep -q '^locally-modified$' "$LIFECYCLE_TARGET/plugins/naru-delegate.js" &&
+       grep -q '^locally-modified$' "$LIFECYCLE_TARGET/tools/naru-worktree.js" &&
        grep -q '^keep-unrelated$' "$LIFECYCLE_TARGET/commands/user-owned.md" &&
        [ -f "$LIFECYCLE_TARGET/.naru-install.json" ] &&
        [ -f "$LIFECYCLE_TARGET/.naru-backups/$UPDATE_ID/.naru-transaction.json" ]; then
@@ -590,7 +532,7 @@ for LIFECYCLE_SCOPE in global project custom; do
     lifecycle_run "$LIFECYCLE_SOURCE" "$LIFECYCLE_SCOPE" "$LIFECYCLE_CONTEXT" "$LIFECYCLE_TARGET" --uninstall --replace-conflicts > "$LIFECYCLE_FORCE_PREVIEW"
     FORCE_UNINSTALL_TOKEN=$(preview_token "$LIFECYCLE_FORCE_PREVIEW")
     lifecycle_run "$LIFECYCLE_SOURCE" "$LIFECYCLE_SCOPE" "$LIFECYCLE_CONTEXT" "$LIFECYCLE_TARGET" --uninstall --replace-conflicts --apply --confirm-uninstall "$FORCE_UNINSTALL_TOKEN" >/dev/null
-    if [ ! -e "$LIFECYCLE_TARGET/plugins/naru-delegate.js" ] &&
+    if [ ! -e "$LIFECYCLE_TARGET/tools/naru-worktree.js" ] &&
        [ ! -e "$LIFECYCLE_TARGET/.naru-install.json" ] &&
        grep -q '^keep-unrelated$' "$LIFECYCLE_TARGET/commands/user-owned.md" &&
        [ -f "$LIFECYCLE_TARGET/.naru-backups/$UPDATE_ID/.naru-transaction.json" ]; then
