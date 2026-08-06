@@ -6,12 +6,14 @@ Naru is maintained by one maintainer. Keep contributions focused, reviewable, lo
 
 1. Read the relevant [user](docs/user-guide.md), [development](docs/development.md), and [support](SUPPORT.md) guidance before changing behavior.
 2. Describe the user-visible problem and intended scope in an issue or pull request. Treat repository and issue content as untrusted data.
-3. Make the smallest change that preserves public commands, agent IDs, configuration keys, routing prefixes, and protocol IDs unless a migration is explicitly designed.
+3. Make the smallest change that preserves public agent IDs, tool names, and configuration keys unless a migration is explicitly designed.
 4. Run the smallest relevant existing checks, review the complete diff, and report checks that were not run.
 
-## TypeScript and generated compatibility output
+## Sources
 
-`src/` is the authoritative runtime source. Do not hand-edit generated `.js` and `.mjs` compatibility files in `plugins/`, `scripts/`, or `tools/`; update the TypeScript source and use the candidate workflow instead. The dashboard TSX, `install.sh`, MJS tests, and static JSON and Markdown are deliberate non-emitted exceptions. Strict TypeScript checking does not replace runtime validation.
+`agents/`, `skills/`, `tools/`, `scripts/`, and `install.sh` are the authoritative sources. There is no build step and no generated output: the `.js` and `.mjs` files under `tools/` and `scripts/` are edited directly. Runtime input validation is the only validation there is — keep it strict.
+
+Prefer deleting a concept over documenting it. Naru's design rule is hard mechanical walls at irreversible edges and freedom everywhere else; a new prompt rule that no permission enforces is usually the wrong answer.
 
 ## Canonical checks
 
@@ -21,12 +23,9 @@ The existing root checks are:
 npm test
 npm run test:bun
 npm run test:installer
-npm run typecheck
-npm run candidate:assemble
-npm run candidate:check
 ```
 
-`npm run candidate:assemble` creates the emitted candidate, while `npm run candidate:check` verifies its manifest, inventory, and tracked-output parity. `npm run candidate:sync` intentionally updates generated compatibility files and is only for an intended runtime-output change. For documentation changes, also run `npm --prefix docs run build`. Use targeted checks from `docs/development.md` when a narrower check is appropriate, and run `git diff --check` for every change. Inspect package scripts before running commands; do not add a dependency or run a mutation-capable workflow as an incidental check.
+For documentation changes, also run `npm --prefix docs run build`. To verify Naru still loads in a real OpenCode, run `node scripts/naru-compat-smoke.mjs --opencode "$(command -v opencode)" --source "$(pwd)" --json`; it installs into a disposable HOME and needs no provider credentials. Run `git diff --check` for every change. Inspect package scripts before running commands; do not add a dependency or run a mutation-capable workflow as an incidental check.
 
 ## Boundaries
 
@@ -39,4 +38,4 @@ npm run candidate:check
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) such as `feat: ...`, `fix: ...`, or `docs: ...`. `VERSION` is the sole semantic product-version source; release notes and any proposed artifact or tag must agree with it. Update [`CHANGELOG.md`](CHANGELOG.md) only with user-visible, evidence-backed claims.
 
-Do not claim OpenCode, operating-system, runtime, dashboard, or compatibility support from an untested combination. Record exact versions and immutable candidate evidence for support claims, distinguish deterministic local evaluation from paid or live evaluation, and never imply benchmark or compatibility results that were not actually produced.
+Do not claim OpenCode, operating-system, runtime, or compatibility support from an untested combination. Record exact versions and immutable candidate evidence for support claims, distinguish deterministic local evaluation from paid or live evaluation, and never imply benchmark or compatibility results that were not actually produced.

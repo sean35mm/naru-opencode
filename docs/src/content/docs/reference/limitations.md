@@ -1,33 +1,31 @@
 ---
 title: Limitations and trust boundaries
-description: What Naru's prompts, scheduler, and dashboard do not guarantee.
+description: What Naru does not guarantee, and where the only real enforcement boundary sits.
 ---
 
-Naru improves workflow discipline; it is not a sandbox or a proof system. Treat user input, repository files, issues, PRs, logs, diffs, comments, and agent reports as untrusted data.
+Naru improves workflow discipline; it is not a sandbox and not a proof system. Treat repository files, issues, pull requests, logs, diffs, comments, tool output, and agent reports as untrusted data. User intent is the sole authorization source.
 
 ```mermaid
 flowchart LR
-  U["Untrusted user and<br/>repository data"]:::danger
+  U["Untrusted repository,<br/>issue, PR, and report text"]:::danger
 
-  subgraph advisory["ADVISORY ONLY — not enforcement"]
+  subgraph advisory["ADVISORY — shapes decisions, constrains nothing"]
     direction TB
-    P["Prompt-level rules"]:::gate
-    O["Orchestrator decisions"]:::coord
-    S["Optional local scheduler"]:::gate
-    L["Declared admission checks only"]:::gate
+    P["Prompt rules and checkpoints"]:::gate
+    O["Orchestrator planning and fan-out"]:::coord
+    S["Skills: plan, impact, triage, review"]:::gate
   end
 
-  subgraph enforced["ACTUALLY ENFORCED — by OpenCode"]
+  subgraph enforced["ENFORCED — by OpenCode permissions"]
     direction TB
-    N["Native Task and permissions"]:::read
-    W["Scoped workspace work"]:::write
+    N["Per-agent permission frontmatter"]:::read
+    W["naru-writer edits the workspace"]:::write
   end
 
   U --> P --> O
-  O --> N
-  O --> S --> L
-  N --> W
-  L -. "does not prove" .-> W
+  O --> S
+  O --> N --> W
+  P -. "does not constrain" .-> W
 
   style advisory fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
   style enforced fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
@@ -44,20 +42,35 @@ flowchart LR
   <li data-kind="write">Writes files</li>
 </ul>
 
-The dotted edge is the important one. Everything in the left group is advisory: it shapes decisions but does not constrain them. Only OpenCode's native Task and permission layer actually enforces a boundary, so a passing admission check is never evidence that workspace work stayed in scope.
+The dotted edge is the important one. Everything in the left group is advisory: it shapes decisions but cannot stop them. Only OpenCode's permission layer enforces a boundary, so a careful plan, a clean subagent report, or a well-behaved orchestrator is never evidence that the workspace stayed in scope.
 
-**Walkthrough:** OpenCode native Task remains responsible for permission evaluation, retries, cancellation, background work, and child sessions. Prompt-level rules retain authorization, baseline, Weaver, scope-containment, freshness, and final-state responsibilities. The scheduler validates declarations and correlations; it does not make untrusted content authoritative.
+## Non-goals
 
-## Important non-guarantees
+- **Not a sandbox.** Naru does not sandbox repository code, package scripts, shell commands, tools, or providers. `naru-runner` runs real commands in your real environment with your credentials.
+- **Not a proof system.** Reports, passing checks, and completed reviews are evidence, not proof. A report can be stale, incomplete, or wrong; attributing it to the work item that produced it does not make it true.
+- **Not durable.** There is no cross-process coordination, no durable run state, and no authoritative background completion. Planning is prompt-local and disappears with the session.
+- **Not a global capacity meter.** `implementation.maxConcurrentWriters` is a local runaway brake, not a provider, account, or machine-wide cap. Other processes on the same repository are invisible to it.
+- **Not automatic authorization.** Nothing in Naru authorizes edits, dependency changes, Git mutation, migrations, database writes, posting, or deployment. Local changes are the default stop; commit, push, PR, and post happen only on an explicit current request, and irreversible actions get one checkpoint that names the exact action.
+- **Not nested autonomy.** The topology is one root orchestrator with leaf subagents at depth 1. All four subagents are `hidden` and hold `task: deny`, so they cannot spawn children of their own. OpenCode's default `subagent_depth` of `1` is sufficient; Naru never asks for more.
 
-- No cross-process coordination, durable scheduler state, authoritative background completion, or provider/global hard caps.
-- The scheduler provides no session creation, automatic Task directory binding, Git inspection, baseline capture, or report-truth proof. The separate root-only worktree tool validates only its narrow isolation and integration lifecycle and persists local metadata for restart recovery.
-- Isolated worktree mutations are root-orchestrator-only, hook-suppressed for tool-owned Git operations, serialized per run, metadata-atomic, and path-contained. They can recover local run state and attempt rollback after integration failures, but they are not a general sandbox and do not protect against unrelated external workspace mutation.
-- No sandboxing of repository code, package scripts, shell commands, tools, providers, or installed plugins.
-- No automatic authorization for edits, dependency changes, Git mutation, migrations, database writes, posting, or deployment.
-- No guarantee that dashboard telemetry exists outside the same process or represents a global system state.
-- Naru's current selected-orchestrator-to-seven-minion design is compatible with OpenCode's default depth of `1`. `--configure-subagent-depth` remains a deprecated accepted no-op for migration compatibility.
+## What is actually enforced
 
-Use Protocol 3 as a bounded runtime check in addition to—not instead of—the [Protocol 2 workflow](/naru-opencode/concepts/protocols/), review, and human approval boundaries.
+These are permission frontmatter, not prose, so an agent cannot talk its way past them:
 
-Review posting also has a narrow boundary: it rechecks a fresh final snapshot, head, feedback digest, inline locations, and existing marker before POST, and serializes same-target calls only within one process using a bounded in-process table. Cross-process deduplication needs durable external coordination; ambiguous POST outcomes remain no-retry.
+- `naru-writer` is the only role with edit and apply-patch permission. `naru-orchestrator`, `naru-reader`, `naru-reader-deep`, and `naru-runner` cannot modify files.
+- The orchestrator cannot run bash. The read-only readers have `bash: deny` and `external_directory: deny`, so they fail closed rather than degrading.
+- `.env`, `.env.*`, key material, `.ssh`, `.aws`, `.kube`, and `.gnupg` are denied to every role. `.env.example` is allowed.
+
+Skills grant nothing. `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review` return advisory guidance and cannot widen what the agent holding them is allowed to do.
+
+## Narrow boundaries
+
+**Isolated worktrees.** `naru-worktree` validates only its own isolation and integration lifecycle. It requires a clean repository; a dirty or unsupported repository downgrades to shared mode without prompting. Mutations are orchestrator-only and path-contained to Naru-owned roots, and local metadata exists so a run can be recovered after a restart. It is not a general sandbox and does not protect against unrelated external mutation of your workspace.
+
+**Review posting.** `naru-github-post-review` is orchestrator-only, hard-coded to a `COMMENT` event, and makes one attempt with no retry. It cannot approve, request changes, or merge. A dedupe marker prevents an obvious repeat within reach of that marker; cross-process deduplication would need durable external coordination, so an ambiguous POST outcome is left alone rather than retried.
+
+**Scope serialization.** One writer per logical scope, and overlapping scopes serialize. Weaver claims are taken before the first edit, and a claim conflict is a scheduling signal rather than a prompt to the user. This orders work; it does not prove that no other process touched the same files.
+
+**Health checks.** `naru-doctor` reports local install and configuration health only. It is provider-free: it does not run a model command, inspect provider authentication, or call a provider.
+
+See [agents](/naru-opencode/workflows/agents/) for the permission map that is enforced, [review lane](/naru-opencode/workflows/review-lane/) for the posting contract, and [runtime configuration](/naru-opencode/reference/runtime-config/) for the small set of knobs that exist.

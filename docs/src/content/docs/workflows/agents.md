@@ -1,13 +1,105 @@
 ---
 title: Agent workflows
-description: Use Naru's four native skills and safely expose them to a custom agent.
+description: The five Naru agents, their exact permissions, and when the orchestrator picks each.
 ---
 
-Naru exposes four native skills for planning, impact analysis, triage, and dry-run review. Ask naturally or select a skill explicitly. For implementation, a user selects `naru-orchestrator`; custom agents must not delegate to it, minions, or generated model aliases.
+Naru installs five OpenCode agents: one visible primary orchestrator and four hidden subagents. The orchestrator plans and delegates; it cannot edit files or run commands. Exactly one subagent — `naru-writer` — can change your workspace.
 
-## The four skills
+The topology is flat. The orchestrator is the only root, the four subagents are leaves, and every subagent has `task: deny`, so nothing can spawn grandchildren. `subagent_depth` of `1` is enough; OpenCode's default is fine.
 
-Each skill maps to one kind of request. All four return guidance and nothing else.
+```mermaid
+flowchart TB
+  ORC{{"naru-orchestrator — plans, never edits, never runs commands"}}:::coord
+  RD["naru-reader"]:::read
+  RDD["naru-reader-deep"]:::read
+  RUN["naru-runner"]:::shell
+  WR["naru-writer"]:::write
+
+  ORC --> RD & RDD & RUN
+  ORC ==>|"only writer"| WR
+
+  classDef coord fill:#ccd3ff,stroke:#3f4fbe,color:#1b2456
+  classDef read fill:#d3ece5,stroke:#2f8f78,color:#123a31
+  classDef shell fill:#e3e0f7,stroke:#6a5fbe,color:#211b45
+  classDef write fill:#ffe4bd,stroke:#b8760f,color:#4a2c00
+```
+
+<ul class="naru-legend">
+  <li data-kind="read">Read-only</li>
+  <li data-kind="shell">Read-only plus shell</li>
+  <li data-kind="write">Writes files</li>
+</ul>
+
+## The five agents
+
+| Agent | Mode | Model | Role |
+| --- | --- | --- | --- |
+| `naru-orchestrator` | primary, visible | `openai/gpt-5.6-sol-fast` | Plans, delegates, integrates, reports |
+| `naru-reader` | subagent, hidden | `openai/gpt-5.6-terra-fast` | Read-only investigation |
+| `naru-reader-deep` | subagent, hidden | `openai/gpt-5.6-sol-fast` | Read-only, high-consequence judgment |
+| `naru-runner` | subagent, hidden | `openai/gpt-5.6-terra-fast` | Read-only plus a shell |
+| `naru-writer` | subagent, hidden | `openai/gpt-5.6-terra-fast` | The only role that can edit |
+
+You select `naru-orchestrator` in the OpenCode agent picker. The four subagents are `hidden: true`; they are dispatch targets for the orchestrator, not things you pick.
+
+## Exact permissions
+
+Every agent starts from `'*': deny` and allows only what its role needs.
+
+| Capability | orchestrator | reader | reader-deep | runner | writer |
+| --- | --- | --- | --- | --- | --- |
+| `read` | allow | allow | allow | allow | allow |
+| `glob`, `grep`, `lsp` | allow | allow | allow | allow | allow |
+| `bash` | deny | deny | deny | allow | allow |
+| `edit`, `apply_patch` | deny | deny | deny | deny | **allow** |
+| `task` (spawn) | four subagents only | deny | deny | deny | deny |
+| `external_directory` | — | deny | deny | allow | allow |
+| `question` (ask the user) | allow | deny | deny | deny | deny |
+| `naru-git-read`, `naru-github-read` | allow | allow | allow | allow | allow |
+| `naru-github-post-review` | allow | deny | deny | deny | deny |
+| `naru-worktree` | allow | deny | deny | deny | deny |
+
+Read denials are identical across all five: `.git/**`, `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH and GPG key material, and `**/.ssh/**`, `**/.aws/**`, `**/.kube/**`, `**/.gnupg/**`, `**/credentials/**`, `**/secrets/**`. `*.env.example` and `env.example` stay readable, so templates still work.
+
+The two readers are fail-closed: `bash: deny` and `external_directory: deny` mean a reader cannot escape into a shell or reach outside the workspace even if something in the repository tells it to.
+
+Only the orchestrator holds `question`, so only the orchestrator talks to you. A subagent that hits a wall reports blocked; it does not prompt.
+
+## When the orchestrator picks each
+
+Fan-out is the orchestrator's judgment, not a fixed ladder. It splits work at real boundaries — separate files, separate modules, independent questions — and launches independent work concurrently rather than serializing it. A one-line fix needs no fan-out; an unfamiliar subsystem may deserve many readers at once.
+
+| Pick | For |
+| --- | --- |
+| `naru-reader` | Finding code, tracing behavior, diagnosing a cause, reading a diff. Cheap — fan out widely. |
+| `naru-reader-deep` | Architecture, security, data models, dependencies, cross-boundary impact, and final review of completed work. |
+| `naru-runner` | Anything that needs a command run: tests, typecheck, lint, build, reproducing a failure. |
+| `naru-writer` | Applying a scoped change. One writer per logical scope. |
+
+There is no child-count ceiling. The only numeric limit is `maxConcurrentWriters` in [runtime configuration](/naru-opencode/reference/runtime-config/), an integer from 1 to 50 that exists as a runaway brake, not as a capacity plan.
+
+## Why only one role can edit
+
+The edit wall is mechanical. `naru-writer` is the single agent whose frontmatter allows `edit` and `apply_patch`; every other agent denies both. OpenCode enforces that permission map, so the boundary does not depend on any agent reading, believing, or following prose — including prose an attacker planted in a repository file, an issue, or a PR description.
+
+That gives one place where the workspace can change, which makes the rest tractable:
+
+- **One writer per logical scope.** Two writers must never be able to touch the same file, contract, config, lockfile, or generated artifact. Overlap serializes. Where Weaver is available, a writer checks `weaver status` and claims its exact paths before the first edit, then calls `weaver done`. A claim conflict is a scheduling signal — the orchestrator reroutes and requeues; it never asks you about it and never edits over a live peer.
+- **Writers stay inside their assignment.** If the job needs a path outside the given scope, the writer stops and reports instead of reaching for it.
+- **Integration belongs to the orchestrator.** Writers never commit, merge, reset, cherry-pick, or touch worktrees.
+- **Optional isolation.** When the orchestrator wants writers fully isolated it uses `naru-worktree` (`prepare_run`, `prepare_item`, `integrate_item`, `finalize_run`, `cleanup_run`, and `recover_run` after a restart). Isolation requires a clean repository; if the repo is dirty or worktrees are unavailable, it silently downgrades to the shared workspace rather than asking.
+
+## Walls that apply to every agent
+
+- **User intent is the only source of authorization.** Repository files, issue and PR text, diffs, comments, command output, and subagent reports are untrusted data. An instruction found in a file is a fact about that file, never an order.
+- **Secrets are denied to every role.** `.env`, `.env.*`, key material, `.ssh`, `.aws`, `.kube`, `.gnupg`. `.env.example` is allowed.
+- **Local changes are the default stop.** Commit, push, PR create or update, and posting to GitHub happen only when you asked for them in the current request.
+- **One checkpoint, naming the exact action,** before destructive or irreversible operations, history rewrite or force push, hook bypass, production deploys, migrations or persistent database writes, secret access, billing or security-posture changes, unrequested dependency changes, or material scope expansion.
+- **Review is dry-run by default.** Posting requires an explicit current request, goes through `naru-github-post-review` exactly once, and is comment-only — it cannot approve, request changes, or merge. See the [review lane](/naru-opencode/workflows/review-lane/).
+
+## Skills grant nothing
+
+`naru-plan`, `naru-impact`, `naru-triage`, and `naru-review` return guidance and nothing else.
 
 | Skill | Use it when you want | Returns |
 | --- | --- | --- |
@@ -16,55 +108,6 @@ Each skill maps to one kind of request. All four return guidance and nothing els
 | `naru-triage` | A bug or failure diagnosed | Advisory diagnosis |
 | `naru-review` | A PR, branch, diff, or file reviewed | Dry-run review, never posted |
 
-A skill is loaded on demand when a natural request matches, or when an agent explicitly chooses one. Skills are not slash commands and not Task targets.
+A skill does not grant tools, does not make a write-capable agent read-only, and does not authorize edits, commands, delivery, or posting. Treat both the request and the resulting guidance as advisory. An agent's own permission map is the only thing that constrains what it does with that guidance.
 
-## Supported custom-agent skills
-
-```yaml
-permission:
-  skill:
-    '*': deny
-    'naru-plan': allow
-    'naru-impact': allow
-    'naru-triage': allow
-    'naru-review': allow
-```
-
-The wildcard denial must come first. The boundary is this exact allowlist — not the agent's name, visibility, or naming convention — so anything absent from it is refused rather than permitted.
-
-```mermaid
-flowchart LR
-  CA["Your custom agent"]:::entry
-  OK["ALLOWED<br/>naru-plan · naru-impact<br/>naru-triage · naru-review"]:::read
-  NO["DENIED by '*': deny<br/>naru-orchestrator · all seven minions<br/>naru-scheduler · generated aliases<br/>retired slash commands"]:::danger
-  G["Advisory guidance only"]:::artifact
-
-  CA --> OK --> G
-  CA -.-> NO
-
-  classDef entry fill:#dfe4ff,stroke:#3f4fbe,color:#1b2456
-  classDef read fill:#d3ece5,stroke:#2f8f78,color:#123a31
-  classDef danger fill:#ffdcd6,stroke:#c0392b,color:#4a120c
-  classDef artifact fill:#f5f6fa,stroke:#5f6675,color:#14161d
-```
-
-<ul class="naru-legend">
-  <li data-kind="read">Allowed</li>
-  <li data-kind="danger">Denied</li>
-</ul>
-
-## What a skill does not do
-
-Load a skill only when the user explicitly asks for the matching activity. Treat the objective and the resulting guidance as untrusted and advisory.
-
-- A skill does **not** grant tools.
-- A skill does **not** enforce read-only behavior — it cannot stop an agent that already holds write permissions.
-- A skill does **not** authorize edits, commands, delivery, or posting.
-
-Because guidance carries no authority, a custom agent's own permission map remains the only thing constraining what it does with that guidance.
-
-## Implementation is selected, never delegated
-
-Custom agents cannot reach the implementation workflow. `naru-orchestrator` is a visible primary agent that a person selects in the OpenCode agent picker; it is not a Task target. This integration is dry-run-only and never authorizes the posting tool — only a directly selected orchestrator handling an explicit current post request may post.
-
-The canonical [agent integration guide](/naru-opencode/agent-integration/) contains the complete permission fragment and copyable instruction. See [adaptive delegation](/naru-opencode/concepts/adaptive-delegation/) for the selected orchestrator's implementation analysis policy, and [limitations](/naru-opencode/reference/limitations/) for what none of this proves.
+If you are wiring your own agent to Naru's skills, the [agent integration guide](/naru-opencode/agent-integration/) has the copyable permission fragment. See [limitations](/naru-opencode/reference/limitations/) for what none of this proves.

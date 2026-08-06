@@ -8,9 +8,22 @@ All notable user-visible changes are recorded here. The canonical semantic produ
 
 - Migrated from the five retired Core slash commands and workflow-agent tree to four native on-demand skills: `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`.
 - Kept review dry-run by default; only an explicit current natural-language request to the directly selected orchestrator can make one validated `COMMENT`-only post.
-- Simplified the canonical agent surface to `naru-orchestrator` plus seven minions, with depth-1-compatible delegation and optional adaptive lenses.
-- Made `turbo` the default adaptive mode with up to 50 useful combined active children, while retaining explicit `auto` and lower runtime ceilings as 10-child compatibility controls; shared-workspace writing remains capped at ten disjoint Weaver-claimed writers and clean isolation can use up to 50 disjoint writers.
+- Simplified the canonical agent surface to `naru-orchestrator` plus four subagents: `naru-reader`, `naru-reader-deep`, `naru-runner`, and `naru-writer`. Only `naru-writer` can edit files; readers are fail-closed read-only. Delegation remains depth-1.
+- Replaced fixed analysis modes and child-count ceilings with orchestrator judgment. The orchestrator now decides fan-out itself; the only concurrency setting is the `implementation.maxConcurrentWriters` brake.
+- Replaced runtime model routing with static per-agent `model:` frontmatter.
 - Reinstall now retires healthy manifest-owned legacy definitions while preserving, reporting, and backing up modified or unowned paths according to the reviewed preview.
+
+### Removed
+
+- Scheduling Protocol 2 and Protocol 3, the `naru-scheduler` tool and plugin, admission tokens, run manifests, work-item DAGs, and quality artifacts. Protocol 3 defaulted to `off` and could not enforce anything in `observe`.
+- The `naru-delegate` plugin, generated model aliases, Sol xhigh escalation, and `naru-models.json`.
+- The Naru Activity dashboard plugin, its TUI registration, and scheduler telemetry. Naru now ships no plugins.
+- The TypeScript `src/` tree and release-candidate assembler; `tools/`, `scripts/`, and `plugins/` sources are now edited directly as plain JavaScript.
+- The live-evaluation harness and `--with-dashboard`, which is now a deprecated accepted no-op.
+
+### Limitations
+
+- Removing Protocol 3 removes no real enforcement: it was process-local, non-durable, off by default, and fail-open in `observe`. Enforcement continues to come from OpenCode's permission evaluation, the comment-only posting tool, and worktree path containment.
 
 ## [0.1.0] - 2026-07-22
 

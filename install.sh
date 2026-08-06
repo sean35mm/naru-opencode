@@ -556,17 +556,6 @@ add_copy "${SRC_DIR}/tools/naru-lib"                  "tools/naru-lib"
 # Runtime configuration example.
 add_copy "${SRC_DIR}/naru-runtime.example.json"         "naru-runtime.example.json"
 
-# Optional dashboard plugin (always copy-pinned).
-if [ "$WITH_DASHBOARD" = true ]; then
-  add_copy "${SRC_DIR}/plugins/naru-minions-dashboard-state.mjs" "plugins/naru-minions-dashboard-state.mjs"
-  add_copy "${SRC_DIR}/plugins/naru-minions-dashboard.tsx" "plugins/naru-minions-dashboard.tsx"
-  if [ ! -f "${SRC_DIR}/scripts/merge-tui-config.mjs" ]; then
-    echo "install.sh: missing source: ${SRC_DIR}/scripts/merge-tui-config.mjs" >&2
-    rm -rf "$TX_DIR"
-    exit 1
-  fi
-fi
-
 # Preflight every source before touching the target.
 while IFS="$(printf '\t')" read -r method src rel; do
   [ -n "$src" ] || continue
@@ -579,47 +568,6 @@ done < "$PLAN"
 
 TUI_CONFIG_RELS=""
 TUI_REGISTER_REL=""
-if [ "$WITH_DASHBOARD" = true ]; then
-  for rel in tui.json tui.jsonc; do
-    if [ -L "${TARGET}/${rel}" ]; then
-      echo "install.sh: refusing symlinked TUI config: ${TARGET}/${rel}" >&2
-      exit 1
-    fi
-    if [ -e "${TARGET}/${rel}" ] && [ ! -f "${TARGET}/${rel}" ]; then
-      echo "install.sh: TUI config is not a regular file: ${TARGET}/${rel}" >&2
-      exit 1
-    fi
-    if [ -f "${TARGET}/${rel}" ]; then
-      TUI_CONFIG_RELS="${TUI_CONFIG_RELS}${TUI_CONFIG_RELS:+ }${rel}"
-    fi
-  done
-  if [ -f "${TARGET}/tui.jsonc" ]; then
-    TUI_REGISTER_REL="tui.jsonc"
-  elif [ -f "${TARGET}/tui.json" ]; then
-    TUI_REGISTER_REL="tui.json"
-  else
-    TUI_REGISTER_REL="tui.json"
-    TUI_CONFIG_RELS="tui.json"
-  fi
-fi
-
-if [ "$WITH_DASHBOARD" = true ]; then
-  TUI_PREPARED_DIR="${TX_DIR}/tui"
-  mkdir -p "$TUI_PREPARED_DIR"
-  for rel in $TUI_CONFIG_RELS; do
-    tui_input="${TARGET}/${rel}"
-    [ -f "$tui_input" ] || tui_input="-"
-    tui_operation=remove
-    [ "$rel" = "$TUI_REGISTER_REL" ] && tui_operation=register
-    "$manifest_runtime" "${SRC_DIR}/scripts/merge-tui-config.mjs" "$tui_input" "${TUI_PREPARED_DIR}/${rel}" "./plugins/naru-minions-dashboard.tsx" "$tui_operation"
-    tui_action=configure
-    if [ -f "${TARGET}/${rel}" ] && cmp -s "${TUI_PREPARED_DIR}/${rel}" "${TARGET}/${rel}"; then
-      tui_action=unchanged
-    fi
-    printf '%s\t%s\t%s\n' "$tui_action" "$rel" "$tui_operation" >> "$TUI_OPERATIONS"
-  done
-fi
-
 "$manifest_runtime" "$MANIFEST_HELPER" prepare \
   --source "$SRC_DIR" \
   --target "$TARGET" \

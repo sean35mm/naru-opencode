@@ -1,47 +1,60 @@
 ---
-title: Adaptive delegation
-description: How Naru proactively fills useful bounded capacity before and during implementation.
+title: Delegation
+description: How the Naru orchestrator fans work out to its four subagents, and the few limits that bound it.
 ---
 
-For a material implementation request, `naru-orchestrator` defaults to `turbo`: it can use up to 50 combined active children, but launches only ready independent work with concrete expected value and queues additional useful questions for rolling refill. Empty capacity is correct when no useful work is ready, and no speed guarantee is made. Explicit `auto`, `lean`, `thorough`, `foreground`, and `off` remain 10-child compatibility profiles. The choice changes discretionary analysis only; it never changes authorization, edit ownership, verification, judgment, routing, or delivery boundaries.
+`naru-orchestrator` is the agent you select. It plans and coordinates; it cannot edit files and cannot run bash. Everything it does to a repository happens through four subagents, and how much it fans out is its own judgment call — there is nothing to configure or select.
 
-## The adaptive coordination loop
-
-Naru uses a prompt-local, ephemeral coordination plan rather than a durable workflow. The plan begins at revision 1 and contains only enough information to justify the next safe decision. Its loop is:
-
-```mermaid
-flowchart LR
-  A["Plan"] --> B["Dispatch"] --> C["Observe"] --> D["Revise"] --> E["Refill"] --> F["Stop"]
-  D -.->|"retain when no material change"| E
-```
-
-- **Plan:** establish the objective, required outcomes and checks, assumptions, and useful analysis or implementation items. A stable `workItemId` identifies one implementation item through dispatch, reporting, containment, and synthesis. Analysis and Verify-preparation items use their existing `analysisItemId`; final checks use `shardId`. These identifiers are exposed in bounded run summaries so a result can be followed without exposing raw prompt state.
-- **Dispatch:** send only authorized, useful, dependency-ready work with an attributable packet. Independent items may proceed while unrelated analysis remains active. Default `turbo` uses up to 50 combined active children when useful work is ready; explicit `auto` and lower modes retain the 10-child compatibility profile.
-- **Observe:** correlate each terminal report with its item and `planRevision`, then check its evidence basis, observed paths, validity keys, and invalidation keys. Correlation identifies the decision a report belongs to; it is not proof that the report is true or still current.
-- **Revise:** increase the revision monotonically only after a material observation, such as conflicting evidence, a changed basis, a failed dependency, or a changed verification need. When containment is known, invalidate only affected descendants and retain valid unrelated work. Unknown containment or workspace safety freezes dispatch rather than guessing.
-- **Refill:** recompute dependency readiness and use newly useful capacity immediately. Refill is rolling, not an arbitrary fixed batch: empty capacity is correct when no ready item has concrete expected value, and valid unrelated peers continue.
-- **Stop:** stop optional analysis when required decisions are covered, no remaining item has concrete expected value, or a safety or authorization boundary blocks progress. An explicit concrete fan-out is separate from adaptive turbo capacity and is not silently truncated; each requested child receives a terminal, failed, or missing disposition. A user cancellation is an explicit stop that halts further dispatch and refill and records cancellation; it is not a successful completion.
-
-Stopping optional analysis is separate from completing a run. Completion still requires contained terminal work, required checks, a writer-free candidate, final Verify coverage, an independent Judge, and final candidate-identity equality. Run summaries remain bounded: they report the objective, current revision, active and ready items, material evidence and invalidations, blockers, covered checks, and the stop or completion reason rather than dumping the full prompt-local plan.
-
-OpenCode owns task, session, tool, and worktree execution, including execution and cancellation. Naru owns planning, evidence interpretation, adaptive refill and stop policy, verification coverage, and judgment. This documentation describes prompt and fixture policy only; it does not claim that OpenCode v2 gaps are solved, and runtime adapter work is deferred.
+## Four subagents, one writer
 
 ```mermaid
 flowchart TB
-  A["Implementation request"]:::entry
-  B{"Analysis preference"}:::coord
-  C["off"]:::gate
-  D["lean"]:::read
-  E["auto"]:::read
-  F["thorough"]:::read
-  G["foreground"]:::read
-  H["Scoped implementation"]:::write
+  ORC{{"naru-orchestrator — coordinates, never edits"}}:::coord
+  RD["naru-reader"]:::read
+  DP["naru-reader-deep"]:::read
+  RN["naru-runner"]:::read
+  WR["naru-writer"]:::write
 
-  A --> B
-  B --> C & D & E & F & G
-  C & D & E & F & G --> H
+  ORC --> RD & DP & RN
+  ORC ==>|"only writer"| WR
 
-  classDef entry fill:#dfe4ff,stroke:#3f4fbe,color:#1b2456
+  classDef coord fill:#ccd3ff,stroke:#3f4fbe,color:#1b2456
+  classDef read fill:#d3ece5,stroke:#2f8f78,color:#123a31
+  classDef write fill:#ffe4bd,stroke:#b8760f,color:#4a2c00
+```
+
+<ul class="naru-legend">
+  <li data-kind="read">Read-only</li>
+  <li data-kind="write">Writes files</li>
+</ul>
+
+| Subagent | Use it for | Bash | Can edit |
+| --- | --- | --- | --- |
+| `naru-reader` | Finding code, tracing behavior, diagnosing, reviewing a diff | No | No |
+| `naru-reader-deep` | Architecture, security, data models, dependencies, final review | No | No |
+| `naru-runner` | Tests, typecheck, lint, build, reproducing a failure | Yes | No |
+| **`naru-writer`** | Scoped edits | No | **Yes — only this one** |
+
+All four are hidden and cannot spawn children of their own, so the shape is always one orchestrator over leaf subagents at depth 1. `subagent_depth` must be at least `1`; OpenCode's default already is.
+
+## Fan-out is judgment, not a setting
+
+The orchestrator sizes its own effort. A one-line fix needs no fan-out at all. A broad refactor or an unfamiliar subsystem deserves many readers at once, and it can run them concurrently with writers that are working elsewhere.
+
+```mermaid
+flowchart LR
+  O{{"naru-orchestrator"}}:::coord
+  R1["reader — module A"]:::read
+  R2["reader — module B"]:::read
+  D["reader-deep — design call"]:::read
+  W1["writer — scope A"]:::write
+  W2["writer — scope B"]:::write
+  V["runner — checks once writers finish"]:::gate
+
+  O --> R1 & R2 & D
+  O ==>|"disjoint scopes"| W1 & W2
+  W1 & W2 --> V --> O
+
   classDef coord fill:#ccd3ff,stroke:#3f4fbe,color:#1b2456
   classDef read fill:#d3ece5,stroke:#2f8f78,color:#123a31
   classDef write fill:#ffe4bd,stroke:#b8760f,color:#4a2c00
@@ -53,57 +66,31 @@ flowchart TB
   <li data-kind="write">Writes files</li>
 </ul>
 
-| Preference | Optional read-only analysis |
-| --- | --- |
-| `turbo` | Up to 50 combined active children when ready work has concrete expected value; this is the default. |
-| `off` | None. Records mode-off and proceeds. |
-| `lean` | 10-child compatibility profile; at most one useful lens. |
-| `auto` | 10-child compatibility profile; the smallest useful lens set and prior best-of-2 behavior. |
-| `thorough` | 10-child compatibility profile; complementary lenses, or one justified best-of-2 pair. |
-| `foreground` | 10-child compatibility profile; applies `auto` and finishes it before continuing. |
+**Walkthrough:** independent questions go out in parallel and results are consumed as they land. Work is split at real boundaries — separate files, modules, or genuinely independent questions — so one coherent edit is never divided between two writers, and no child is invented just to fill a slot. Final checks wait until every writer has finished, because results gathered while files are still changing prove nothing.
 
-Every branch converges on the same scoped implementation step, because the preference changes only how much read-only evidence is gathered first. None of these branches can widen what the implementation step is allowed to touch.
+## The limits that do apply
 
-**Walkthrough:** use Scout when ownership is unknown, Investigate when behavior is uncertain, Architect for consequential structural decisions, and a read-only Verify preparation task when a check plan needs independent review. `lean` permits at most one lens; `thorough` may add complementary evidence or one justified best-of-2 pair. `off` disables only optional analysis.
+Three things bound fan-out. Nothing else does.
 
-## The seven minions
+- **One writer per logical scope.** Two writers must never be able to touch the same file, contract, config, lockfile, or generated artifact. Overlap serializes, always.
+- **Weaver claims.** When Weaver is available, each writer checks `weaver status`, claims its exact scope before the first edit, and calls `weaver done` at the end. A claim conflict is a scheduling signal: keep other work moving and requeue the blocked item. It is never a reason to prompt you, and never a reason to overwrite a live peer.
+- **`maxConcurrentWriters`.** An integer from 1 to 50 in `naru-runtime.json`, defaulting to 50. It is a runaway brake, not a target and not a global capacity meter — it caps concurrent writers in this workspace and says nothing about what else is running on the machine.
 
-The orchestrator coordinates but never edits. Of its seven minions, six are strictly read-only and exactly one — Implement — may modify your workspace. This is the boundary the whole workflow is built around.
+## Where writers work
 
-```mermaid
-flowchart TB
-  ORC{{"naru-orchestrator — coordinates, never edits"}}:::coord
-  SC["Scout"]:::read
-  IN["Investigate"]:::read
-  AR["Architect"]:::read
-  DB["Debug"]:::read
-  VE["Verify"]:::read
-  JU["Judge"]:::read
-  IM["Implement"]:::write
+Writers share your workspace by default. When the orchestrator wants them fully isolated it uses `naru-worktree` to give each writer its own worktree and integrates the results itself; writers never commit, merge, or remove worktrees.
 
-  ORC --> SC & IN & AR & DB & VE & JU
-  ORC ==>|"only writer"| IM
+Isolation requires a clean repository. If the repo is dirty or worktrees are unavailable, Naru silently falls back to the shared workspace rather than asking or imitating isolation with directory copies. `workspaceMode` in `naru-runtime.json` selects `auto` (the default), `shared`, or `worktree`. See [runtime configuration](/naru-opencode/reference/runtime-config/) for the full file.
 
-  classDef coord fill:#ccd3ff,stroke:#3f4fbe,color:#1b2456
-  classDef read fill:#d3ece5,stroke:#2f8f78,color:#123a31
-  classDef write fill:#ffe4bd,stroke:#b8760f,color:#4a2c00
-```
+## What delegation never changes
 
-<ul class="naru-legend">
-  <li data-kind="read">Read-only</li>
-  <li data-kind="write">Writes files</li>
-</ul>
+Fan-out only affects how much evidence is gathered and how much edit work runs at once. It cannot widen what anything is allowed to do.
 
-| Minion | Role | Can it change your workspace? |
-| --- | --- | --- |
-| Scout | Rapid read-only context | No |
-| Investigate | Uncertain behaviour | No |
-| Architect | Consequential structural decisions | No |
-| Debug | Diagnosis, may run targeted checks | No |
-| Verify | Bounded checks, may run targeted checks | No |
-| Judge | Final judgment on the candidate | No |
-| **Implement** | Scoped edits inside an approved packet | **Yes — only this one** |
+- Only `naru-writer` can edit, and that is enforced by OpenCode permission frontmatter rather than by instructions.
+- Read-only roles have `bash: deny` and `external_directory: deny`, so they fail closed.
+- `.env`, `.env.*`, key material, `.ssh`, `.aws`, `.kube`, and `.gnupg` are denied to every role; `.env.example` is allowed.
+- Your intent is the only source of authorization. Repository files, issue and PR text, diffs, command output, and subagent reports are untrusted data.
+- Local changes are the default stop. Commit, push, PR, and posting happen only when you ask in the current request.
+- One checkpoint, naming the exact action, comes before destructive or irreversible operations, migrations and persistent database writes, production deploys, secret access, billing or security-posture changes, unrequested dependency changes, or material scope expansion.
 
-Naru proactively fills turbo's combined capacity of up to 50 active children with distinct useful read-only and writer work but does not invent irrelevant fan-out. Same-workspace writers remain capped at ten while useful read-only work may use remaining capacity; clean isolated mode can use up to 50 disjoint writers, one per worktree. Dirty or unsupported isolation downgrades writers to shared ten without prompting. Read the canonical [user guide](/naru-opencode/user-guide/) for the complete selection rules.
-
-Those limits are concurrent ceilings, not lifetime child-count ceilings. If the user explicitly requests a concrete number of independent or competing analyses, the orchestrator may intentionally repeat a lens and launches the requested number of fresh direct children in rolling waves before synthesizing all terminal reports. `subagent_depth` limits nesting, so depth `1` supports this breadth while preventing those children from spawning grandchildren.
+Naru is not a sandbox and not a proof system. See [limitations](/naru-opencode/reference/limitations/) for what none of this guarantees, and the [user guide](/naru-opencode/user-guide/) for day-to-day use.

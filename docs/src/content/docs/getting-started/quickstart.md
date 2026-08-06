@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Install Naru, select the implementation coordinator, and choose the right entry point.
+description: Install Naru, select the orchestrator, ask for something, and see what happens.
 ---
 
 ## 1. Install
@@ -8,32 +8,57 @@ description: Install Naru, select the implementation coordinator, and choose the
 ```sh
 git clone https://github.com/sean35mm/naru-opencode.git
 cd naru-opencode
-./install.sh
-./install.sh --apply
+sh install.sh --preview
+sh install.sh --apply
 ```
 
-The first run is a read-only preview; the second applies exactly that option set. The default target is `~/.config/opencode`. Naru requires OpenCode 1.18.4+ and Node.js or Bun. Its selected-orchestrator-to-seven-minion design is compatible with the default depth of `1`; `--configure-subagent-depth` is a deprecated accepted no-op for migration compatibility.
+The first run is a read-only preview; the second applies exactly that option set. The default target is `~/.config/opencode`; use `--project` or `--dir PATH` for another target. Naru requires OpenCode 1.18.4+ and Node 24, and works at OpenCode's default `subagent_depth` of `1`.
 
-Restart OpenCode after the applied install. Then take exactly one safe first action:
+Restart OpenCode after the applied install.
+
+## 2. Select the orchestrator
+
+Pick **`naru-orchestrator`** in OpenCode's agent picker, set it as `default_agent`, or start OpenCode with it:
+
+```sh
+opencode --agent naru-orchestrator
+```
+
+## 3. Ask for something
+
+Ask in plain language. No mode flags, no ceremony.
+
+```text
+Rate limiting drops valid requests after a deploy. Find out why and fix it.
+```
+
+## 4. What happens
+
+The orchestrator plans, then fans out to subagents on its own judgment:
+
+- **`naru-reader`** investigates — finds the code, traces behavior, diagnoses. Read-only.
+- **`naru-reader-deep`** handles high-consequence judgment — architecture, security, data models, dependencies, final review. Same read-only permissions, stronger model.
+- **`naru-runner`** runs tests, typecheck, lint, build, and reproductions. Read-only plus bash; it cannot edit.
+- **`naru-writer`** applies the change. It is the only role with edit permission.
+
+The orchestrator itself cannot edit files and cannot run bash. Those walls are OpenCode permission frontmatter, not instructions. Subagents cannot spawn their own children, so the shape is always one orchestrator over a flat set of workers.
+
+Work stops at local changes. Commit, push, pull-request creation, and review posting happen only when your current request explicitly asks for them. Before anything destructive or irreversible — migrations, persistent database writes, production deploys, secret access, unrequested dependency changes — you get one checkpoint that names the exact action.
+
+## 5. Optional extras
+
+**Skills.** `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review` are advisory guidance you can invoke by name. They shape approach; they grant no tools and relax no permissions.
 
 ```text
 Use the `naru-plan` skill to plan <your objective>
 ```
 
-## 2. Choose what happens next
+**Health check.** A provider-free, read-only report of local install and config state:
 
-1. **Analyze:** ask naturally or use `naru-plan`, `naru-impact`, `naru-triage`, or `naru-review`. Skills provide guidance and do not grant tools or enforce read-only behavior.
-2. **Implement:** select **`naru-orchestrator`** in OpenCode's agent picker, set it as `default_agent`, or run `opencode --agent naru-orchestrator` for authorized scoped work. It coordinates work but does not edit; only the scoped Implement minion edits files.
-3. **Runtime safety (optional):** leave scheduling `off`, or deliberately configure `observe`/`enforce` only after reading the compatibility requirements.
-4. **Activity (optional):** preview and apply the dashboard install with the same explicit boundary:
+```sh
+node ~/.config/opencode/tools/naru-doctor.js --json
+```
 
-   ```sh
-   ./install.sh --with-dashboard
-   ./install.sh --apply --with-dashboard
-   ```
+**Runtime config.** Copy `naru-runtime.example.json` to `naru-runtime.json` only if you need to change writer workspace behavior. See [runtime configuration](/naru-opencode/reference/runtime-config/).
 
-## 3. Keep delivery explicit
-
-Local edits are the normal stopping point. Commit, push, pull-request creation, and review posting happen only when the current request explicitly asks for them. Review is dry-run by default; only an explicit current natural-language post request to the directly selected `naru-orchestrator` can make one validated `COMMENT`-only post.
-
-Run `node ~/.config/opencode/tools/naru-doctor.js` for a provider-free, read-only local state report. Continue with [installation](/naru-opencode/getting-started/installation/) for project/custom targets, lifecycle previews, conflicts, backups, and doctor options, or see the canonical [user guide](/naru-opencode/user-guide/) for complete operational details.
+Continue with [installation](/naru-opencode/getting-started/installation/) for project targets, lifecycle previews, conflicts, and backups, or see the [user guide](/naru-opencode/user-guide/) for full operational detail.

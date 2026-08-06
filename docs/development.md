@@ -1,319 +1,291 @@
 ---
 title: Naru development guide
-description: Detailed architecture, invariants, extension, testing, and release reference.
+description: Repository layout, architecture, invariants, testing, and installer reference.
 ---
 
 # Naru development guide
 
-This guide describes the repository architecture, sources of truth, security invariants, extension rules, targeted checks, and release process.
+This guide describes the repository layout, the agent and tool architecture, the invariants that
+must survive any change, how to run the checks, and how the installer works.
 
-## Architecture and dispatch graph
+Naru's design rule is simple: hard mechanical walls at irreversible edges, near-total freedom
+inside them. The orchestrator plans and fans out on its own judgment; the walls are enforced by
+OpenCode permission frontmatter and by tool code, not by prose.
 
-Naru has three related layers:
+## Repository layout
 
-1. **Native skills.** Four Markdown skills in `skills/` are discovered on demand for planning, impact analysis, triage, and review guidance.
-2. **Canonical agents.** Eight Markdown agents in `agents/` define prompts, modes, visibility, and permissions: the selected orchestrator and seven minions.
-3. **Runtime plugins and validated tools.** Naru Delegate applies central model routing, validated Git/GitHub tools expose narrow read-only or posting operations, the optional process-local scheduler validates Protocol 3 declarations and native Task admissions, and the optional TUI displays child and scheduler activity.
+| Path | Contents |
+| --- | --- |
+| `agents/` | Five Markdown agents. Frontmatter is the permission contract. |
+| `skills/` | Four native skills: `naru-plan`, `naru-impact`, `naru-triage`, `naru-review`. |
+| `tools/` | Five custom OpenCode tools. The filename defines the tool ID. |
+| `tools/naru-lib/` | Shared helper modules used by the tools. |
+| `scripts/` | `naru-compat-smoke.mjs`, the provider-free compatibility smoke run in CI. Not installed. |
+| `tests/` | Node test files plus the dependency-free installer test. |
+| `docs/` | This guide, the user guide, agent integration notes, and the Astro site under `docs/src/`. |
+| `install.sh` | The installer. Holds an explicit inventory of everything Naru installs. |
+| `naru-runtime.example.json` | Example runtime config. Copied on install, never activated. |
 
-The agent dispatch surface is fixed and explicit:
+There is no `plugins/` directory. Naru ships zero OpenCode plugins; everything runs as agents,
+skills, and custom tools.
+
+## Architecture
+
+One visible primary orchestrator, four hidden leaf subagents, five validated tools.
 
 ```mermaid
 flowchart LR
-  subgraph L1["LAYER 1 — skills/ · four Markdown skills"]
-    direction TB
-    SK["naru-plan · naru-impact<br/>naru-triage · naru-review"]:::entry
-    GD["On-demand guidance"]:::read
-    SK --> GD
-  end
+  ORC{{"naru-orchestrator<br/><small>primary · no bash · no edit</small>"}}
+  RD["naru-reader"]
+  RDD["naru-reader-deep"]
+  RUN["naru-runner<br/><small>+ bash</small>"]
+  WR["naru-writer<br/><small>+ edit</small>"]
+  TOOLS["naru-git-read · naru-github-read<br/>naru-github-post-review · naru-worktree"]
 
-  subgraph L2["LAYER 2 — agents/ · eight Markdown agents"]
-    direction TB
-    ORC{{"naru-orchestrator"}}:::coord
-    subgraph MIN["seven naru-minion-* roles"]
-      direction LR
-      RO["scout · investigate · architect<br/>debug · verify · judge"]:::read
-      IMP["implement"]:::write
-    end
-    ORC --> RO
-    ORC --> IMP
-  end
-
-  subgraph L3["LAYER 3 — plugins/ + tools/ · runtime"]
-    direction TB
-    DEL["naru-delegate<br/><small>central model routing</small>"]:::coord
-    SCHED["naru-scheduler<br/><small>optional, Protocol 3</small>"]:::gate
-    POST["validated posting tool"]:::danger
-  end
-
-  ORC -.-> DEL
-  ORC -.-> SCHED
-  ORC -.->|"explicit current post request only"| POST
-
-  style L1 fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
-  style L2 fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
-  style MIN fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
-  style L3 fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
-
-  classDef entry fill:#dfe4ff,stroke:#3f4fbe,color:#1b2456
-  classDef coord fill:#ccd3ff,stroke:#3f4fbe,color:#1b2456
-  classDef read fill:#d3ece5,stroke:#2f8f78,color:#123a31
-  classDef write fill:#ffe4bd,stroke:#b8760f,color:#4a2c00
-  classDef gate fill:#e8eaf0,stroke:#8f96a5,color:#22252e
-  classDef danger fill:#ffdcd6,stroke:#c0392b,color:#4a120c
+  ORC --> RD
+  ORC --> RDD
+  ORC --> RUN
+  ORC --> WR
+  ORC -.-> TOOLS
 ```
 
-<ul class="naru-legend">
-  <li data-kind="read">Read-only</li>
-  <li data-kind="write">Writes files</li>
-  <li data-kind="danger">Leaves your machine</li>
-</ul>
+Agents (`agents/naru-*.md`):
 
-The visible primary `naru-orchestrator` delegates only to the seven `naru-minion-*` roles. Skills and adaptive lenses are optional, not a workflow-agent topology. Review is dry-run by default; only an explicit current natural-language post request to the directly selected orchestrator may use the validated posting tool.
+- **`naru-orchestrator`** — primary, visible, model `openai/gpt-5.6-sol-fast`. Coordinates, plans,
+  delegates, synthesizes. Its permission block starts at `'*': deny` and never allows `bash`,
+  `edit`, or `apply_patch`, so it cannot run commands or change files. It may call `naru-git-read`,
+  `naru-github-read`, `naru-github-post-review`, and `naru-worktree`.
+- **`naru-reader`** — subagent, read-only, model `openai/gpt-5.6-terra-fast`. Finding code, tracing
+  behavior, diagnosing, reviewing.
+- **`naru-reader-deep`** — identical permissions, model `openai/gpt-5.6-sol-fast`. For
+  high-consequence judgment: architecture, security, data models, dependencies, final review.
+- **`naru-runner`** — subagent, read-only plus `bash`. Tests, typecheck, lint, build, reproductions.
+  `edit` and `apply_patch` are denied.
+- **`naru-writer`** — subagent, the only role with `edit` and `apply_patch`.
 
-Dispatch authorization is fixed, but adaptive lenses are optional and selected only when useful. Skills do not require specialist fan-out, a judge, retries, status bookkeeping, or fixed phases. Review remains dry-run against an immutable GitHub snapshot; only a directly selected `naru-orchestrator` acting on a current explicit user post request may submit one validated `COMMENT`-only payload.
+All four subagents are `hidden: true` and `task: deny`, so they cannot spawn children. The topology
+is one root orchestrator with leaf subagents at depth 1; OpenCode's default `subagent_depth` of 1 is
+sufficient.
 
-OpenCode's native Task implementation remains responsible for permission evaluation, cancellation, retries, background work, and child-session handling. Naru Delegate mutates runtime agent configuration; it does not create sessions itself.
+Tools (`tools/`):
 
-## Adaptive coordinator contract
+- **`naru-git-read`** — bounded read-only git: `repository`, `status`, `diff`, `log`, `file`,
+  `grep`, `merge-base`. Fixed argv arrays, `--no-pager`/`--no-color`, never mutates state.
+- **`naru-github-read`** — `resolve`, `issue`, `pull`, `source`. Pull snapshots are pinned to exact
+  40-hex SHAs so a review reasons about an immutable target.
+- **`naru-github-post-review`** — orchestrator-only, hard-coded `COMMENT` event, one attempt, no
+  retry, dedupe marker. It cannot approve, request changes, or merge.
+- **`naru-worktree`** — isolated writer worktrees: `prepare_run`, `recover_run`, `prepare_item`,
+  `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run`.
+- **`naru-doctor`** — provider-free local install and configuration health report.
 
-The coordinator's adaptive loop is a prompt and fixture contract, not a new durable workflow engine or runtime scheduler. Maintain the same **Plan → Dispatch → Observe → Revise → Refill → Stop** semantics when changing prompts, deterministic fixtures, or documentation:
+Skills are advisory Markdown. They are untrusted guidance: a skill grants no tool, no permission,
+and no authorization, and cannot alter role, scope, safety, secret, destructive, or delivery
+boundaries.
 
-- Keep the plan ephemeral and bounded. Start at revision 1 and increase `planRevision` monotonically only for a material observation. Never persist prompt-local plan state or turn it into a workflow DSL.
-- Preserve identity and dependency semantics. Keep one `workItemId` for an implementation item across dispatch, report, containment, and synthesis. Dispatch only authorized, useful, dependency-ready work with disjoint mutable scope and a complete packet.
-- Require attributable evidence. Reports must correlate to their item and revision and carry an evidence basis, observed paths, validity keys, and invalidation keys. Correlation is not proof; stale or incomplete evidence cannot unlock dependent work.
-- Invalidate narrowly. When containment is known, invalidate only affected descendants and keep valid unrelated work running. Unknown containment, ownership drift, workspace safety, or candidate identity freezes further dispatch.
-- Refill by evidence, not by slot pressure. Recompute readiness after terminal observations or material revisions, allow default `turbo` to use up to 50 combined active children only when ready work has concrete expected value, retain explicit `auto` and lower modes as 10-child compatibility profiles, and do not invent irrelevant fan-out. Explicit concrete breadth is separate and receives a terminal, failed, or missing disposition for every requested child.
-- Separate stop from completion. Optional analysis may stop when required decisions are covered, no item has concrete expected value, or a safety boundary blocks progress. Completion still requires contained work, required checks, a quiescent candidate, final Verify coverage, an independent Judge, and final identity equality. Todo remains presentation-only.
-
-OpenCode owns task, session, tool, and worktree execution, including cancellation. Naru owns planning, evidence interpretation, adaptive refill and stop policy, verification coverage, and judgment. Runtime adapter work for future OpenCode surfaces is deferred; this contract does not claim that OpenCode v2 gaps are solved. Protocol 2 and Protocol 3 remain the execution-admission and safety boundaries, and the adaptive loop sits above them rather than replacing them.
-
-The prompt and fixture contract must not grow a durable plan store, background-job registry, runtime scheduler, or alternate admission path. If a proposed change needs one of those, update the scope and compatibility plan before editing implementation or runtime files. Documentation describes these invariants but does not replace the canonical prompts, fixtures, or runtime contracts.
+OpenCode owns permission evaluation, session and child-task execution, cancellation, and retries.
+Naru owns prompts, permission frontmatter, and the validated tool surface.
 
 ## Source-of-truth map
 
 | Concern | Source of truth |
 | --- | --- |
-| Public skill inventory and guidance | `skills/naru-*/SKILL.md` |
-| Canonical agent prompt, visibility, mode, and permissions | `agents/naru-*.md` |
-| Native skill permission and trust boundary | Skill frontmatter and exact agent `permission.skill` maps |
-| Canonical eight-agent inventory | `NARU_AGENT_IDS` in `tools/naru-lib/model-routing.mjs`, checked against agent files |
-| Exact orchestrator-to-minion edges | `NARU_DISPATCH_GRAPH`, checked against the orchestrator Task allowlist |
-| Luna/Terra/Sol profiles and built-in assignments | `DEFAULT_MODEL_PROFILES` and `DEFAULT_AGENT_ASSIGNMENTS` |
-| Luna-eligible minions | `LUNA_ELIGIBLE_ROLES` |
-| Non-downgradeable roles | `SOL_FLOOR_ROLES` |
-| Generated Sol-xhigh child aliases | `MANAGED_SOL_XHIGH_ALIASES` and the direct-root gate in `plugins/naru-delegate.js` |
-| Runtime routing/config parsing and aliases | `tools/naru-lib/model-routing.mjs` |
-| Plugin loading, scope merge, rollback, and Task resume guard | `plugins/naru-delegate.js` |
-| Git and GitHub validation | `tools/naru-git-read.js`, `tools/naru-github-read.js`, `tools/naru-github-post-review.js`, and `tools/naru-lib/` |
-| Dashboard state classification | `plugins/naru-minions-dashboard-state.mjs` |
-| Dashboard UI and command registration | `plugins/naru-minions-dashboard.tsx` |
-| TUI config rewrite | `scripts/merge-tui-config.mjs` |
-| Runtime mode parsing and bounded defaults | `tools/naru-lib/scheduler-config.mjs`, `naru-runtime.example.json` |
-| Protocol 3 schemas, state reduction, tokens, journal, and telemetry | `tools/naru-lib/scheduler-*.mjs` |
-| Scheduler tool operations and native Task admission hook | `tools/naru-scheduler.js`, `plugins/naru-scheduler.js` |
-| Local evaluation schema and dry-run scorer | `tools/naru-lib/evaluation.mjs`, `scripts/naru-live-eval.mjs` |
-| Installed file inventory and migration behavior | `install.sh` |
+| Agent prompt, model, visibility, and permissions | `agents/naru-*.md` |
+| Skill guidance | `skills/naru-*/SKILL.md` |
+| Read-only git surface | `tools/naru-git-read.js`, `tools/naru-lib/git.mjs` |
+| GitHub reads and pinned pull snapshots | `tools/naru-github-read.js`, `tools/naru-lib/github.mjs` |
+| Review payload construction and posting | `tools/naru-github-post-review.js`, `tools/naru-lib/review.mjs` |
+| Worktree lifecycle and integration | `tools/naru-worktree.js`, `tools/naru-lib/worktree.mjs` |
+| Input validation and path rules | `tools/naru-lib/validate.mjs` |
+| Subprocess spawn, timeouts, output bounds | `tools/naru-lib/transport.mjs`, `tools/naru-lib/output.mjs` |
+| Runtime config schema and defaults | `tools/naru-lib/runtime-config.mjs`, `naru-runtime.example.json` |
+| Installed inventory, backups, retirement | `install.sh`, `tools/naru-lib/install-manifest.mjs` |
+| Supported OpenCode/Node versions | `tools/naru-lib/compatibility.mjs` |
+| Local health report | `tools/naru-doctor.js` |
 
 Documentation describes these contracts but does not replace them.
 
-## TypeScript source and candidate workflow
+## Plain JavaScript, no build step
 
-`src/` is the authoritative runtime source: it contains eight `.ts` entry modules and 23 `.mts` modules. The tracked `.js` and `.mjs` files in `plugins/`, `scripts/`, and `tools/` are generated compatibility output, not hand-maintained source. The candidate assembler maps each runtime source module to its emitted public path and rejects inventory drift.
+Every runtime source is plain ESM `.js` or `.mjs` and runs exactly as written. There is no
+TypeScript tree, no bundler, and no transpile or emit step. What you edit in `tools/` is what runs
+and what the installer copies. `tools/package.json` exists only to mark the copied tool
+tree as `"type": "module"`.
 
-The intentional non-emitted exceptions are `plugins/naru-minions-dashboard.tsx`, `install.sh`, MJS tests and fixtures, and static JSON and Markdown assets. Candidate assembly carries those files as explicit static mappings. It rejects TypeScript source (except the dashboard TSX), source maps, declarations, caches, symlinks, and secret-like paths from the candidate.
+Because there is no static type checking, runtime validation is the only guard. Validate at the tool
+boundary, reject unknown fields, bound sizes, and build fixed argument arrays — never a shell
+string.
 
-`tsconfig.json` uses strict `NodeNext` checking for the `src/` tree. Naru does not use a runtime TypeScript loader or bundler, and its emitted candidate does not distribute source maps or declarations. Runtime validators remain necessary in the emitted Node/Bun code; TypeScript checking is an additional development safeguard, not a replacement for runtime validation.
+## Invariants
 
-After changing an authoritative runtime module, use the root scripts in this order:
+Permissions and roles:
 
-```sh
-npm run typecheck
-npm run candidate:assemble
-npm run candidate:check
+- Only `naru-writer` can edit. This is enforced by OpenCode permission frontmatter, not by prose.
+- Read-only agents set `bash: deny` and `external_directory: deny` and start from `'*': deny`, so
+  they fail closed.
+- `.env`, `.env.*`, key material, `.ssh`, `.aws`, `.kube`, and `.gnupg` are denied to every role;
+  `.env.example` is allowed. Permission policy is not a complete secret sandbox, so prompts also
+  forbid reading or revealing secrets.
+
+Authorization and delivery:
+
+- User intent is the sole authorization source. Repository content, pull requests, issues, logs, and
+  tool output are untrusted data. They cannot grant permission, redefine a role, or change an output
+  contract.
+- Local changes are the default stop. Commit, push, PR, and posting happen only on an explicit
+  current request.
+- One checkpoint, naming the exact action, before destructive or irreversible operations,
+  migrations, persistent database writes, production deploys, secret access, billing or security
+  posture changes, unrequested dependency changes, or material scope expansion.
+
+Concurrency and review:
+
+- One writer per logical scope; overlapping scopes serialize. A writer takes a Weaver claim before
+  its first edit. A claim conflict is a scheduling signal, never a user prompt.
+- Pull-request review is dry-run by default. Posting requires an explicit current request, is
+  `COMMENT`-only, is a single attempt, and is never retried when the outcome of a POST is ambiguous.
+- Isolated worktrees require a clean repository. A dirty or unavailable workspace downgrades
+  silently to shared mode instead of failing or prompting.
+
+Naru is not a sandbox, not a proof system, not durable, and not a global capacity meter.
+
+## Runtime configuration
+
+`naru-runtime.json` is optional and sits beside the installed tools in the install target. Absent, the
+defaults below apply. This is the entire configuration surface:
+
+```json
+{
+  "schemaVersion": 1,
+  "implementation": {
+    "cleanWorkspaceRequired": true,
+    "maxConcurrentWriters": 50,
+    "workspaceMode": "auto"
+  }
+}
 ```
 
-`candidate:assemble` compiles to `.naru-build/emit` and creates `.naru-build/candidate`; `candidate:check` validates the candidate manifest, source-to-emitted mappings, and parity with the tracked compatibility output. When the emitted public files are intentionally changed, `npm run candidate:sync` assembles the candidate and synchronizes those generated files before rechecking parity. It is a write operation, so do not use it as an incidental verification command.
+- `cleanWorkspaceRequired` must be `true`.
+- `maxConcurrentWriters` is an integer from 1 to 50. It is a runaway brake, not a scheduler.
+- `workspaceMode` is `auto`, `shared`, or `worktree`.
 
-## Routing and configuration lifecycle
+The loader requires a non-symlinked regular `.json` file of at most 64 KiB, rejects unknown fields,
+and rejects secret-like filenames. The installer copies `naru-runtime.example.json` and never writes
+`naru-runtime.json` itself.
 
-Naru Delegate loads `naru-models.json` beside its installed plugin. The file is optional, limited to 64 KiB, and must be a regular non-symlinked file. Parsing rejects unknown top-level/profile fields, unknown canonical agents, invalid model identifiers, invalid profile names, static Luna assignments, and attempts to downgrade a Sol-floor role.
+## Tests
 
-Schema v2 names profiles `luna`, `terra`, and `sol`, while static exact-agent assignments accept only `terra|sol`. Schema-v1 `fast|deep` profiles and assignments normalize to Terra/Sol before policy resolution or cross-scope merging. Keeping Luna out of static assignments preserves it as a per-invocation orchestrator choice.
-
-Routing resolution for each agent is:
-
-1. Parsed exact-agent override.
-2. Built-in exact-agent default assignment.
-3. Sol-floor membership.
-4. Terra fallback.
-
-The current built-in assignment makes `naru-orchestrator` Sol while leaving it outside `SOL_FLOOR_ROLES`, so an explicit Terra override remains valid. All three default profiles use variant `high`.
-
-The plugin is deterministic routing infrastructure. It does not inspect task semantics or call a classifier model. Dispatchers, especially the default Sol-powered `naru-orchestrator`, receive generated route guidance and choose the model profile from the task packet and available evidence.
-
-At config application time, routing:
-
-1. Validates every canonical source agent before mutation.
-2. Clones source definitions and applies the selected profile.
-3. Validates every dispatcher's exact fail-closed Task map against `NARU_DISPATCH_GRAPH`.
-4. Appends one generated routing policy section to dispatchers.
-5. Creates hidden model aliases only for eligible canonical agent routes.
-6. Adds only generated aliases reachable from the selected orchestrator to its runtime Task map.
-7. Invokes Sol-floor, Sol-assigned, and Sol-overridden roles canonically without an alias. Only true floor members are labeled `Sol floor`; other Sol routes are `Sol assignment` or `Sol override`.
-
-The managed alias prefixes are `naru-delegate-luna-`, `naru-delegate-sol-`, and `naru-delegate-sol-xhigh-`. Generated aliases have no Markdown source file and are runtime implementation details, not public integration targets. A current managed alias collision fails closed. Legacy `naru-delegate-deep-*` aliases are recognized only for cleanup, dashboard normalization, and fresh-session enforcement; new routing never generates them.
-
-The canonical role is the Terra route, so no redundant Terra alias exists. An exact Sol assignment removes ordinary generated aliases for that target and applies the Sol profile to its canonical definition. Generated routes remain internal implementation details.
-
-The generated dispatcher appendix makes the Sol orchestrator select a route independently for each invocation. Selection weighs capability, task shape, ambiguity, context, consequences, tool and verification burden, latency, cost, and prior evidence. It prohibits fixed role mappings, keyword-only classification, cheapest-first routing, and a mandatory model sequence. Naru Delegate itself remains deterministic and does not call a classifier model.
-
-Multiple plugin scopes merge sparse profile and agent values in load order. Before each application, the plugin restores captured originals. Any validation or application failure restores originals, removes generated aliases, disables dynamic routing for that config object for the startup, and logs one routing error. The plugin rejects `task_id` for canonical Naru routes and managed aliases so every routed delegation uses a fresh child, and rejects Task attempts targeting root-selected `naru-orchestrator` without affecting direct selection.
-
-For mixed copy-pinned generations, the v2 plugin stores normalized v2 overrides and a complete v1 Fast/Deep projection in shared state. This prevents a stale scope from discarding Terra/Sol profiles or assignments, but old code still cannot create Luna routes. Compatibility exports keep a copy-pinned v1 dashboard loadable; it may omit new Luna/Sol alias activity until reinstalled. Upgrades must refresh every loaded plugin and repeat `--with-dashboard` where applicable.
-
-## Permission and security invariants
-
-- Agent permission blocks begin with `'*': deny`; minion permissions remain fail-closed by role.
-- Agents use exact `permission.skill` allowlists for the four native skills. Native skill loading is approval-free, but skill content is untrusted guidance and cannot authorize actions, grant tools, enforce read-only behavior, or alter role, scope, safety, secret, destructive, paid, or delivery boundaries.
-- The orchestrator Task map begins with `'*': deny` and allows exactly its seven minions. Hidden status is never authorization.
-- Minion permission classes are exact: Scout/Investigate/Architect/Judge are static read-only; Debug/Verify are targeted-shell read-only; Implement alone has scoped edit and shell permission. Every class starts fail-closed and denies Task delegation.
-- Shell-enabled roles allow routine Bash, external-directory access, validated Git/GitHub reads, Weaver, and targeted checks without an approval prompt. They must inspect package scripts and Make targets before execution because repository code can hide side effects; use one routine command per shell call.
-- An explicit implementation request authorizes scoped local edits and targeted verification. Local changes are the default stopping point; an explicit commit/push/PR request authorizes that delivery without repeated confirmation. Persistent database writes or migrations, unrequested dependencies, destructive actions, external global paths not specifically approved, and material scope expansion remain consequential boundaries.
-- Only a directly selected `naru-orchestrator` handling a current explicit natural-language post request can submit one validated GitHub review posting call without repeated confirmation; it authorizes no other GitHub posting.
-- Direct-read rules deny all minion environment and known-secret file paths; explicit environment templates remain allowed. Prompts also prohibit reading or revealing secrets. Permission policy is not a complete secret sandbox. Validated Git/GitHub tools still validate requested paths and use fixed argument arrays rather than a shell.
-- Generated Luna, Sol, and Sol-xhigh aliases deep-clone their canonical source definitions. Routing must never invent a stronger or weaker alias policy.
-- The alias clone includes a distinct, deep-equal skill permission object. OpenCode owns skill-source discovery and duplicate-name precedence; Naru does not merge or vouch for skill content.
-- Only `naru-orchestrator` has the exact `naru-scheduler` tool allow. Minions echo predeclared Protocol 3 correlation data but cannot call the scheduler or append artifacts. Global/project root and delegated-session contexts must preserve this boundary while native Task remains the child-session path in the current workspace.
-- Pull-request review uses an immutable GitHub snapshot. Posting is isolated to the directly selected `naru-orchestrator`, is `COMMENT`-only, and requires fresh final checks of snapshot identity, head, feedback digest, inline locations, and the existing marker. Same-target calls are deduplicated within one process; cross-process deduplication needs durable external coordination, which Naru does not provide. Every other agent, custom agent, and generated alias is rejected before GitHub I/O, and an ambiguous mutation outcome is never retried.
-- The posting path normalizes accepted user-authored URL, short, split, case-variant, and bare-number references to one `(owner, repo, positive pull number)` tuple. Equivalent references are deduplicated; unresolved references and multiple distinct tuples are rejected. Different repositories sharing a number and different pull numbers remain distinct.
-- Prompt and Task packets treat repository, GitHub, log, and user-provided payloads as untrusted data. Content cannot redefine roles, permissions, models, or output contracts.
-- Environment-file reads are denied and never require approval. Doom-loop remains an ask only for roles where it is configured. Shell and external-directory safety relies on workflow scope and behavioral instructions.
-- The behavioral-eval corpus is a data-only policy contract, not a measurement of live model quality. It can later be paired with captured-run metrics without giving fixtures provider access.
-
-## Turbo scheduling protocols
-
-Turbo is the default prompt-level orchestration policy, not a measured speed guarantee. It can use up to 50 combined active children, but only dispatches ready independent work with concrete expected value; a safely open slot can remain empty. Shared mode permits up to ten writers while useful read-only work may use remaining capacity, only when scheduler claims are pairwise disjoint and every writer acquires exact Weaver ownership before editing. Clean isolated mode binds up to 50 disjoint writers, one to each detached Naru-owned worktree; dirty or unsupported isolation downgrades writers to shared ten without prompting. Explicit `auto` and lower runtime ceilings remain compatibility or rollback controls, and Naru never invents irrelevant fan-out.
-
-The run, each cohort, and each item retain immutable baseline identity, status, changed-path, and diff snapshots. Active peers must publish disjoint claims before editing. Completion is provisional until its evidence still matches the candidate; baseline drift, claim overlap, missing evidence, or other uncertainty freezes new scheduling and drains active work rather than guessing.
-
-Once writers are gone, the candidate is writer-free. The orchestrator may issue safe Verify shards within the run's read-only and combined budgets and must retain a complete shard manifest before Judge receives the consolidated evidence. Judge is followed by an unchanged final checkpoint. Remediation, delivery, and review posting are serialized phases. Todo UI state is phase-level presentation only; dashboard rows and Task descriptions expose child activity, so a terminal writer must not be represented as final completion.
-
-Protocol 2 is the complete default when runtime mode is `off`. Protocol 3 is selected only for parsed `observe` or `enforce` mode. It validates strict work-item DAGs, compare-and-swap revisions, admission and transition token binding, claim conflicts, configured concurrency budgets, artifact correlation, quiescence, verification coverage, judgment passes, and exact-candidate completion gates. Observe records typed incidents and fails open at Task admission; enforce fails closed and rejects Protocol 2. The mode does not alter authorization, model routing, edit ownership, review, or delivery boundaries.
-
-`tools/naru-scheduler.js` owns declarative operations; `plugins/naru-scheduler.js` consumes exact admission markers at native Task `tool.execute.before`. Neither creates sessions. `tools/naru-worktree.js` is root-orchestrator-only and separately owns clean-repository worktree creation, hook-suppressed tool-owned Git operations, path-contained serial integration, atomic metadata updates, final aggregate application, crash recovery from local run metadata, and post-finalization cleanup. Integration failures attempt rollback; unrelated external workspace mutation is outside its protection. The scheduler registry, bounded digest-linked journal, and telemetry are process-local and non-durable. They cannot provide authoritative background completion, cross-process coordination, report truth, provider hard caps, or a general sandbox. Prompt-level baseline, Weaver, containment, freshness, workspace binding, and final-state checks therefore remain mandatory.
-
-Configuration defaults to `off`; `naru-runtime.example.json` is copied but never activated automatically. Runtime ceilings are 50, omitted/generic turbo budgets use those ceilings, and the isolated implementation-writer default is 50; explicit `auto` or lower ceilings remain compatibility and rollback controls. Runtime JSON is regular, non-symlinked, at most 64 KiB, and schema v1 remains supported. Protocol defaults bound manifests at 256 KiB, work items at 32 KiB, tokens at 16 KiB, artifacts at 64 KiB, work items at 256, and admission/transition lifetimes at five minutes. The journal retains 64 roots, 256 entries per root, and 4 KiB sanitized metadata per entry.
-
-## Dashboard and TUI architecture
-
-The dashboard is opt-in and consists of two copy-pinned files:
-
-- `naru-minions-dashboard-state.mjs` normalizes Task metadata, canonicalizes managed aliases, resolves status precedence, and classifies routes from configured agent profiles without guessing unknown metadata.
-- `naru-minions-dashboard.tsx` is an external OpenTUI/Solid plugin. It registers `/naru-minions`, subscribes to native session/message events, queries root children and message metadata, renders a sidebar slot, and opens a navigation dialog.
-
-Rows are limited to recognized canonical Naru agents or managed aliases. Model text comes from Task or child-message metadata, not routing assumptions. Terminal Task state outranks stale native active state. The compact sidebar conservatively bounds every rendered line while retaining status text and symbols, counts, up to four active or recently terminal rows, and an overflow hint. `/naru-minions` remains a native filterable `DialogSelect`: each compact fixed table-like option has one aligned status/agent/age/task title bounded to 61 characters, labeled route/mode/model/short-session metadata, and the full session ID as its navigation value. Loading, empty, and unavailable states use selectable-looking sentinels that render through filtering but never navigate.
-
-When scheduler telemetry exists for the same process-local root, the dashboard adds mode, item counts, local budget pressure, quality-gate status, oldest blocked work, and a maximum of eight evidenced actor groups. It hides the surface when no telemetry exists and labels limits process-local rather than implying durable, global, cross-process, background, or provider enforcement.
-
-`scripts/merge-tui-config.mjs` performs the installer-facing JSON/JSONC update. It rewrites only the top-level plugin registration while preserving unrelated content, prefers `tui.jsonc`, removes exact legacy registrations from other active config files, and rejects malformed inputs.
-
-## Installer invariants
-
-`install.sh` maintains an explicit inventory; new runtime files are not installed merely because they exist in the repository.
-
-- The source and target must not overlap, and loader/managed target directories must not be symlinks.
-- All source files are preflighted and the release is staged on the target filesystem before existing loader paths are changed.
-- Agent and command Markdown follows symlink/copy mode. Tools, helper directories, runtime/evaluation assets, and plugins are always copied.
-- Existing managed destinations and migrations move to timestamped backups. A failed transaction removes newly installed paths and restores backups.
-- Healthy manifest-owned legacy commands and workflow agents are retired on reinstall; modified or unowned paths are preserved and reported unless a reviewed preview explicitly replaces them.
-- Dashboard registration requires Node.js or Bun, rejects symlinked or malformed TUI config, and is idempotent.
-- Naru's selected-orchestrator-to-seven-minion design is depth-1-compatible. `--configure-subagent-depth` is a deprecated accepted no-op for migration compatibility.
-- The installer preserves `naru-models.json` and unrelated OpenCode content.
-- The installer replaces only managed Naru definitions; it does not mutate global non-Naru agents to add skill access. Refresh every loaded install scope and restart OpenCode after changing the canonical skill contract.
-- The deprecated depth flag is accepted as a no-op for migration compatibility and does not change configuration.
-
-When changing installed inventory, update the install plan and its fixture inventory together.
-
-## Local evaluation harness
-
-`evaluation.mjs` validates bounded captured summaries and scores only the supplied deterministic fields: useful delegation or justified skip, concurrency/elapsed/child budgets, remediation, best-of-2 behavior, checks, and typed incidents. Evaluation manifests must explicitly state that prompts, code, and diffs are omitted; sensitive or raw source/patch fields are rejected. The manifest is limited to 256 KiB and 128 cases, and each sanitized journal to 128 entries.
-
-`scripts/naru-live-eval.mjs` supports deterministic local `--manifest <path> --dry-run` scoring, which is free, and provider-free contract preparation. The separately gated `--live` form requires exact reviewed confirmations for the contract, fixtures, provider, model, repetitions, timeouts, and spend. The current local adapter intentionally fails closed before starting OpenCode or making a provider request because runtime-byte binding and provider-enforced budgets are unavailable. Live output remains sanitized and bounded; it does not upload artifacts or claim a benchmark or live pilot ran.
-
-## Extension rules and reserved identifiers
-
-Keep extensions explicit and fail-closed:
-
-1. Add a canonical `agents/naru-<name>.md` with the correct mode, visibility, secret policy, and least-privilege role class. Do not copy Implement shell/edit permission to a role that does not require it.
-2. Add its ID to `NARU_AGENT_IDS`.
-3. If another Naru agent may call it, add the exact edge to `NARU_DISPATCH_GRAPH` and the caller's exact Task permission map. Do not use broad `naru-*` allows.
-4. Add it to `SOL_FLOOR_ROLES` only when downgrade must be prohibited. A preferred default that users may override belongs in `DEFAULT_AGENT_ASSIGNMENTS` instead.
-5. Update the installer inventory, config-policy expected inventory, relevant prompt contracts, and routing tests.
-6. If it is public, add a deliberate skill entry point and update user documentation. Internal agents should remain hidden.
-
-Reserved identifiers and contracts:
-
-- `naru-delegate-luna-*`, `naru-delegate-sol-*`, and `naru-delegate-sol-xhigh-*` are reserved for generated model routes. The legacy `naru-delegate-deep-*` prefix remains reserved for cleanup compatibility. Do not create files, custom agents, or user integrations with these prefixes.
-- Canonical `naru-*` IDs listed in `NARU_AGENT_IDS` are centrally routed and guarded against `task_id` resume.
-- The public skills are `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`; retired slash commands are not current entry points.
-- `naru-orchestrator` is root-selected and must fail closed when targeted through Task.
-- `naru-minion-*`, specialists, and judges are internal implementation details, not public integration targets.
-- The routing marker, schema version, managed alias prefix, dashboard plugin ID, and exact TUI registration path are compatibility contracts. Change them only with migration and targeted coverage.
-
-## Canonical local checks
-
-After installing the repository dependencies, the canonical root checks are:
+Three suites, all provider-free and dependency-free:
 
 ```sh
-npm test
-npm run test:bun
-npm run test:installer
-npm run typecheck
-npm run candidate:assemble
-npm run candidate:check
+npm test            # node --test --test-concurrency=1 tests/*.test.mjs
+npm run test:bun    # bun tests/bun-transport.test.mjs
+npm run test:installer  # sh tests/install.test.sh
 ```
 
-After installing the documentation dependencies, build the docs with:
+- `npm test` covers the tool library: `transport`, `compatibility`, `doctor`, `github-tools`,
+  `worktree`. `tests/bun-transport.test.mjs` self-skips when Bun is unavailable, so it is safe in
+  the Node run.
+- `npm run test:bun` re-runs the spawn transport under Bun, which is the runtime difference that has
+  historically broken tools.
+- `npm run test:installer` builds a temporary fixture tree and exercises `install.sh` there. It
+  never touches a real `~/.config/opencode`.
+
+Run the smallest relevant file while iterating:
+
+```sh
+node --test tests/worktree.test.mjs
+node --test tests/github-tools.test.mjs
+node --test tests/doctor.test.mjs
+node --test tests/transport.test.mjs
+node --test tests/compatibility.test.mjs
+sh tests/install.test.sh
+git diff --check
+```
+
+For documentation changes, build the site:
 
 ```sh
 npm --prefix docs run build
 ```
 
-## Targeted checks
+CI additionally runs `node scripts/naru-compat-smoke.mjs` against a pinned OpenCode build. That
+smoke is provider-free: it starts OpenCode with safe subcommands and an ephemeral local port and
+asserts the install is loadable.
 
-Run the smallest relevant check for the changed area:
+Local install health, at any time:
 
 ```sh
-node --test tests/model-routing.test.mjs
-node --test tests/behavioral-evals.test.mjs
-node --test tests/evaluation.test.mjs
-node --test tests/live-evaluation.test.mjs
-node tests/config-policy.test.mjs
-node tests/prompt-contracts.test.mjs
-node --test tests/scheduler-protocol.test.mjs
-node --test tests/scheduler-runtime.test.mjs
-node --test tests/scheduler-telemetry.test.mjs
-node --test tests/dashboard-contract.test.mjs
-node --test tests/merge-tui-config.test.mjs
-node --test tests/github-tools.test.mjs
-node --test tests/bun-transport.test.mjs
-node --test tests/worktree.test.mjs
-sh tests/install.test.sh
-git diff --check
+node tools/naru-doctor.js --json
 ```
 
-Routing changes normally require the model-routing, config-policy, and prompt-contract checks. Scheduler changes require the narrow protocol/runtime/telemetry checks. Dashboard changes require dashboard and merge-config checks. Installer inventory or migration changes require `tests/install.test.sh`. Evaluation changes require `tests/evaluation.test.mjs`. Tool changes require the relevant Node tool tests.
+## Installer
 
-Inspect any script or target before execution and do not run database-connected or mutation-capable checks merely because a command name appears routine.
+`install.sh` is preview-first. Nothing is mutated until you re-run with `--apply`:
+
+```sh
+sh install.sh --preview   # default; prints a bounded change summary
+sh install.sh --apply
+```
+
+Flags: `--copy` (copy instead of symlink), `--project` (install into `./.opencode`) or `--dir PATH`,
+`--replace-conflicts`, `--uninstall`, `--rollback ID`. `--with-dashboard` is a deprecated accepted
+no-op. `--uninstall` and `--rollback` also run preview-first and require the confirmation token that
+the preview prints.
+
+How it behaves:
+
+- The default target is `~/.config/opencode`. Source and target must not overlap, and managed target
+  directories must not be symlinks.
+- The inventory is explicit. A new file is not installed just because it exists in the repository —
+  add it to the plan in `install.sh` and to the installer test fixture together.
+- Agent and skill Markdown follows symlink mode by default, so `git pull` keeps an install current.
+  Tools, `tools/naru-lib`, `tools/package.json`, and `naru-runtime.example.json` are always
+  copy-pinned.
+- Every source is preflighted and the release is staged on the target filesystem before any existing
+  loader path changes.
+- Existing managed destinations move to a timestamped directory under `.naru-backups/`. A failed
+  transaction removes newly installed paths and restores those backups. Backups are never pruned
+  automatically.
+- Ownership is tracked in `.naru-install.json` with per-entry fingerprints. Retired managed paths —
+  the old slash commands, the seven `naru-minion-*` agents, the removed plugins and scheduler tool —
+  are removed on reinstall when they are healthy and manifest-owned. Modified or unowned paths are
+  preserved and reported unless a reviewed preview passes `--replace-conflicts`.
+- Unrelated OpenCode content, including other agents and your `naru-runtime.json`, is left alone.
+
+Requirements: OpenCode >= 1.18.4 and Node 24. `subagent_depth` >= 1 is required, and the OpenCode
+default satisfies it.
+
+## Extending Naru
+
+Keep additions explicit and fail-closed:
+
+1. Add `agents/naru-<name>.md` with the correct mode, visibility, model, and least-privilege
+   permission block. Start at `'*': deny`. Do not copy writer `edit` permission or runner `bash`
+   permission into a role that does not need it.
+2. If the orchestrator may call it, add the exact ID to the orchestrator's `task` map. Never use a
+   broad `naru-*` allow. Subagents stay `task: deny`.
+3. Add any new tool to `tools/` with validation in `tools/naru-lib/`, and give it a bounded,
+   enumerated operation surface rather than a passthrough.
+4. Update the `install.sh` inventory and the installer test fixture in the same change.
+5. Update the user guide and this guide when the change is user-visible.
+
+Reserved contracts: canonical `naru-*` agent IDs, the tool filenames (they are the tool IDs), the
+review dedupe marker, the runtime config `schemaVersion`, and the install manifest schema. Change
+any of them only with a migration and a targeted test.
 
 ## Release checklist
 
-1. Confirm the four-skill and eight-agent inventories are intentional and the orchestrator Task map allows only its seven minions.
-2. Confirm model defaults, v1 normalization/projection, exact assignments, Sol floors, canonical Terra/Sol invocation, and override behavior are covered.
-3. Confirm no agent accidentally gained model frontmatter; only the implementation fallback pin should remain.
-4. Review permission blocks for exact skill allowlists, the orchestrator's exact minion targets, role-specific minion permissions, shell/edit boundaries, secret guidance, and posting boundaries.
-5. Verify README and the three guides match public skills, installer flags, routing behavior, scheduler modes, evaluation limits, dashboard support, and safety limitations.
-6. Run the targeted checks for every touched subsystem and `git diff --check`; record any checks not run.
-7. Exercise the installer test when release inventory, migration, dashboard registration, or copy/symlink behavior changed.
-8. Review the complete diff for generated files, local paths, secrets, stale identifiers, and unintended user-configuration changes.
-9. Prepare release notes that call out user-visible routing, installation, migration, permission, or command changes without claiming unverified automation.
+1. Confirm the inventories are intentional: four skills, five agents, five tools, no plugins, and an
+   orchestrator `task` map that allows exactly the four subagents.
+2. Review permission blocks for the `'*': deny` start, the writer-only edit boundary, the runner-only
+   bash boundary, read-only `bash`/`external_directory` denials, and the secret path denials.
+3. Confirm the posting path is still orchestrator-only, `COMMENT`-only, single-attempt, and
+   deduped.
+4. Run the three suites plus `git diff --check`, and record any check that was not run. Run
+   `npm run test:installer` whenever installed inventory, migration, or copy/symlink behavior
+   changed.
+5. Verify the README and the guides match the installed inventory, installer flags, runtime config
+   surface, and stated limitations.
+6. Review the complete diff for local paths, secrets, stale identifiers, and unintended changes to
+   user configuration.

@@ -1,5 +1,17 @@
 # Naru Product and Audit Roadmap
 
+> [!WARNING]
+> **This roadmap is stale and has not been rewritten for the v-next simplification.**
+> It was written against the previous architecture and plans work for components that
+> no longer exist: Scheduling Protocol 2/3 and the scheduler tool, the delegate plugin
+> and generated model aliases, the Naru Activity dashboard and its TUI registration,
+> the live-evaluation harness, the seven `naru-minion-*` agents, the Judge role, and
+> the TypeScript `src/` candidate build. Phases 2–6 and the gate matrix should be
+> re-planned against the current architecture before being used to schedule work.
+> See [`CHANGELOG.md`](CHANGELOG.md) for what changed and the
+> [v2 migration plan](docs/src/content/docs/reference/opencode-v2-migration.md)
+> for what remains.
+
 **Status — 2026-07-21:** Planning document for the accepted local Phase 1 candidate and the work that may follow. This roadmap is not evidence that any phase, check, delivery, benchmark, compatibility claim, or release has been completed.
 
 ## Product direction

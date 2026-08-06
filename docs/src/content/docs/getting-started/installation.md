@@ -1,9 +1,9 @@
 ---
 title: Installation
-description: Install Naru globally, into a project, or with the optional activity dashboard.
+description: Install Naru globally, into a project, or into any OpenCode configuration directory.
 ---
 
-Naru requires OpenCode 1.18.4 or later and Node.js or Bun for the safe installer/doctor. Pull-request review workflows also need authenticated `gh`.
+Naru requires OpenCode 1.18.4 or later and Node 24 for the installer and doctor (the installer falls back to Bun when Node is absent). Pull-request workflows also need authenticated `gh`.
 
 ```mermaid
 flowchart LR
@@ -13,7 +13,7 @@ flowchart LR
   D["Transactional install"]:::write
   I["Write ownership manifest"]:::write
   J["Restart OpenCode"]:::gate
-  K["Ask naturally, or use a Naru skill"]:::entry
+  K["Select naru-orchestrator and ask"]:::entry
 
   subgraph targets["INSTALL TARGET"]
     direction TB
@@ -42,64 +42,72 @@ flowchart LR
 
 Everything left of `--apply` is read-only. `--apply` is the single mutation boundary: nothing is written to disk until you pass it.
 
-**Walkthrough:** `install.sh` previews by default and does not create the target. After review, add `--apply` with the same options. The installer validates and stages changed assets, preserves conflicts unless explicitly replaced, writes `.naru-install.json`, and skips unchanged paths. Skill and agent Markdown are symlinked by default; executable tools, runtime helpers, plugins, and dashboard code are always copied. Restart OpenCode after an applied change, then make one safe natural request, such as “Use the `naru-plan` skill to plan my objective.”
+**Walkthrough:** `install.sh` previews by default and does not create the target. After reviewing the bounded change summary, repeat the command with `--apply` and the same options. The installer stages changed assets, preserves conflicts unless you explicitly replace them, writes `.naru-install.json`, and skips unchanged paths. Restart OpenCode after an applied change, select `naru-orchestrator`, and ask for something in plain language.
 
-Clone, preview, and explicit apply are the current installation flow. There is no curl bootstrapper or package-registry installer. For checkout development, runtime TypeScript under `src/` is authoritative; tracked JavaScript and MJS runtime files are generated compatibility output and should not be edited directly.
+Clone, preview, explicit apply. There is no curl bootstrapper and no package-registry installer.
 
-Naru installs four on-demand skills: `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`. Skill content remains untrusted guidance and cannot change role, tools, scope, safety, or action authorization; a skill does not grant tools or make an agent read-only. OpenCode controls skill origins and duplicate-name precedence, so verify the selected source when global/project copies overlap. The installer does not mutate global non-Naru agents. Reapply every loaded global/project Naru install to retire healthy manifest-owned legacy definitions, then restart OpenCode. Modified or unowned paths are preserved, reported, and backed up only when the reviewed preview replaces them.
+## What gets installed
+
+- **Agents** — `naru-orchestrator`, `naru-reader`, `naru-reader-deep`, `naru-runner`, `naru-writer`.
+- **Skills** — `naru-plan`, `naru-impact`, `naru-triage`, `naru-review`.
+- **Tools** — `naru-git-read`, `naru-github-read`, `naru-github-post-review`, `naru-worktree`, `naru-doctor`, plus their shared helper library.
+- **`naru-runtime.example.json`** — an example only. The installer never creates or enables `naru-runtime.json`.
+
+Agent and skill Markdown is symlinked by default so a `git pull` in the checkout keeps it current; `--copy` pins copies instead. Executable tools and their helper library are always copied. Naru ships no plugins.
+
+Skill content is advisory guidance. It cannot change role, tools, scope, safety, or action authorization, and it never grants a tool or makes an agent read-only. OpenCode controls skill origins and duplicate-name precedence, so check which source is selected when global and project copies overlap. The installer does not modify non-Naru agents.
 
 ## Install targets
 
 ```sh
 # Global preview, then apply
-./install.sh
-./install.sh --apply
+sh install.sh --preview
+sh install.sh --apply
 
-# Current project's .opencode preview
-./install.sh --project
+# Current project's .opencode
+sh install.sh --project
 
-# Another configuration directory preview
-./install.sh --dir /path/to/opencode-config
+# Another configuration directory
+sh install.sh --dir /path/to/opencode-config
 
 # Copy Markdown instead of symlinking it
-./install.sh --copy
-
-# Apply the full-TUI activity dashboard
-./install.sh --apply --with-dashboard
+sh install.sh --copy
 
 # Replace reviewed unowned/modified managed conflicts exactly once
-./install.sh --apply --replace-conflicts
+sh install.sh --apply --replace-conflicts
 ```
 
-`--with-dashboard` safely updates the active TUI configuration and is unavailable under `opencode --mini`. The installer copies the runtime example but does not create or enable `naru-runtime.json`.
+A custom `--dir` must be a path OpenCode actually loads. Restart OpenCode after applying an update.
 
-Naru's current selected-orchestrator-to-seven-minion design is compatible with OpenCode's default depth of `1`. `--configure-subagent-depth` is accepted as a deprecated no-op for migration compatibility; do not use it in new setup commands. A custom `--dir` must be a path OpenCode actually loads. Restart OpenCode after applying an update.
+Naru's topology — one orchestrator over leaf subagents — works at OpenCode's default `subagent_depth` of `1`. `--configure-subagent-depth` and `--with-dashboard` are accepted as deprecated no-ops for migration compatibility; do not use them in new setup commands.
 
-## Lifecycle and local diagnosis
+## Lifecycle and rollback
 
-The versioned ownership manifest records the selected options, source fingerprint, location/mode, and exact managed roots. A repeated matching apply is a no-op and creates no backup. Replaced paths are stored under timestamped `.naru-backups/`; a successful replacement also records a bounded `.naru-transaction.json` receipt in that backup. Backups are retained indefinitely and are never pruned automatically.
+The versioned ownership manifest records the selected options, source fingerprint, location/mode, and the exact managed roots. A repeated matching apply is a no-op and creates no backup. Replaced paths are stored under timestamped `.naru-backups/`; a successful replacement also records a bounded `.naru-transaction.json` receipt in that backup. Backups are retained indefinitely and are never pruned automatically.
 
 Rollback always names one receipt-backed backup; there is no implicit latest selection. Both lifecycle commands preview by default and print a SHA-256 confirmation token bound to the target, action, current manifest, selected receipt, conflict choice, and complete plan:
 
 ```sh
 # Preview, then restore one successful manifest-owned transaction
-./install.sh --rollback 20260722123456-12345
-./install.sh --rollback 20260722123456-12345 --apply \
+sh install.sh --rollback 20260722123456-12345
+sh install.sh --rollback 20260722123456-12345 --apply \
   --confirm-rollback 'sha256:copy-the-current-preview-token'
 
 # Preview, then uninstall exactly the healthy manifest-owned paths shown
-./install.sh --uninstall
-./install.sh --uninstall --apply \
+sh install.sh --uninstall
+sh install.sh --uninstall --apply \
   --confirm-uninstall 'sha256:copy-the-current-preview-token'
 ```
 
-Use the same `--project` or `--dir PATH` selector as the install. A changed target or plan invalidates the token. Rollback blocks when a current path differs from the selected transaction. Uninstall removes healthy owned paths but preserves post-install modifications and retains `.naru-install.json` as ownership evidence, producing a partial uninstall. To replace or remove reviewed conflicts, request a new preview with `--replace-conflicts`; that preview has a different token. Unrelated files and backups are never removed.
+Use the same `--project` or `--dir PATH` selector as the install. A changed target or plan invalidates the token. Rollback blocks when a current path differs from the selected transaction. Uninstall removes healthy owned paths but preserves post-install modifications and retains `.naru-install.json` as the ownership record, producing a partial uninstall. To replace or remove reviewed conflicts, request a new preview with `--replace-conflicts`; that preview has a different token. Unrelated files and backups are never removed.
 
-Lifecycle rollback is deliberately limited to manifest-owned assets and `.naru-install.json`. It does not reverse OpenCode depth changes, TUI registration, or legacy migrations stored beside the same backup. A symlink rollback restores link topology, not older bytes in a source checkout behind a live link. Legacy backup directories without a valid receipt are not inferred. Failed current transactions still roll back automatically.
+Rollback is deliberately limited to manifest-owned assets and `.naru-install.json`. A symlink rollback restores link topology, not older bytes in a source checkout behind a live link. Legacy backup directories without a valid receipt are not inferred. A failed current transaction still rolls back automatically.
 
-If a managed path is unowned or differs from its recorded installed fingerprint, install preview labels it as a conflict and apply refuses to replace it. Inspect the bounded conflict list first; `--replace-conflicts` is the exact opt-in for that reviewed operation. Previously owned paths omitted by a changed install option set are preserved.
+If a managed path is unowned or differs from its recorded installed fingerprint, install preview labels it a conflict and apply refuses to replace it. Inspect the bounded conflict list first; `--replace-conflicts` is the exact opt-in for that reviewed operation. Previously owned paths omitted by a changed option set are preserved.
 
-Run the installed doctor without loading OpenCode plugins:
+## Doctor
+
+Run the installed doctor for a local health report. It loads no OpenCode plugins and contacts no provider:
 
 ```sh
 # Global
@@ -112,6 +120,10 @@ node .opencode/tools/naru-doctor.js --project-root .
 node /path/to/opencode-config/tools/naru-doctor.js --dir /path/to/opencode-config
 ```
 
-The report is provider-free, read-only, bounded, and path-sanitized. It reports manifest-backed scopes and source generation, effective global/project depth, OpenCode/runtime compatibility, routing/runtime config state, and dashboard installation/registration. `--source PATH` enables stale-copy comparison when no symlink can identify the source checkout; `--json` emits the same sanitized report as JSON. Custom scopes are reported as explicit but unconfirmed because the doctor cannot prove that OpenCode loads an arbitrary path.
+The report is read-only, bounded, and path-sanitized. It covers OpenCode and runtime compatibility, effective `subagent_depth`, each manifest-backed scope with its location/install mode and source version, asset health, runtime-config state including the effective workspace mode, and any issue paths. `--source PATH` enables stale-copy comparison when no symlink identifies the source checkout; `--json` emits the same sanitized report as JSON. Custom scopes are reported as explicit but unconfirmed, because the doctor cannot prove that OpenCode loads an arbitrary path.
 
-For migration, manual installation, and recovery details, use the canonical [user guide](/naru-opencode/user-guide/).
+## Optional runtime configuration
+
+`naru-runtime.json` is optional and never created for you. Copy `naru-runtime.example.json` next to it in the same configuration directory if you want to change the defaults; see the [runtime configuration reference](/naru-opencode/reference/runtime-config/) for the full schema.
+
+For operational detail and recovery procedures, see the canonical [user guide](/naru-opencode/user-guide/).

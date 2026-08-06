@@ -63,15 +63,7 @@ export default defineConfig({
         {
           label: 'Concepts',
           items: [
-            { label: 'Adaptive delegation', slug: 'concepts/adaptive-delegation' },
-            { label: 'Protocols', slug: 'concepts/protocols' },
-          ],
-        },
-        {
-          label: 'Runtime',
-          items: [
-            { label: 'Scheduler modes', slug: 'runtime/scheduler-modes' },
-            { label: 'Dashboard and telemetry', slug: 'runtime/dashboard-telemetry' },
+            { label: 'Delegation', slug: 'concepts/adaptive-delegation' },
           ],
         },
         {
@@ -85,6 +77,7 @@ export default defineConfig({
           label: 'Reference',
           items: [
             { label: 'Runtime configuration', slug: 'reference/runtime-config' },
+            { label: 'Compatibility', slug: 'reference/compatibility' },
             { label: 'Limitations', slug: 'reference/limitations' },
             { label: 'OpenCode v2 migration', slug: 'reference/opencode-v2-migration' },
             { label: 'For LLMs', slug: 'reference/for-llms' },
