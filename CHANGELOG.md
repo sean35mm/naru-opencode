@@ -2,6 +2,12 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.2.1] - 2026-08-06
+
+### Fixed
+
+- `naru install` and `naru upgrade` now pin copies instead of symlinks. A symlinked release install pointed into `~/.naru/versions/<version>`, which later upgrades supersede and users may prune, leaving dangling links in the OpenCode config. Installing from a cloned checkout with `install.sh` still defaults to symlinks, where `git pull` is the point.
+
 ## [0.2.0] - 2026-08-06
 
 A large simplification. Naru is now thin hard walls and a free interior: the walls

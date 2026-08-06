@@ -89,21 +89,13 @@ run_installer() {
     [ "$arg" = "--apply" ] && apply=true
   done
 
-  # Release installs are pinned copies, not symlinks. A symlinked install would
-  # point into ~/.naru/versions/<v>, which upgrades supersede and users may
-  # prune — leaving dangling links. Cloned checkouts still default to symlinks
-  # via install.sh directly, where `git pull` is the point.
-  copy=false
-  for arg in "$@"; do
-    [ "$arg" = "--copy" ] && copy=true
-  done
-  [ "$copy" = true ] || set -- "$@" --copy
-
   if [ "$apply" = true ]; then
     # Caller already opted in; pass through untouched.
     sh "$INSTALLER" "$@"
     return
   fi
+
+  set -- "$@"
   if [ -n "$mode" ]; then
     sh "$INSTALLER" "$mode" --preview "$@"
   else

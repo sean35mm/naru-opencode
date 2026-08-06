@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "implementation": {
+    "cleanWorkspaceRequired": true,
+    "maxConcurrentWriters": 50,
+    "workspaceMode": "auto"
+  }
+}
