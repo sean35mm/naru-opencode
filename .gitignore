@@ -3,6 +3,7 @@
 *.bak.*
 .naru-backups/
 /.naru-build/
+/dist/
 /.naru-evidence/
 node_modules/
 coverage/
