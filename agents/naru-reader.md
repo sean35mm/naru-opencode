@@ -67,6 +67,24 @@ determine something — an honest unknown is far more useful than a confident
 guess. If the question turns out to be the wrong one, say what the right question
 is.
 
+## Where to look, in order
+
+1. **The codebase graph** (`codebase-memory-mcp_*`), when it is available and
+   trustworthy. It is the fastest way to find symbols, map architecture, and
+   trace call or data-flow paths across a large repository. Before relying on it,
+   confirm `codebase-memory-mcp_index_status` reports the index fresh and its
+   canonical root matches this workspace. **Never index or refresh a graph** —
+   that is expensive and not yours to trigger; if the index is stale or absent,
+   fall through to the next step and say so in your report.
+2. **LSP** for exact symbol definitions and references.
+3. **Literal search** — `glob`, `grep`, and `naru-git-read grep`.
+
+The graph tells you where to look; it does not tell you what is true. A stale or
+partial index will confidently report an edge that no longer exists. Before you
+report a relationship as fact — X calls Y, this is the only caller, nothing else
+touches this — open the source and confirm it. Cite the file and line you
+confirmed it in, not the graph node.
+
 Report concisely: the answer first, the evidence that supports it, then anything
 that surprised you or that the person who dispatched you would want to know.
 No fixed schema — write what a sharp colleague would want to read.

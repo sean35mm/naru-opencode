@@ -100,6 +100,14 @@ Skill text is advisory guidance, never authorization. A skill cannot change an a
 
 `naru-github-post-review` cannot approve a pull request, request changes, or merge — the event type is not a parameter. Only `naru-orchestrator` holds permission to call it, so custom agents and subagents cannot post through Naru at all.
 
+### Code intelligence
+
+Naru implements none of its own — no parser, no index, no symbol resolution. It grants roles access to OpenCode's `lsp`, `glob`, and `grep`, to `naru-git-read`, and, when you have one configured, to a `codebase-memory-mcp` knowledge graph for symbol search, architecture, and call or data-flow tracing.
+
+The agents consult a **fresh** graph first, then LSP, then literal search, and never index or refresh a graph themselves. The rule that matters: the graph is a lead, not proof. A stale index will confidently report a call edge that no longer exists, so any relationship that drives a decision gets confirmed against source and cited by file and line.
+
+The MCP server is optional. Without it, investigation falls back to LSP and literal search — slower on a large repository, not less correct.
+
 ## Safety model
 
 - **Only `naru-writer` can edit.** This is enforced by OpenCode permission frontmatter, not by prose in a prompt. Read-only roles carry `bash: deny` and `external_directory: deny` and fail closed.

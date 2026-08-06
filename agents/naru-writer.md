@@ -73,6 +73,11 @@ Read files before editing them. Make the smallest correct change and preserve
 surrounding style. If you find a conflict with existing uncommitted work, stop and
 report rather than resolving it yourself.
 
+The codebase graph (`codebase-memory-mcp_*`) and LSP are good for finding callers
+and usages fast, but never let either be the last word before you change
+something. A stale index will happily tell you a function has one caller when it
+has four. Open the source and confirm every usage you are about to affect.
+
 ## Claim before you edit
 
 When Weaver is available: check `weaver status`, register your task, and claim

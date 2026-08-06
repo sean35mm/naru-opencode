@@ -40,6 +40,35 @@ flowchart TB
 
 You select `naru-orchestrator` in the OpenCode agent picker. The three subagents are `hidden: true`; they are dispatch targets for the orchestrator, not things you pick.
 
+## Code intelligence
+
+Naru implements none of its own. It has no parser, no index, and no symbol
+resolution — it grants roles access to what OpenCode and your MCP servers already
+provide, and tells them how much to trust each source.
+
+| Source | Provides | Required |
+| --- | --- | --- |
+| `glob`, `grep`, `lsp` | Literal search, symbol definitions and references | OpenCode native |
+| `naru-git-read` | `grep`, `diff`, `log`, `merge-base` with secret-path filtering | Ships with Naru |
+| `codebase-memory-mcp_*` | Code knowledge graph: symbol search, architecture, call and data-flow tracing | Optional external MCP server |
+
+All four agents can read the graph and LSP. `query_graph`, which runs arbitrary
+graph queries, is available to the subagents but not the orchestrator.
+
+The agents are instructed to consult these in order — a **fresh** graph first,
+then LSP, then literal search — and never to index or refresh a graph themselves.
+Freshness is checked with `codebase-memory-mcp_index_status` against the current
+workspace before anything from the graph is relied on.
+
+The rule that matters: **the graph is a lead, not proof.** A stale or partial
+index will confidently report a call edge that no longer exists, or claim a
+function has one caller when it has four. Before a relationship drives a decision
+or appears in a final answer, it is confirmed against source and cited by file and
+line.
+
+Without the MCP server, everything still works — investigation falls back to LSP
+and literal search, which is slower on large repositories but not less correct.
+
 ## Models
 
 None of the agents declare a `model:`. Each one uses whatever you have configured as your OpenCode default, so Naru runs on any provider without configuration.

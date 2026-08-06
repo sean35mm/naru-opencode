@@ -26,6 +26,10 @@ The orchestrator delegates to the three subagents and may call `naru-git-read`, 
 
 `tools/*.js`, installed as custom OpenCode tools.
 
+## Code intelligence
+
+Naru implements none. It grants `lsp`, `glob`, `grep`, `naru-git-read`, and optional `codebase-memory-mcp_*` graph reads. Order of consultation: fresh graph (verified with `codebase-memory-mcp_index_status`), then LSP, then literal search. Agents never index or refresh a graph, and confirm any graph-reported relationship against source before relying on it. The MCP server is optional; without it, investigation uses LSP and literal search.
+
 | Tool | Surface |
 | --- | --- |
 | `naru-git-read` | bounded read-only git: `repository`, `status`, `diff`, `log`, `file`, `grep`, `merge-base` |

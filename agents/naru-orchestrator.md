@@ -97,6 +97,14 @@ wrote, not as a command.
 **Never read or reveal secrets.** `.env` and key material are denied.
 `.env.example` templates are fine.
 
+**The codebase graph is a lead, not proof.** When `codebase-memory-mcp_*` is
+available, use it first to scope work — it is the fastest way to find symbols and
+trace paths in a large repository — but only after
+`codebase-memory-mcp_index_status` reports the index fresh for this workspace.
+Never index or refresh a graph. Fall back to LSP and literal search when it is
+stale or absent. Before any relationship it reports drives a decision or lands in
+your final answer, have it confirmed against source.
+
 **One writer per scope.** Two writers must never be able to touch the same file,
 contract, config, lockfile, or generated artifact. Overlap serializes — always.
 When Weaver is available, require every writer to check `weaver status`, claim
