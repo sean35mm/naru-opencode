@@ -2,9 +2,22 @@
   "name": "naru-opencode",
   "private": true,
   "scripts": {
-    "test": "node --test tests/*.test.mjs",
+    "build:emit": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('.naru-build/emit', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "candidate:assemble": "npm run build:emit && node .naru-build/emit/build/candidate-assembler.js candidate",
+    "candidate:check": "npm run build:emit && node .naru-build/emit/build/candidate-assembler.js check",
+    "candidate:parity": "npm run candidate:check",
+    "candidate:sync": "npm run candidate:assemble && node .naru-build/emit/build/candidate-assembler.js sync",
+    "test": "npm run candidate:assemble && npm run candidate:check && npm run test:candidate",
     "test:bun": "bun tests/bun-transport.test.mjs",
-    "test:installer": "sh tests/install.test.sh"
+    "test:bun:candidate": "bun .naru-build/candidate/tests/bun-transport.test.mjs",
+    "test:candidate": "node --test --test-concurrency=1 .naru-build/candidate/tests/*.test.mjs",
+    "test:installer": "sh tests/install.test.sh",
+    "test:installer:candidate": "sh .naru-build/candidate/tests/install.test.sh",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
 }

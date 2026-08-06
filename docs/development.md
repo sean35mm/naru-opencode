@@ -116,6 +116,24 @@ The prompt and fixture contract must not grow a durable plan store, background-j
 
 Documentation describes these contracts but does not replace them.
 
+## TypeScript source and candidate workflow
+
+`src/` is the authoritative runtime source: it contains eight `.ts` entry modules and 23 `.mts` modules. The tracked `.js` and `.mjs` files in `plugins/`, `scripts/`, and `tools/` are generated compatibility output, not hand-maintained source. The candidate assembler maps each runtime source module to its emitted public path and rejects inventory drift.
+
+The intentional non-emitted exceptions are `plugins/naru-minions-dashboard.tsx`, `install.sh`, MJS tests and fixtures, and static JSON and Markdown assets. Candidate assembly carries those files as explicit static mappings. It rejects TypeScript source (except the dashboard TSX), source maps, declarations, caches, symlinks, and secret-like paths from the candidate.
+
+`tsconfig.json` uses strict `NodeNext` checking for the `src/` tree. Naru does not use a runtime TypeScript loader or bundler, and its emitted candidate does not distribute source maps or declarations. Runtime validators remain necessary in the emitted Node/Bun code; TypeScript checking is an additional development safeguard, not a replacement for runtime validation.
+
+After changing an authoritative runtime module, use the root scripts in this order:
+
+```sh
+npm run typecheck
+npm run candidate:assemble
+npm run candidate:check
+```
+
+`candidate:assemble` compiles to `.naru-build/emit` and creates `.naru-build/candidate`; `candidate:check` validates the candidate manifest, source-to-emitted mappings, and parity with the tracked compatibility output. When the emitted public files are intentionally changed, `npm run candidate:sync` assembles the candidate and synchronizes those generated files before rechecking parity. It is a write operation, so do not use it as an incidental verification command.
+
 ## Routing and configuration lifecycle
 
 Naru Delegate loads `naru-models.json` beside its installed plugin. The file is optional, limited to 64 KiB, and must be a regular non-symlinked file. Parsing rejects unknown top-level/profile fields, unknown canonical agents, invalid model identifiers, invalid profile names, static Luna assignments, and attempts to downgrade a Sol-floor role.
@@ -250,6 +268,9 @@ After installing the repository dependencies, the canonical root checks are:
 npm test
 npm run test:bun
 npm run test:installer
+npm run typecheck
+npm run candidate:assemble
+npm run candidate:check
 ```
 
 After installing the documentation dependencies, build the docs with:

@@ -19,6 +19,12 @@ Git is a prerequisite for Git-backed workflows. GitHub review posting additional
 
 Compatibility checks are provider-free. They do not run a model command, inspect provider authentication, or call a provider.
 
+## Emitted candidate compatibility
+
+The release candidate runs the emitted `.js` and `.mjs` compatibility output with the current Node and Bun targets; its authoritative runtime source is strict NodeNext TypeScript under `src/`. It does not depend on a runtime TypeScript loader or bundler, and the candidate intentionally excludes TypeScript source, declarations, source maps, caches, and secret-like paths. The dashboard TSX, installer shell script, MJS tests, and static JSON and Markdown are explicit candidate exceptions.
+
+Candidate assembly and checking preserve the runtime validators in the emitted code and verify generated-output parity. They do not establish browser, native-Windows, WSL, curl-bootstrap, package-registry-install, or full-TUI rendering support. Those surfaces remain excluded or unclaimed until separately evidenced.
+
 ## What counts as evidence
 
 The policy above is a release target, not a claim that the matrix has passed. A local smoke result records sanitized observations and bounded check outcomes, but explicitly does **not** qualify the release or establish immutable-candidate evidence.

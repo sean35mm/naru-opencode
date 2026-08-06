@@ -30,6 +30,12 @@ cd naru-opencode
 
 The first command is a read-only preview; `--apply` is the explicit mutation boundary. The default target is `~/.config/opencode`, with Markdown symlinked and executable assets copy-pinned. Use `--project` from the target project for `.opencode`, `--dir PATH` for another config directory, `--copy` to copy Markdown, and `--with-dashboard` for the optional activity view. Installs write a versioned `.naru-install.json` ownership manifest, skip unchanged assets, and create timestamped backups only for replaced paths. Successful replacement backups include a bounded transaction receipt. `--rollback BACKUP_ID` and `--uninstall` preview by default; either mutation requires `--apply` plus the exact confirmation token printed by its current preview. Unowned or post-install modified managed paths are preserved unless the reviewed operation explicitly includes `--replace-conflicts`.
 
+## Development source and generated output
+
+Runtime code is authored in `src/`: eight `.ts` entry modules and 23 `.mts` modules are the authoritative source. The tracked `.js` and `.mjs` files under `plugins/`, `scripts/`, and `tools/` are generated compatibility output and must not be hand-edited. `plugins/naru-minions-dashboard.tsx`, `install.sh`, MJS tests, and static JSON and Markdown remain intentional non-emitted exceptions.
+
+Root TypeScript uses strict NodeNext checking. Naru runs the emitted JavaScript directly; it has no runtime TypeScript loader or bundler, and does not publish source maps or declarations. Runtime validators remain part of the emitted runtime contract; compile-time checking complements rather than replaces them. See the [development guide](docs/development.md#typescript-source-and-candidate-workflow) for the candidate assemble, check, and sync workflow.
+
 Naru's current depth-1-compatible design uses the selected orchestrator and its seven minions only. `--configure-subagent-depth` is accepted as a deprecated no-op for migration compatibility; do not add it to new setup commands.
 
 After an applied change, restart OpenCode. Then make one natural request, such as “Use the `naru-plan` skill to plan my objective.” For a provider-free, read-only state report, run `node ~/.config/opencode/tools/naru-doctor.js`; project and custom forms are documented in the installation guide.

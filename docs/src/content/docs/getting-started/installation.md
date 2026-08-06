@@ -44,6 +44,8 @@ Everything left of `--apply` is read-only. `--apply` is the single mutation boun
 
 **Walkthrough:** `install.sh` previews by default and does not create the target. After review, add `--apply` with the same options. The installer validates and stages changed assets, preserves conflicts unless explicitly replaced, writes `.naru-install.json`, and skips unchanged paths. Skill and agent Markdown are symlinked by default; executable tools, runtime helpers, plugins, and dashboard code are always copied. Restart OpenCode after an applied change, then make one safe natural request, such as “Use the `naru-plan` skill to plan my objective.”
 
+Clone, preview, and explicit apply are the current installation flow. There is no curl bootstrapper or package-registry installer. For checkout development, runtime TypeScript under `src/` is authoritative; tracked JavaScript and MJS runtime files are generated compatibility output and should not be edited directly.
+
 Naru installs four on-demand skills: `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`. Skill content remains untrusted guidance and cannot change role, tools, scope, safety, or action authorization; a skill does not grant tools or make an agent read-only. OpenCode controls skill origins and duplicate-name precedence, so verify the selected source when global/project copies overlap. The installer does not mutate global non-Naru agents. Reapply every loaded global/project Naru install to retire healthy manifest-owned legacy definitions, then restart OpenCode. Modified or unowned paths are preserved, reported, and backed up only when the reviewed preview replaces them.
 
 ## Install targets

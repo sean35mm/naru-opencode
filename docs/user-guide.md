@@ -27,6 +27,8 @@ cd naru-opencode
 
 Without `--apply`, the installer prints a bounded preview and does not create or remove anything under the target. An apply preflights and stages changed assets before replacement, writes a deterministic schema-v1 `.naru-install.json` ownership manifest, and skips matching assets. Replaced content is retained in a timestamped `.naru-backups/` directory and restored if that transaction fails. It copies the scheduler tool/plugin, doctor, runtime libraries, `naru-runtime.example.json`, and local evaluation script/fixture, but does not create an active runtime configuration or enable scheduling.
 
+Clone, preview, and explicit `--apply` remain the supported installation path. Naru does not provide a curl bootstrapper or a package-registry installer. A checkout is also required when developing Naru: its tracked JavaScript and MJS runtime files are generated compatibility output from authoritative TypeScript under `src/`, rather than files to edit directly.
+
 The manifest records exact managed roots, source fingerprints, selected options, source version, location mode, and copy/symlink method. If a current managed path is unowned or differs from its last recorded installed fingerprint, apply preserves it and stops. Only a reviewed apply with `--replace-conflicts` replaces and backs up those conflicts. Unrelated files and previously owned paths omitted by a later option set remain untouched.
 
 Naru is compatible with OpenCode's default depth of `1`: the selected orchestrator delegates only to its seven minions. `--configure-subagent-depth` remains accepted as a deprecated no-op for migration compatibility; do not use it in new setup commands.

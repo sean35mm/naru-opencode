@@ -9,6 +9,10 @@ Naru is maintained by one maintainer. Keep contributions focused, reviewable, lo
 3. Make the smallest change that preserves public commands, agent IDs, configuration keys, routing prefixes, and protocol IDs unless a migration is explicitly designed.
 4. Run the smallest relevant existing checks, review the complete diff, and report checks that were not run.
 
+## TypeScript and generated compatibility output
+
+`src/` is the authoritative runtime source. Do not hand-edit generated `.js` and `.mjs` compatibility files in `plugins/`, `scripts/`, or `tools/`; update the TypeScript source and use the candidate workflow instead. The dashboard TSX, `install.sh`, MJS tests, and static JSON and Markdown are deliberate non-emitted exceptions. Strict TypeScript checking does not replace runtime validation.
+
 ## Canonical checks
 
 The existing root checks are:
@@ -17,9 +21,12 @@ The existing root checks are:
 npm test
 npm run test:bun
 npm run test:installer
+npm run typecheck
+npm run candidate:assemble
+npm run candidate:check
 ```
 
-For documentation changes, also run `npm --prefix docs run build`. Use targeted checks from `docs/development.md` when a narrower check is appropriate, and run `git diff --check` for every change. Inspect package scripts before running commands; do not add a dependency or run a mutation-capable workflow as an incidental check.
+`npm run candidate:assemble` creates the emitted candidate, while `npm run candidate:check` verifies its manifest, inventory, and tracked-output parity. `npm run candidate:sync` intentionally updates generated compatibility files and is only for an intended runtime-output change. For documentation changes, also run `npm --prefix docs run build`. Use targeted checks from `docs/development.md` when a narrower check is appropriate, and run `git diff --check` for every change. Inspect package scripts before running commands; do not add a dependency or run a mutation-capable workflow as an incidental check.
 
 ## Boundaries
 

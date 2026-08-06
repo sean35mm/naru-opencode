@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "declarationMap": false,
+    "inlineSourceMap": false,
+    "noEmit": false,
+    "outDir": ".naru-build/emit",
+    "rootDir": "src",
+    "sourceMap": false
+  }
+}

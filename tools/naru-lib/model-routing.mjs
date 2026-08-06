@@ -5,49 +5,10 @@ const SOL_ALIAS_PREFIX = 'naru-delegate-sol-';
 const SOL_XHIGH_ALIAS_PREFIX = 'naru-delegate-sol-xhigh-';
 const LEGACY_DEEP_ALIAS_PREFIX = 'naru-delegate-deep-';
 const ROUTING_MARKER = '<!-- naru-delegate-routing:v1 -->';
-
 export const NARU_DELEGATE_PROTOCOL = 2;
 export const NARU_MINIMUM_SUBAGENT_DEPTH = 1;
-
-export const DEFAULT_MODEL_PROFILES = Object.freeze({
-  luna: Object.freeze({ model: 'openai/gpt-5.6-luna-fast', variant: 'high' }),
-  terra: Object.freeze({ model: 'openai/gpt-5.6-terra-fast', variant: 'high' }),
-  sol: Object.freeze({ model: 'openai/gpt-5.6-sol-fast', variant: 'high' }),
-});
-
-export const DEFAULT_AGENT_ASSIGNMENTS = Object.freeze({
-  'naru-orchestrator': 'sol',
-});
-
 export const NARU_AGENT_IDS = Object.freeze([
-  'naru-orchestrator',
-  'naru-minion-scout',
-  'naru-minion-investigate',
-  'naru-minion-architect',
-  'naru-minion-implement',
-  'naru-minion-debug',
-  'naru-minion-verify',
-  'naru-minion-judge',
-]);
-
-export const SOL_FLOOR_ROLES = Object.freeze([
-  'naru-minion-architect',
-  'naru-minion-judge',
-]);
-
-// Retained so a copy-pinned v1 dashboard can still load after the routing helper is upgraded.
-export const DEEP_FLOOR_ROLES = SOL_FLOOR_ROLES;
-
-export const LUNA_ELIGIBLE_ROLES = Object.freeze([
-  'naru-minion-scout',
-  'naru-minion-investigate',
-  'naru-minion-implement',
-  'naru-minion-debug',
-  'naru-minion-verify',
-]);
-
-export const NARU_DISPATCH_GRAPH = Object.freeze({
-  'naru-orchestrator': Object.freeze([
+    'naru-orchestrator',
     'naru-minion-scout',
     'naru-minion-investigate',
     'naru-minion-architect',
@@ -55,454 +16,467 @@ export const NARU_DISPATCH_GRAPH = Object.freeze({
     'naru-minion-debug',
     'naru-minion-verify',
     'naru-minion-judge',
-  ]),
-});
-
-export const NARU_DISPATCH_ENTRY_TOPOLOGY = Object.freeze({
-  root: Object.freeze(['naru-orchestrator']),
-  subtask: Object.freeze([]),
-});
-
-const ORCHESTRATOR_MODEL_ROUTED_TARGETS = Object.freeze([
-  'naru-minion-scout',
-  'naru-minion-investigate',
-  'naru-minion-architect',
-  'naru-minion-implement',
-  'naru-minion-debug',
-  'naru-minion-verify',
-  'naru-minion-judge',
 ]);
-
+export const DEFAULT_MODEL_PROFILES = Object.freeze({
+    luna: Object.freeze({ model: 'openai/gpt-5.6-luna-fast', variant: 'high' }),
+    terra: Object.freeze({ model: 'openai/gpt-5.6-terra-fast', variant: 'high' }),
+    sol: Object.freeze({ model: 'openai/gpt-5.6-sol-fast', variant: 'high' }),
+});
+export const DEFAULT_AGENT_ASSIGNMENTS = Object.freeze({
+    'naru-orchestrator': 'sol',
+});
+export const SOL_FLOOR_ROLES = Object.freeze([
+    'naru-minion-architect',
+    'naru-minion-judge',
+]);
+// Retained so a copy-pinned v1 dashboard can still load after the routing helper is upgraded.
+export const DEEP_FLOOR_ROLES = SOL_FLOOR_ROLES;
+export const LUNA_ELIGIBLE_ROLES = Object.freeze([
+    'naru-minion-scout',
+    'naru-minion-investigate',
+    'naru-minion-implement',
+    'naru-minion-debug',
+    'naru-minion-verify',
+]);
+export const NARU_DISPATCH_GRAPH = Object.freeze({
+    'naru-orchestrator': Object.freeze([
+        'naru-minion-scout',
+        'naru-minion-investigate',
+        'naru-minion-architect',
+        'naru-minion-implement',
+        'naru-minion-debug',
+        'naru-minion-verify',
+        'naru-minion-judge',
+    ]),
+});
+export const NARU_DISPATCH_ENTRY_TOPOLOGY = Object.freeze({
+    root: Object.freeze(['naru-orchestrator']),
+    subtask: Object.freeze([]),
+});
+const ORCHESTRATOR_MODEL_ROUTED_TARGETS = Object.freeze([
+    'naru-minion-scout',
+    'naru-minion-investigate',
+    'naru-minion-architect',
+    'naru-minion-implement',
+    'naru-minion-debug',
+    'naru-minion-verify',
+    'naru-minion-judge',
+]);
 const AGENT_ID_SET = new Set(NARU_AGENT_IDS);
 const SOL_FLOOR_SET = new Set(SOL_FLOOR_ROLES);
 const LUNA_ELIGIBLE_SET = new Set(LUNA_ELIGIBLE_ROLES);
 const DELEGABLE_TARGETS = new Set(Object.values(NARU_DISPATCH_GRAPH).flat());
-
+function isNaruAgentId(value) {
+    return typeof value === 'string' && AGENT_ID_SET.has(value);
+}
 function isPlainObject(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
 }
-
-export function deriveAndValidateNaruRequiredDepth({
-  agentIDs = NARU_AGENT_IDS,
-  entryTopology = NARU_DISPATCH_ENTRY_TOPOLOGY,
-  expectedDepth,
-  graph = NARU_DISPATCH_GRAPH,
-} = {}) {
-  if (!Array.isArray(agentIDs) || !agentIDs.length) throw new Error('Naru agentIDs must be a non-empty array');
-  const agents = new Set(agentIDs);
-  if (agents.size !== agentIDs.length || agentIDs.some((agent) => typeof agent !== 'string' || !agent)) {
-    throw new Error('Naru agentIDs must contain unique non-empty strings');
-  }
-  if (!isPlainObject(graph)) throw new Error('Naru dispatch graph must be an object');
-  if (!isPlainObject(entryTopology)) throw new Error('Naru dispatch entry topology must be an object');
-  assertAllowedKeys(entryTopology, ['root', 'subtask'], 'Naru dispatch entry topology');
-
-  const entries = {};
-  for (const kind of ['root', 'subtask']) {
-    const values = entryTopology[kind];
-    if (!Array.isArray(values) || values.some((agent) => typeof agent !== 'string' || !agents.has(agent))) {
-      throw new Error(`Naru ${kind} entries must contain only known canonical agents`);
-    }
-    if (new Set(values).size !== values.length) throw new Error(`Naru ${kind} entries contain duplicates`);
-    entries[kind] = values;
-  }
-
-  for (const [caller, targets] of Object.entries(graph)) {
-    if (!agents.has(caller)) throw new Error(`Naru dispatch graph contains unknown caller: ${caller}`);
-    if (!Array.isArray(targets) || !targets.length) {
-      throw new Error(`Naru dispatcher ${caller} must have at least one target`);
-    }
-    if (new Set(targets).size !== targets.length) {
-      throw new Error(`Naru dispatcher ${caller} contains duplicate targets`);
-    }
-    for (const target of targets) {
-      if (typeof target !== 'string' || !agents.has(target)) {
-        throw new Error(`Naru dispatch graph contains unknown target from ${caller}: ${String(target)}`);
-      }
-    }
-  }
-
-  const depths = new Map();
-  const visiting = [];
-  function downstreamDepth(agent) {
-    if (depths.has(agent)) return depths.get(agent);
-    const cycleIndex = visiting.indexOf(agent);
-    if (cycleIndex !== -1) {
-      throw new Error(`Naru dispatch graph contains a cycle: ${[...visiting.slice(cycleIndex), agent].join(' -> ')}`);
-    }
-    visiting.push(agent);
-    const depth = Math.max(0, ...(graph[agent] ?? []).map((target) => 1 + downstreamDepth(target)));
-    visiting.pop();
-    depths.set(agent, depth);
-    return depth;
-  }
-
-  for (const caller of Object.keys(graph)) downstreamDepth(caller);
-
-  const reachable = new Set();
-  function visit(agent) {
-    if (reachable.has(agent)) return;
-    reachable.add(agent);
-    for (const target of graph[agent] ?? []) visit(target);
-  }
-  for (const agent of [...entries.root, ...entries.subtask]) visit(agent);
-  for (const caller of Object.keys(graph)) {
-    if (!reachable.has(caller)) throw new Error(`Naru dispatcher is unreachable from supported entries: ${caller}`);
-  }
-
-  const requiredDepth = Math.max(
-    0,
-    ...entries.root.map((agent) => downstreamDepth(agent)),
-    ...entries.subtask.map((agent) => 1 + downstreamDepth(agent)),
-  );
-  if (expectedDepth !== undefined && requiredDepth !== expectedDepth) {
-    throw new Error(`Naru dispatch topology requires subagent depth ${requiredDepth}; expected ${expectedDepth}`);
-  }
-  return requiredDepth;
+function isUnknownArray(value) {
+    return Array.isArray(value);
 }
-
+export function deriveAndValidateNaruRequiredDepth({ agentIDs = NARU_AGENT_IDS, entryTopology = NARU_DISPATCH_ENTRY_TOPOLOGY, expectedDepth, graph = NARU_DISPATCH_GRAPH, } = {}) {
+    if (!isUnknownArray(agentIDs) || !agentIDs.length)
+        throw new Error('Naru agentIDs must be a non-empty array');
+    const agents = new Set(agentIDs);
+    if (agents.size !== agentIDs.length ||
+        agentIDs.some((agent) => typeof agent !== 'string' || !agent)) {
+        throw new Error('Naru agentIDs must contain unique non-empty strings');
+    }
+    const validatedAgentIDs = agentIDs.filter((agent) => typeof agent === 'string' && agent.length > 0);
+    const validatedAgents = new Set(validatedAgentIDs);
+    if (!isPlainObject(graph))
+        throw new Error('Naru dispatch graph must be an object');
+    if (!isPlainObject(entryTopology))
+        throw new Error('Naru dispatch entry topology must be an object');
+    assertAllowedKeys(entryTopology, ['root', 'subtask'], 'Naru dispatch entry topology');
+    const entries = { root: [], subtask: [] };
+    for (const kind of ['root', 'subtask']) {
+        const values = entryTopology[kind];
+        if (!isUnknownArray(values) || values.some((agent) => typeof agent !== 'string' || !validatedAgents.has(agent))) {
+            throw new Error(`Naru ${kind} entries must contain only known canonical agents`);
+        }
+        if (new Set(values).size !== values.length)
+            throw new Error(`Naru ${kind} entries contain duplicates`);
+        entries[kind] = values.filter((agent) => typeof agent === 'string');
+    }
+    for (const [caller, targets] of Object.entries(graph)) {
+        if (!validatedAgents.has(caller))
+            throw new Error(`Naru dispatch graph contains unknown caller: ${caller}`);
+        if (!isUnknownArray(targets) || !targets.length) {
+            throw new Error(`Naru dispatcher ${caller} must have at least one target`);
+        }
+        if (new Set(targets).size !== targets.length) {
+            throw new Error(`Naru dispatcher ${caller} contains duplicate targets`);
+        }
+        for (const target of targets) {
+            if (typeof target !== 'string' || !agents.has(target)) {
+                throw new Error(`Naru dispatch graph contains unknown target from ${caller}: ${String(target)}`);
+            }
+        }
+    }
+    const validatedGraph = graph;
+    const depths = new Map();
+    const visiting = [];
+    function downstreamDepth(agent) {
+        const knownDepth = depths.get(agent);
+        if (knownDepth !== undefined)
+            return knownDepth;
+        const cycleIndex = visiting.indexOf(agent);
+        if (cycleIndex !== -1) {
+            throw new Error(`Naru dispatch graph contains a cycle: ${[...visiting.slice(cycleIndex), agent].join(' -> ')}`);
+        }
+        visiting.push(agent);
+        const depth = Math.max(0, ...(validatedGraph[agent] ?? []).map((target) => 1 + downstreamDepth(target)));
+        visiting.pop();
+        depths.set(agent, depth);
+        return depth;
+    }
+    for (const caller of Object.keys(graph))
+        downstreamDepth(caller);
+    const reachable = new Set();
+    function visit(agent) {
+        if (reachable.has(agent))
+            return;
+        reachable.add(agent);
+        for (const target of validatedGraph[agent] ?? [])
+            visit(target);
+    }
+    for (const agent of [...entries.root, ...entries.subtask])
+        visit(agent);
+    for (const caller of Object.keys(graph)) {
+        if (!reachable.has(caller))
+            throw new Error(`Naru dispatcher is unreachable from supported entries: ${caller}`);
+    }
+    const requiredDepth = Math.max(0, ...entries.root.map((agent) => downstreamDepth(agent)), ...entries.subtask.map((agent) => 1 + downstreamDepth(agent)));
+    if (expectedDepth !== undefined && requiredDepth !== expectedDepth) {
+        throw new Error(`Naru dispatch topology requires subagent depth ${requiredDepth}; expected ${expectedDepth}`);
+    }
+    return requiredDepth;
+}
 export const NARU_REQUIRED_SUBAGENT_DEPTH = deriveAndValidateNaruRequiredDepth({
-  expectedDepth: NARU_MINIMUM_SUBAGENT_DEPTH,
+    expectedDepth: NARU_MINIMUM_SUBAGENT_DEPTH,
 });
-
 function assertAllowedKeys(value, allowed, label) {
-  for (const key of Object.keys(value)) {
-    if (!allowed.includes(key)) throw new Error(`${label} contains unsupported field: ${key}`);
-  }
+    for (const key of Object.keys(value)) {
+        if (!allowed.includes(key))
+            throw new Error(`${label} contains unsupported field: ${key}`);
+    }
 }
-
 function clone(value) {
-  return structuredClone(value);
+    return structuredClone(value);
 }
-
 function validateProfile(value, label) {
-  if (!isPlainObject(value)) throw new Error(`${label} must be an object`);
-  assertAllowedKeys(value, ['model', 'variant'], label);
-  const slash = typeof value.model === 'string' ? value.model.indexOf('/') : -1;
-  const provider = slash > 0 ? value.model.slice(0, slash) : '';
-  const model = slash > 0 ? value.model.slice(slash + 1) : '';
-  if (
-    !/^[A-Za-z0-9._-]+$/.test(provider) ||
-    !model ||
-    model.length > 256 ||
-    /[\u0000-\u0020\u007f]/.test(model)
-  ) {
-    throw new Error(`${label}.model must use provider/model format`);
-  }
-  if (
-    value.variant !== undefined &&
-    (typeof value.variant !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(value.variant))
-  ) {
-    throw new Error(`${label}.variant is invalid`);
-  }
-  return { model: value.model, ...(value.variant === undefined ? {} : { variant: value.variant }) };
-}
-
-export function parseRoutingOverrides(value) {
-  if (value === undefined || value === null) {
-    return { schemaVersion: NARU_DELEGATE_PROTOCOL, profiles: {}, agents: {} };
-  }
-  if (!isPlainObject(value)) throw new Error('naru-models.json must contain an object');
-  assertAllowedKeys(value, ['schemaVersion', 'profiles', 'agents'], 'naru-models.json');
-  if (value.schemaVersion !== 1 && value.schemaVersion !== NARU_DELEGATE_PROTOCOL) {
-    throw new Error(`naru-models.json schemaVersion must be 1 or ${NARU_DELEGATE_PROTOCOL}`);
-  }
-  const legacy = value.schemaVersion === 1;
-  const profileNames = legacy ? ['fast', 'deep'] : PROFILE_NAMES;
-  const profileMap = legacy ? { fast: 'terra', deep: 'sol' } : {};
-  const assignmentMap = legacy ? { fast: 'terra', deep: 'sol' } : {};
-
-  const profiles = {};
-  if (value.profiles !== undefined) {
-    if (!isPlainObject(value.profiles)) throw new Error('naru-models.json profiles must be an object');
-    assertAllowedKeys(value.profiles, profileNames, 'naru-models.json profiles');
-    for (const name of profileNames) {
-      if (value.profiles[name] !== undefined) {
-        profiles[profileMap[name] ?? name] = validateProfile(
-          value.profiles[name],
-          `naru-models.json profiles.${name}`,
-        );
-      }
+    if (!isPlainObject(value))
+        throw new Error(`${label} must be an object`);
+    assertAllowedKeys(value, ['model', 'variant'], label);
+    const profileModel = typeof value.model === 'string' ? value.model : '';
+    const slash = profileModel.indexOf('/');
+    const provider = slash > 0 ? profileModel.slice(0, slash) : '';
+    const model = slash > 0 ? profileModel.slice(slash + 1) : '';
+    if (!/^[A-Za-z0-9._-]+$/.test(provider) ||
+        !model ||
+        model.length > 256 ||
+        /[\u0000-\u0020\u007f]/.test(model)) {
+        throw new Error(`${label}.model must use provider/model format`);
     }
-  }
-
-  const agents = {};
-  if (value.agents !== undefined) {
-    if (!isPlainObject(value.agents)) throw new Error('naru-models.json agents must be an object');
-    for (const [agent, profile] of Object.entries(value.agents)) {
-      if (!AGENT_ID_SET.has(agent)) throw new Error(`naru-models.json contains unknown agent: ${agent}`);
-      if (legacy && !Object.hasOwn(assignmentMap, profile)) {
-        throw new Error(`naru-models.json agents.${agent} is invalid`);
-      }
-      const assignment = assignmentMap[profile] ?? profile;
-      if (!ASSIGNMENT_NAMES.includes(assignment)) {
-        throw new Error(`naru-models.json agents.${agent} is invalid`);
-      }
-      if (SOL_FLOOR_SET.has(agent) && assignment !== 'sol') {
-        throw new Error(`naru-models.json cannot downgrade Sol-floor agent: ${agent}`);
-      }
-      agents[agent] = assignment;
+    if (value.variant !== undefined &&
+        (typeof value.variant !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(value.variant))) {
+        throw new Error(`${label}.variant is invalid`);
     }
-  }
-
-  return { schemaVersion: NARU_DELEGATE_PROTOCOL, profiles, agents };
+    const variant = typeof value.variant === 'string' ? value.variant : undefined;
+    return { model: profileModel, ...(variant === undefined ? {} : { variant }) };
 }
-
+function isAssignmentName(value) {
+    return typeof value === 'string' && ASSIGNMENT_NAMES.some((name) => name === value);
+}
+export function parseRoutingOverrides(value = undefined) {
+    if (value === undefined || value === null) {
+        return { schemaVersion: NARU_DELEGATE_PROTOCOL, profiles: {}, agents: {} };
+    }
+    if (!isPlainObject(value))
+        throw new Error('naru-models.json must contain an object');
+    assertAllowedKeys(value, ['schemaVersion', 'profiles', 'agents'], 'naru-models.json');
+    if (value.schemaVersion !== 1 && value.schemaVersion !== NARU_DELEGATE_PROTOCOL) {
+        throw new Error(`naru-models.json schemaVersion must be 1 or ${NARU_DELEGATE_PROTOCOL}`);
+    }
+    const legacy = value.schemaVersion === 1;
+    const profileNames = legacy ? ['fast', 'deep'] : PROFILE_NAMES;
+    const profiles = {};
+    if (value.profiles !== undefined) {
+        if (!isPlainObject(value.profiles))
+            throw new Error('naru-models.json profiles must be an object');
+        assertAllowedKeys(value.profiles, profileNames, 'naru-models.json profiles');
+        for (const name of profileNames) {
+            if (value.profiles[name] !== undefined) {
+                const normalizedName = name === 'fast' ? 'terra' : name === 'deep' ? 'sol' : name;
+                profiles[normalizedName] = validateProfile(value.profiles[name], `naru-models.json profiles.${name}`);
+            }
+        }
+    }
+    const agents = {};
+    if (value.agents !== undefined) {
+        if (!isPlainObject(value.agents))
+            throw new Error('naru-models.json agents must be an object');
+        for (const [agent, profile] of Object.entries(value.agents)) {
+            if (!isNaruAgentId(agent))
+                throw new Error(`naru-models.json contains unknown agent: ${agent}`);
+            if (legacy && profile !== 'fast' && profile !== 'deep') {
+                throw new Error(`naru-models.json agents.${agent} is invalid`);
+            }
+            const assignment = legacy ? (profile === 'fast' ? 'terra' : 'sol') : profile;
+            if (!isAssignmentName(assignment)) {
+                throw new Error(`naru-models.json agents.${agent} is invalid`);
+            }
+            if (SOL_FLOOR_SET.has(agent) && assignment !== 'sol') {
+                throw new Error(`naru-models.json cannot downgrade Sol-floor agent: ${agent}`);
+            }
+            agents[agent] = assignment;
+        }
+    }
+    return { schemaVersion: NARU_DELEGATE_PROTOCOL, profiles, agents };
+}
 export function resolveRoutingPolicy(overrides = parseRoutingOverrides()) {
-  const parsed = parseRoutingOverrides(overrides);
-  const profiles = {
-    luna: parsed.profiles.luna ? { ...parsed.profiles.luna } : { ...DEFAULT_MODEL_PROFILES.luna },
-    terra: parsed.profiles.terra ? { ...parsed.profiles.terra } : { ...DEFAULT_MODEL_PROFILES.terra },
-    sol: parsed.profiles.sol ? { ...parsed.profiles.sol } : { ...DEFAULT_MODEL_PROFILES.sol },
-  };
-  const agents = {};
-  for (const agent of NARU_AGENT_IDS) {
-    agents[agent] =
-      parsed.agents[agent] ??
-      DEFAULT_AGENT_ASSIGNMENTS[agent] ??
-      (SOL_FLOOR_SET.has(agent) ? 'sol' : 'terra');
-  }
-  return { schemaVersion: NARU_DELEGATE_PROTOCOL, profiles, agents };
+    const parsed = parseRoutingOverrides(overrides);
+    const profiles = {
+        luna: parsed.profiles.luna ? { ...parsed.profiles.luna } : { ...DEFAULT_MODEL_PROFILES.luna },
+        terra: parsed.profiles.terra ? { ...parsed.profiles.terra } : { ...DEFAULT_MODEL_PROFILES.terra },
+        sol: parsed.profiles.sol ? { ...parsed.profiles.sol } : { ...DEFAULT_MODEL_PROFILES.sol },
+    };
+    const agents = {};
+    for (const agent of NARU_AGENT_IDS) {
+        agents[agent] =
+            parsed.agents[agent] ??
+                DEFAULT_AGENT_ASSIGNMENTS[agent] ??
+                (SOL_FLOOR_SET.has(agent) ? 'sol' : 'terra');
+    }
+    return { schemaVersion: NARU_DELEGATE_PROTOCOL, profiles, agents };
 }
-
 export function mergeRoutingOverrides(baseValue, nextValue) {
-  const base = parseRoutingOverrides(baseValue);
-  if (nextValue === undefined || nextValue === null) return clone(base);
-  const next = parseRoutingOverrides(nextValue);
-  return {
-    schemaVersion: NARU_DELEGATE_PROTOCOL,
-    profiles: { ...base.profiles, ...next.profiles },
-    agents: { ...base.agents, ...next.agents },
-  };
+    const base = parseRoutingOverrides(baseValue);
+    if (nextValue === undefined || nextValue === null)
+        return clone(base);
+    const next = parseRoutingOverrides(nextValue);
+    return {
+        schemaVersion: NARU_DELEGATE_PROTOCOL,
+        profiles: { ...base.profiles, ...next.profiles },
+        agents: { ...base.agents, ...next.agents },
+    };
 }
-
 function routedAlias(prefix, agent) {
-  if (!AGENT_ID_SET.has(agent)) throw new Error(`unknown Naru agent: ${agent}`);
-  return `${prefix}${agent.slice('naru-'.length)}`;
+    if (!isNaruAgentId(agent))
+        throw new Error(`unknown Naru agent: ${agent}`);
+    return `${prefix}${agent.slice('naru-'.length)}`;
 }
-
 export function lunaAlias(agent) {
-  return routedAlias(LUNA_ALIAS_PREFIX, agent);
+    return routedAlias(LUNA_ALIAS_PREFIX, agent);
 }
-
 export function solAlias(agent) {
-  return routedAlias(SOL_ALIAS_PREFIX, agent);
+    return routedAlias(SOL_ALIAS_PREFIX, agent);
 }
-
 export function solXhighAlias(agent) {
-  return routedAlias(SOL_XHIGH_ALIAS_PREFIX, agent);
+    return routedAlias(SOL_XHIGH_ALIAS_PREFIX, agent);
 }
-
 function legacyDeepAlias(agent) {
-  return routedAlias(LEGACY_DEEP_ALIAS_PREFIX, agent);
+    return routedAlias(LEGACY_DEEP_ALIAS_PREFIX, agent);
 }
-
 export const MANAGED_LUNA_ALIASES = Object.freeze(LUNA_ELIGIBLE_ROLES.map((agent) => lunaAlias(agent)).sort());
-
-export const MANAGED_SOL_ALIASES = Object.freeze(
-  [...DELEGABLE_TARGETS]
+export const MANAGED_SOL_ALIASES = Object.freeze([...DELEGABLE_TARGETS]
     .filter((agent) => !SOL_FLOOR_SET.has(agent))
     .map((agent) => solAlias(agent))
-    .sort(),
-);
-
-export const MANAGED_SOL_XHIGH_ALIASES = Object.freeze(
-  ORCHESTRATOR_MODEL_ROUTED_TARGETS.map((agent) => solXhighAlias(agent)).sort(),
-);
-
-export const LEGACY_DEEP_ALIASES = Object.freeze(
-  [...DELEGABLE_TARGETS]
+    .sort());
+export const MANAGED_SOL_XHIGH_ALIASES = Object.freeze(ORCHESTRATOR_MODEL_ROUTED_TARGETS.map((agent) => solXhighAlias(agent)).sort());
+export const LEGACY_DEEP_ALIASES = Object.freeze([...DELEGABLE_TARGETS]
     .filter((agent) => !SOL_FLOOR_SET.has(agent))
     .map((agent) => legacyDeepAlias(agent))
-    .sort(),
-);
-
-export const MANAGED_ROUTING_ALIASES = Object.freeze(
-  [...MANAGED_LUNA_ALIASES, ...MANAGED_SOL_ALIASES, ...MANAGED_SOL_XHIGH_ALIASES].sort(),
-);
-
+    .sort());
+export const MANAGED_ROUTING_ALIASES = Object.freeze([...MANAGED_LUNA_ALIASES, ...MANAGED_SOL_ALIASES, ...MANAGED_SOL_XHIGH_ALIASES].sort());
 const MANAGED_LUNA_ALIAS_SET = new Set(MANAGED_LUNA_ALIASES);
 const MANAGED_SOL_ALIAS_SET = new Set(MANAGED_SOL_ALIASES);
 const MANAGED_SOL_XHIGH_ALIAS_SET = new Set(MANAGED_SOL_XHIGH_ALIASES);
 const LEGACY_DEEP_ALIAS_SET = new Set(LEGACY_DEEP_ALIASES);
-
 export function isLunaAlias(agent) {
-  return MANAGED_LUNA_ALIAS_SET.has(agent);
+    return MANAGED_LUNA_ALIAS_SET.has(agent);
 }
-
 export function isSolAlias(agent) {
-  return MANAGED_SOL_ALIAS_SET.has(agent);
+    return MANAGED_SOL_ALIAS_SET.has(agent);
 }
-
 export function isSolXhighAlias(agent) {
-  return MANAGED_SOL_XHIGH_ALIAS_SET.has(agent);
+    return MANAGED_SOL_XHIGH_ALIAS_SET.has(agent);
 }
-
 export function isDeepAlias(agent) {
-  return LEGACY_DEEP_ALIAS_SET.has(agent);
+    return LEGACY_DEEP_ALIAS_SET.has(agent);
 }
-
 export function isManagedRoutingAlias(agent) {
-  return isLunaAlias(agent) || isSolAlias(agent) || isSolXhighAlias(agent) || LEGACY_DEEP_ALIAS_SET.has(agent);
+    return isLunaAlias(agent) || isSolAlias(agent) || isSolXhighAlias(agent) || LEGACY_DEEP_ALIAS_SET.has(agent);
 }
-
 export function canonicalAgentForRoute(agent) {
-  if (isLunaAlias(agent)) return `naru-${agent.slice(LUNA_ALIAS_PREFIX.length)}`;
-  if (isSolAlias(agent)) return `naru-${agent.slice(SOL_ALIAS_PREFIX.length)}`;
-  if (isSolXhighAlias(agent)) return `naru-${agent.slice(SOL_XHIGH_ALIAS_PREFIX.length)}`;
-  if (LEGACY_DEEP_ALIAS_SET.has(agent)) return `naru-${agent.slice(LEGACY_DEEP_ALIAS_PREFIX.length)}`;
+    let canonical;
+    if (isLunaAlias(agent))
+        canonical = `naru-${agent.slice(LUNA_ALIAS_PREFIX.length)}`;
+    else if (isSolAlias(agent))
+        canonical = `naru-${agent.slice(SOL_ALIAS_PREFIX.length)}`;
+    else if (isSolXhighAlias(agent))
+        canonical = `naru-${agent.slice(SOL_XHIGH_ALIAS_PREFIX.length)}`;
+    else if (isDeepAlias(agent))
+        canonical = `naru-${agent.slice(LEGACY_DEEP_ALIAS_PREFIX.length)}`;
+    return isNaruAgentId(canonical) ? canonical : undefined;
 }
-
 function validateSourceAgent(agent, value) {
-  if (!isPlainObject(value)) throw new Error(`missing Naru agent configuration: ${agent}`);
-  if (typeof value.description !== 'string' || !value.description.includes('Naru')) {
-    throw new Error(`agent ${agent} does not have a canonical Naru description`);
-  }
-  if (typeof value.prompt !== 'string' || !/^# Naru\b/m.test(value.prompt)) {
-    throw new Error(`agent ${agent} does not have a canonical Naru prompt`);
-  }
+    if (!isPlainObject(value))
+        throw new Error(`missing Naru agent configuration: ${agent}`);
+    if (typeof value.description !== 'string' || !value.description.includes('Naru')) {
+        throw new Error(`agent ${agent} does not have a canonical Naru description`);
+    }
+    if (typeof value.prompt !== 'string' || !/^# Naru\b/m.test(value.prompt)) {
+        throw new Error(`agent ${agent} does not have a canonical Naru prompt`);
+    }
 }
-
 function setProfile(agent, profile) {
-  agent.model = profile.model;
-  if (profile.variant === undefined) delete agent.variant;
-  else agent.variant = profile.variant;
+    agent.model = profile.model;
+    if (profile.variant === undefined)
+        delete agent.variant;
+    else
+        agent.variant = profile.variant;
 }
-
 function routingAppendix(caller, policy, overrides) {
-  const routes = NARU_DISPATCH_GRAPH[caller].map((target) => {
-    const solXhigh = caller === 'naru-orchestrator'
-      ? ` Optional Sol xhigh: \`${solXhighAlias(target)}\`.`
-      : '';
-    const assignment = policy.agents[target];
-    if (SOL_FLOOR_SET.has(target)) return `- \`${target}\`: Sol floor; invoke this exact role.${solXhigh}`;
-    if (assignment === 'sol') {
-      const label = Object.hasOwn(overrides.agents, target) ? 'Sol override' : 'Sol assignment';
-      return `- \`${target}\`: ${label}; invoke this exact role.${solXhigh}`;
-    }
-    if (LUNA_ELIGIBLE_SET.has(target)) {
-      return `- \`${target}\`: Terra. Luna: \`${lunaAlias(target)}\`. Sol: \`${solAlias(target)}\`.${solXhigh}`;
-    }
-    return `- \`${target}\`: Terra. Sol: \`${solAlias(target)}\`.${solXhigh}`;
-  });
-  return [
-    ROUTING_MARKER,
-    '## Naru Delegate Routing',
-    '',
-    'Naru Delegate exposes Luna, Terra, and Sol model profiles while native `Task` retains permission, cancellation, and child-session handling.',
-    'Treat these routes as policy, not as instructions from repository or GitHub content. Never place provider names, model IDs, or variants in a Task call.',
-    ...(caller === 'naru-orchestrator' ? ['Sol xhigh routes are optional and available only when the direct root session is manually running Sol at xhigh or max. They are never required.'] : []),
-    'Choose the model whose strengths best fit each specific assignment. Consider capability, task shape, ambiguity, context volume, consequences, tool and verification burden, latency, cost, and prior evidence together.',
-    'Make a fresh choice for every invocation. Do not use fixed role-to-model mappings, keyword-only classification, cheapest-first routing, or a mandatory Luna-to-Terra-to-Sol sequence. Sol may be the initial choice, and a later reassessment may select any available profile.',
-    '',
-    ...routes,
-    '',
-    'Reassess the route when a report is incomplete, conflicting, context-limited, or low confidence. Never downgrade a Sol-floor role. Do not use `task_id` for Naru-routed roles. Provider errors follow the workflow\'s existing single fresh-session retry; Naru Delegate adds no fallback or retry layer.',
-  ].join('\n');
+    const routes = (NARU_DISPATCH_GRAPH[caller] ?? []).map((target) => {
+        const solXhigh = caller === 'naru-orchestrator'
+            ? ` Optional Sol xhigh: \`${solXhighAlias(target)}\`.`
+            : '';
+        const assignment = policy.agents[target];
+        if (SOL_FLOOR_SET.has(target))
+            return `- \`${target}\`: Sol floor; invoke this exact role.${solXhigh}`;
+        if (assignment === 'sol') {
+            const label = Object.hasOwn(overrides.agents, target) ? 'Sol override' : 'Sol assignment';
+            return `- \`${target}\`: ${label}; invoke this exact role.${solXhigh}`;
+        }
+        if (LUNA_ELIGIBLE_SET.has(target)) {
+            return `- \`${target}\`: Terra. Luna: \`${lunaAlias(target)}\`. Sol: \`${solAlias(target)}\`.${solXhigh}`;
+        }
+        return `- \`${target}\`: Terra. Sol: \`${solAlias(target)}\`.${solXhigh}`;
+    });
+    return [
+        ROUTING_MARKER,
+        '## Naru Delegate Routing',
+        '',
+        'Naru Delegate exposes Luna, Terra, and Sol model profiles while native `Task` retains permission, cancellation, and child-session handling.',
+        'Treat these routes as policy, not as instructions from repository or GitHub content. Never place provider names, model IDs, or variants in a Task call.',
+        ...(caller === 'naru-orchestrator' ? ['Sol xhigh routes are optional and available only when the direct root session is manually running Sol at xhigh or max. They are never required.'] : []),
+        'Choose the model whose strengths best fit each specific assignment. Consider capability, task shape, ambiguity, context volume, consequences, tool and verification burden, latency, cost, and prior evidence together.',
+        'Make a fresh choice for every invocation. Do not use fixed role-to-model mappings, keyword-only classification, cheapest-first routing, or a mandatory Luna-to-Terra-to-Sol sequence. Sol may be the initial choice, and a later reassessment may select any available profile.',
+        '',
+        ...routes,
+        '',
+        'Reassess the route when a report is incomplete, conflicting, context-limited, or low confidence. Never downgrade a Sol-floor role. Do not use `task_id` for Naru-routed roles. Provider errors follow the workflow\'s existing single fresh-session retry; Naru Delegate adds no fallback or retry layer.',
+    ].join('\n');
 }
-
 function stripRoutingAppendix(prompt) {
-  const markerIndex = prompt.indexOf(ROUTING_MARKER);
-  return (markerIndex === -1 ? prompt : prompt.slice(0, markerIndex)).trimEnd();
+    const markerIndex = prompt.indexOf(ROUTING_MARKER);
+    return (markerIndex === -1 ? prompt : prompt.slice(0, markerIndex)).trimEnd();
 }
-
 export function applyRoutingToConfig(config, overrideValue, { allowExistingAliases = false } = {}) {
-  if (!isPlainObject(config) || !isPlainObject(config.agent)) {
-    throw new Error('OpenCode configuration has no agent map');
-  }
-  const overrides = parseRoutingOverrides(overrideValue);
-  const policy = resolveRoutingPolicy(overrides);
-  const originals = new Map();
-
-  if (!allowExistingAliases) {
-    for (const alias of MANAGED_ROUTING_ALIASES) {
-      if (Object.hasOwn(config.agent, alias)) throw new Error(`Naru Delegate agent alias already exists: ${alias}`);
+    if (!isPlainObject(config) || !isPlainObject(config.agent)) {
+        throw new Error('OpenCode configuration has no agent map');
     }
-  }
-
-  for (const agent of NARU_AGENT_IDS) {
-    validateSourceAgent(agent, config.agent[agent]);
-    const next = clone(config.agent[agent]);
-    setProfile(next, policy.profiles[policy.agents[agent]]);
-    originals.set(agent, next);
-  }
-
-  for (const [caller, targets] of Object.entries(NARU_DISPATCH_GRAPH)) {
-    const next = originals.get(caller);
-    if (!isPlainObject(next.permission) || !isPlainObject(next.permission.task)) {
-      throw new Error(`agent ${caller} has no exact Task permission map`);
+    const overrides = parseRoutingOverrides(overrideValue);
+    const policy = resolveRoutingPolicy(overrides);
+    const originals = new Map();
+    if (!allowExistingAliases) {
+        for (const alias of MANAGED_ROUTING_ALIASES) {
+            if (Object.hasOwn(config.agent, alias))
+                throw new Error(`Naru Delegate agent alias already exists: ${alias}`);
+        }
     }
-    if (next.permission.task['*'] !== 'deny') {
-      throw new Error(`agent ${caller} Task permissions must begin fail-closed`);
+    for (const agent of NARU_AGENT_IDS) {
+        const source = config.agent[agent];
+        validateSourceAgent(agent, source);
+        const next = clone(source);
+        setProfile(next, policy.profiles[policy.agents[agent]]);
+        originals.set(agent, next);
     }
-    for (const target of targets) {
-      if (next.permission.task[target] !== 'allow') {
-        throw new Error(`agent ${caller} does not allow expected target ${target}`);
-      }
+    for (const caller of Object.keys(NARU_DISPATCH_GRAPH)) {
+        const targets = NARU_DISPATCH_GRAPH[caller];
+        const next = originals.get(caller);
+        const permission = next.permission;
+        if (!isPlainObject(permission) || !isPlainObject(permission.task)) {
+            throw new Error(`agent ${caller} has no exact Task permission map`);
+        }
+        const taskPermissions = permission.task;
+        if (taskPermissions['*'] !== 'deny') {
+            throw new Error(`agent ${caller} Task permissions must begin fail-closed`);
+        }
+        for (const target of targets) {
+            if (taskPermissions[target] !== 'allow') {
+                throw new Error(`agent ${caller} does not allow expected target ${target}`);
+            }
+        }
+        for (const alias of [...MANAGED_ROUTING_ALIASES, ...LEGACY_DEEP_ALIASES]) {
+            delete taskPermissions[alias];
+        }
+        for (const target of targets) {
+            if (policy.agents[target] !== 'terra')
+                continue;
+            if (LUNA_ELIGIBLE_SET.has(target))
+                taskPermissions[lunaAlias(target)] = 'allow';
+            taskPermissions[solAlias(target)] = 'allow';
+        }
+        if (caller === 'naru-orchestrator') {
+            for (const alias of MANAGED_SOL_XHIGH_ALIASES)
+                taskPermissions[alias] = 'allow';
+        }
+        next.prompt = `${stripRoutingAppendix(next.prompt)}\n\n${routingAppendix(caller, policy, overrides)}`;
     }
-    for (const alias of [...MANAGED_ROUTING_ALIASES, ...LEGACY_DEEP_ALIASES]) {
-      delete next.permission.task[alias];
+    const aliases = new Map();
+    for (const target of DELEGABLE_TARGETS) {
+        if (policy.agents[target] !== 'terra')
+            continue;
+        if (LUNA_ELIGIBLE_SET.has(target)) {
+            const alias = lunaAlias(target);
+            const next = clone(originals.get(target));
+            next.name = alias;
+            next.mode = 'subagent';
+            next.hidden = true;
+            next.description = `Luna Naru Delegate route for ${target}. ${next.description}`;
+            setProfile(next, policy.profiles.luna);
+            aliases.set(alias, next);
+        }
+        const alias = solAlias(target);
+        const next = clone(originals.get(target));
+        next.name = alias;
+        next.mode = 'subagent';
+        next.hidden = true;
+        next.description = `Sol Naru Delegate route for ${target}. ${next.description}`;
+        setProfile(next, policy.profiles.sol);
+        aliases.set(alias, next);
     }
-    for (const target of targets) {
-      if (policy.agents[target] !== 'terra') continue;
-      if (LUNA_ELIGIBLE_SET.has(target)) next.permission.task[lunaAlias(target)] = 'allow';
-      next.permission.task[solAlias(target)] = 'allow';
+    for (const target of ORCHESTRATOR_MODEL_ROUTED_TARGETS) {
+        const alias = solXhighAlias(target);
+        const next = clone(originals.get(target));
+        next.name = alias;
+        next.mode = 'subagent';
+        next.hidden = true;
+        next.description = `Sol xhigh Naru Delegate route for ${target}. ${next.description}`;
+        setProfile(next, { model: policy.profiles.sol.model, variant: 'xhigh' });
+        aliases.set(alias, next);
     }
-    if (caller === 'naru-orchestrator') {
-      for (const alias of MANAGED_SOL_XHIGH_ALIASES) next.permission.task[alias] = 'allow';
-    }
-    next.prompt = `${stripRoutingAppendix(next.prompt)}\n\n${routingAppendix(caller, policy, overrides)}`;
-  }
-
-  const aliases = new Map();
-  for (const target of DELEGABLE_TARGETS) {
-    if (policy.agents[target] !== 'terra') continue;
-    if (LUNA_ELIGIBLE_SET.has(target)) {
-      const alias = lunaAlias(target);
-      const next = clone(originals.get(target));
-      next.name = alias;
-      next.mode = 'subagent';
-      next.hidden = true;
-      next.description = `Luna Naru Delegate route for ${target}. ${next.description}`;
-      setProfile(next, policy.profiles.luna);
-      aliases.set(alias, next);
-    }
-    const alias = solAlias(target);
-    const next = clone(originals.get(target));
-    next.name = alias;
-    next.mode = 'subagent';
-    next.hidden = true;
-    next.description = `Sol Naru Delegate route for ${target}. ${next.description}`;
-    setProfile(next, policy.profiles.sol);
-    aliases.set(alias, next);
-  }
-
-  for (const target of ORCHESTRATOR_MODEL_ROUTED_TARGETS) {
-    const alias = solXhighAlias(target);
-    const next = clone(originals.get(target));
-    next.name = alias;
-    next.mode = 'subagent';
-    next.hidden = true;
-    next.description = `Sol xhigh Naru Delegate route for ${target}. ${next.description}`;
-    setProfile(next, { model: policy.profiles.sol.model, variant: 'xhigh' });
-    aliases.set(alias, next);
-  }
-
-  for (const alias of [...MANAGED_ROUTING_ALIASES, ...LEGACY_DEEP_ALIASES]) delete config.agent[alias];
-  for (const [agent, value] of originals) config.agent[agent] = value;
-  for (const [agent, value] of aliases) config.agent[agent] = value;
-
-  return {
-    schemaVersion: NARU_DELEGATE_PROTOCOL,
-    routedAgents: originals.size,
-    lunaAliases: [...aliases.keys()].filter((alias) => isLunaAlias(alias)).length,
-    solAliases: [...aliases.keys()].filter((alias) => isSolAlias(alias)).length,
-    solXhighAliases: [...aliases.keys()].filter((alias) => isSolXhighAlias(alias)).length,
-    aliases: [...aliases.keys()].sort(),
-    profiles: clone(policy.profiles),
-  };
+    for (const alias of [...MANAGED_ROUTING_ALIASES, ...LEGACY_DEEP_ALIASES])
+        delete config.agent[alias];
+    for (const [agent, value] of originals)
+        config.agent[agent] = value;
+    for (const [agent, value] of aliases)
+        config.agent[agent] = value;
+    return {
+        schemaVersion: NARU_DELEGATE_PROTOCOL,
+        routedAgents: originals.size,
+        lunaAliases: [...aliases.keys()].filter((alias) => isLunaAlias(alias)).length,
+        solAliases: [...aliases.keys()].filter((alias) => isSolAlias(alias)).length,
+        solXhighAliases: [...aliases.keys()].filter((alias) => isSolXhighAlias(alias)).length,
+        aliases: [...aliases.keys()].sort(),
+        profiles: clone(policy.profiles),
+    };
 }
-
 export const NARU_DELEGATE_ROUTING_MARKER = ROUTING_MARKER;
