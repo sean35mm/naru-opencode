@@ -29,7 +29,7 @@ flowchart TB
   subgraph impl["IMPLEMENTATION — the only path to your files"]
     direction TB
     ORC{{"naru-orchestrator<br/>cannot edit · cannot run bash"}}:::coord
-    ORC --> RD["naru-reader<br/>naru-reader-deep"]:::read
+    ORC --> RD["naru-reader"]:::read
     ORC --> RUN["naru-runner<br/>tests · typecheck · build"]:::shell
     ORC --> WR["naru-writer<br/>the only role that edits"]:::write
   end
@@ -60,7 +60,7 @@ flowchart TB
 
 This colour vocabulary is used in every diagram across these docs: teal is read-only, olive runs shell commands, amber writes to your workspace, red marks something that is refused or explicitly unproven.
 
-The four subagents are hidden and cannot spawn children of their own. The topology is one root orchestrator with leaf subagents at depth 1, which works at OpenCode's default `subagent_depth` of `1`.
+The three subagents are hidden and cannot spawn children of their own. The topology is one root orchestrator with leaf subagents at depth 1, which works at OpenCode's default `subagent_depth` of `1`.
 
 <div class="naru-grid">
   <a class="naru-card" href="/naru-opencode/getting-started/quickstart/">
@@ -71,7 +71,7 @@ The four subagents are hidden and cannot spawn children of their own. The topolo
   <a class="naru-card" href="/naru-opencode/concepts/adaptive-delegation/">
     <span class="naru-card__index">02 — CONCEPTS</span>
     <p class="naru-card__title">Delegation</p>
-    <p class="naru-card__body">How the orchestrator splits work across the four subagents, and why only one of them can write.</p>
+    <p class="naru-card__body">How the orchestrator splits work across the three subagents, and why only one of them can write.</p>
   </a>
   <a class="naru-card" href="/naru-opencode/reference/runtime-config/">
     <span class="naru-card__index">03 — RUNTIME</span>

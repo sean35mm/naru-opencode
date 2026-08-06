@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+
+      - name: Verify tag matches VERSION
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(tr -d ' \n' < VERSION)"
+          if [ "$tag" != "$version" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match VERSION (${version})" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_ENV"
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run installer tests
+        run: npm run test:installer
+
+      - name: Build release tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="naru-${version}"
+          mkdir -p "dist/${stage}"
+          cp -R agents skills tools bin install.sh bootstrap.sh \
+                naru-runtime.example.json VERSION LICENSE README.md "dist/${stage}/"
+          chmod 755 "dist/${stage}/bin/naru" "dist/${stage}/install.sh" "dist/${stage}/bootstrap.sh"
+          tar -czf "dist/naru-${version}.tar.gz" -C dist "${stage}"
+          cd dist
+          sha256sum "naru-${version}.tar.gz" > "naru-${version}.tar.gz.sha256"
+          cat "naru-${version}.tar.gz.sha256"
+
+      - name: Verify the tarball installs cleanly
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          tar -xzf "dist/naru-${version}.tar.gz" -C "$work"
+          root="${work}/naru-${version}"
+          test -x "${root}/bin/naru"
+          test -f "${root}/install.sh"
+          # Preview must not create the target directory.
+          HOME="${work}/home" sh "${root}/install.sh" --preview
+          if [ -e "${work}/home/.config/opencode" ]; then
+            echo "preview mutated the target" >&2
+            exit 1
+          fi
+          HOME="${work}/home" sh "${root}/install.sh" --apply --copy
+          test -f "${work}/home/.config/opencode/agents/naru-orchestrator.md"
+          test -f "${work}/home/.config/opencode/tools/naru-doctor.js"
+          HOME="${work}/home" "${root}/bin/naru" version
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            "dist/naru-${version}.tar.gz" \
+            "dist/naru-${version}.tar.gz.sha256" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes

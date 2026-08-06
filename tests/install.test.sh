@@ -23,7 +23,6 @@ for skill in naru-plan naru-impact naru-triage naru-review; do
 done
 cp "$ROOT/agents/naru-orchestrator.md" "$FIXTURE/agents/naru-orchestrator.md"
 cp "$ROOT/agents/naru-reader.md" "$FIXTURE/agents/naru-reader.md"
-cp "$ROOT/agents/naru-reader-deep.md" "$FIXTURE/agents/naru-reader-deep.md"
 cp "$ROOT/agents/naru-runner.md" "$FIXTURE/agents/naru-runner.md"
 cp "$ROOT/agents/naru-writer.md" "$FIXTURE/agents/naru-writer.md"
 
@@ -70,7 +69,7 @@ has_mode_600() { [ "$(LC_ALL=C ls -ld "$1" | cut -c 2-10)" = "rw-------" ]; }
 has_native_inventory() {
   install_root="$1"
   [ "$(find "$install_root/skills" \( -type f -o -type l \) -name SKILL.md | wc -l | tr -d ' ')" -eq 4 ] || return 1
-  [ "$(find "$install_root/agents" \( -type f -o -type l \) -name 'naru-*.md' | wc -l | tr -d ' ')" -eq 5 ] || return 1
+  [ "$(find "$install_root/agents" \( -type f -o -type l \) -name 'naru-*.md' | wc -l | tr -d ' ')" -eq 4 ] || return 1
   [ ! -e "$install_root/commands/naru-plan.md" ]
 }
 
@@ -127,7 +126,7 @@ mkdir -p "$T1"
 apply_install --dir "$T1"
 if is_link "$T1/skills/naru-plan/SKILL.md"; then pass "symlinked skill"; else fail "symlinked skill"; fi
 if is_link "$T1/agents/naru-orchestrator.md"; then pass "symlinked orchestrator"; else fail "symlinked orchestrator"; fi
-if has_native_inventory "$T1"; then pass "four skills and five agents installed"; else fail "four skills and five agents installed"; fi
+if has_native_inventory "$T1"; then pass "four skills and four agents installed"; else fail "four skills and four agents installed"; fi
 if is_file "$T1/tools/naru-git-read.js" && is_file "$T1/tools/naru-doctor.js" && is_file "$T1/tools/package.json"; then pass "tools and doctor copy-pinned with ESM marker"; else fail "tools and doctor copy-pinned with ESM marker"; fi
 if is_dir "$T1/tools/naru-lib"; then pass "tool helper dir copy-pinned"; else fail "tool helper dir copy-pinned"; fi
 if is_file "$T1/tools/naru-worktree.js"; then pass "worktree runtime copy-pinned"; else fail "worktree runtime copy-pinned"; fi
@@ -142,7 +141,7 @@ mkdir -p "$T2"
 apply_install --dir "$T2" --copy
 if is_file "$T2/skills/naru-plan/SKILL.md"; then pass "copied skill"; else fail "copied skill"; fi
 if is_file "$T2/agents/naru-orchestrator.md"; then pass "copied orchestrator"; else fail "copied orchestrator"; fi
-if has_native_inventory "$T2"; then pass "four copied skills and five agents installed"; else fail "four copied skills and five agents installed"; fi
+if has_native_inventory "$T2"; then pass "four copied skills and four agents installed"; else fail "four copied skills and four agents installed"; fi
 if is_file "$T2/tools/naru-git-read.js"; then pass "copied tool"; else fail "copied tool"; fi
 
 # Project mode targets the caller's project, not the Naru source clone.
@@ -150,7 +149,7 @@ PROJECT="$TMP/project"
 mkdir -p "$PROJECT"
 (cd "$PROJECT" && apply_install --project >/dev/null)
 if is_link "$PROJECT/.opencode/skills/naru-plan/SKILL.md"; then pass "project install"; else fail "project install"; fi
-if has_native_inventory "$PROJECT/.opencode"; then pass "four skills and five project agents installed"; else fail "four skills and five project agents installed"; fi
+if has_native_inventory "$PROJECT/.opencode"; then pass "four skills and four project agents installed"; else fail "four skills and four project agents installed"; fi
 if [ "$(grep -c '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru-writer.md"; then pass "project root and delegated runtime permissions"; else fail "project root and delegated runtime permissions"; fi
 
 # 3. Paths with spaces.
@@ -441,9 +440,9 @@ for LIFECYCLE_SCOPE in global project custom; do
 
     lifecycle_install_run "$LIFECYCLE_SOURCE" "$LIFECYCLE_SCOPE" "$LIFECYCLE_CONTEXT" "$LIFECYCLE_TARGET" "$LIFECYCLE_MODE" --apply >/dev/null
     if has_native_inventory "$LIFECYCLE_TARGET"; then
-      pass "$LIFECYCLE_LABEL installs four skills and five agents"
+      pass "$LIFECYCLE_LABEL installs four skills and four agents"
     else
-      fail "$LIFECYCLE_LABEL installs four skills and five agents"
+      fail "$LIFECYCLE_LABEL installs four skills and four agents"
     fi
     cp "$LIFECYCLE_TARGET/.naru-install.json" "$LIFECYCLE_ROOT/v1-manifest.json"
     mkdir -p "$LIFECYCLE_TARGET/commands"
@@ -553,6 +552,29 @@ elif [ -f "$T13_INVALID/.naru-install.json" ] && [ -f "$T13_INVALID/tools/naru-g
 else
   fail "invalid rollback id preserves installed state"
 fi
+
+# 14. The naru CLI front door.
+CLI="$ROOT/bin/naru"
+if [ -x "$CLI" ]; then pass "naru CLI is executable"; else fail "naru CLI is executable"; fi
+
+if "$CLI" help 2>&1 | grep -q 'naru <command>'; then pass "naru help describes usage"; else fail "naru help describes usage"; fi
+
+if "$CLI" bogus-command >/dev/null 2>&1; then fail "naru rejects unknown commands"; else pass "naru rejects unknown commands"; fi
+
+if "$CLI" version 2>&1 | grep -q "naru $(tr -d ' \n' < "$ROOT/VERSION")"; then pass "naru version reports the release version"; else fail "naru version reports the release version"; fi
+
+# Non-interactive install must preview and refuse to mutate without --apply.
+T14="$TMP/t14"
+mkdir -p "$T14"
+CLI_OUT="$(NARU_HOME="$T14/naru-home" "$CLI" install --dir "$T14/target" < /dev/null 2>&1 || true)"
+if printf '%s' "$CLI_OUT" | grep -q 'Preview only; no files changed'; then pass "naru install previews first"; else fail "naru install previews first"; fi
+if printf '%s' "$CLI_OUT" | grep -q 'Rerun with --apply'; then pass "naru install refuses to apply non-interactively"; else fail "naru install refuses to apply non-interactively"; fi
+if [ ! -e "$T14/target" ]; then pass "naru install creates nothing without confirmation"; else fail "naru install creates nothing without confirmation"; fi
+
+# bootstrap.sh must reject bad options rather than guessing.
+if sh "$ROOT/bootstrap.sh" --nope >/dev/null 2>&1; then fail "bootstrap rejects unknown options"; else pass "bootstrap rejects unknown options"; fi
+if sh "$ROOT/bootstrap.sh" --version >/dev/null 2>&1; then fail "bootstrap requires a value for --version"; else pass "bootstrap requires a value for --version"; fi
+if sh "$ROOT/bootstrap.sh" --help 2>&1 | grep -q 'modify-path'; then pass "bootstrap documents --modify-path"; else fail "bootstrap documents --modify-path"; fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

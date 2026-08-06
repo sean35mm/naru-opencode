@@ -2,8 +2,6 @@
 description: The only Naru role that can edit files. Makes scoped, owned changes.
 mode: subagent
 hidden: true
-model: openai/gpt-5.6-terra-fast
-variant: high
 permission:
   '*': deny
   skill:

@@ -5,13 +5,12 @@ description: The five Naru agents, their exact permissions, and when the orchest
 
 Naru installs five OpenCode agents: one visible primary orchestrator and four hidden subagents. The orchestrator plans and delegates; it cannot edit files or run commands. Exactly one subagent — `naru-writer` — can change your workspace.
 
-The topology is flat. The orchestrator is the only root, the four subagents are leaves, and every subagent has `task: deny`, so nothing can spawn grandchildren. `subagent_depth` of `1` is enough; OpenCode's default is fine.
+The topology is flat. The orchestrator is the only root, the three subagents are leaves, and every subagent has `task: deny`, so nothing can spawn grandchildren. `subagent_depth` of `1` is enough; OpenCode's default is fine.
 
 ```mermaid
 flowchart TB
   ORC{{"naru-orchestrator — plans, never edits, never runs commands"}}:::coord
   RD["naru-reader"]:::read
-  RDD["naru-reader-deep"]:::read
   RUN["naru-runner"]:::shell
   WR["naru-writer"]:::write
 
@@ -30,34 +29,50 @@ flowchart TB
   <li data-kind="write">Writes files</li>
 </ul>
 
-## The five agents
+## The four agents
 
-| Agent | Mode | Model | Role |
-| --- | --- | --- | --- |
-| `naru-orchestrator` | primary, visible | `openai/gpt-5.6-sol-fast` | Plans, delegates, integrates, reports |
-| `naru-reader` | subagent, hidden | `openai/gpt-5.6-terra-fast` | Read-only investigation |
-| `naru-reader-deep` | subagent, hidden | `openai/gpt-5.6-sol-fast` | Read-only, high-consequence judgment |
-| `naru-runner` | subagent, hidden | `openai/gpt-5.6-terra-fast` | Read-only plus a shell |
-| `naru-writer` | subagent, hidden | `openai/gpt-5.6-terra-fast` | The only role that can edit |
+| Agent | Mode | Role |
+| --- | --- | --- |
+| `naru-orchestrator` | primary, visible | Plans, delegates, integrates, reports |
+| `naru-reader` | subagent, hidden | Read-only investigation |
+| `naru-runner` | subagent, hidden | Read-only plus a shell |
+| `naru-writer` | subagent, hidden | The only role that can edit |
 
-You select `naru-orchestrator` in the OpenCode agent picker. The four subagents are `hidden: true`; they are dispatch targets for the orchestrator, not things you pick.
+You select `naru-orchestrator` in the OpenCode agent picker. The three subagents are `hidden: true`; they are dispatch targets for the orchestrator, not things you pick.
+
+## Models
+
+None of the agents declare a `model:`. Each one uses whatever you have configured as your OpenCode default, so Naru runs on any provider without configuration.
+
+To give a role its own model — a stronger one for the orchestrator's planning, a cheaper one for wide reader fan-out — override it in `opencode.json` using OpenCode's native `agent` block. There is no Naru-specific model file:
+
+```json
+{
+  "agent": {
+    "naru-orchestrator": { "model": "anthropic/claude-opus-5" },
+    "naru-reader": { "model": "anthropic/claude-haiku-4-5" }
+  }
+}
+```
+
+The same block accepts `variant`, `temperature`, and `permission`. Tightening a role further than Naru ships it is safe. Granting `edit` to a role other than `naru-writer`, or handing a reader a shell, removes the only guarantee the system mechanically enforces.
 
 ## Exact permissions
 
 Every agent starts from `'*': deny` and allows only what its role needs.
 
-| Capability | orchestrator | reader | reader-deep | runner | writer |
-| --- | --- | --- | --- | --- | --- |
-| `read` | allow | allow | allow | allow | allow |
-| `glob`, `grep`, `lsp` | allow | allow | allow | allow | allow |
-| `bash` | deny | deny | deny | allow | allow |
-| `edit`, `apply_patch` | deny | deny | deny | deny | **allow** |
-| `task` (spawn) | four subagents only | deny | deny | deny | deny |
-| `external_directory` | — | deny | deny | allow | allow |
-| `question` (ask the user) | allow | deny | deny | deny | deny |
-| `naru-git-read`, `naru-github-read` | allow | allow | allow | allow | allow |
-| `naru-github-post-review` | allow | deny | deny | deny | deny |
-| `naru-worktree` | allow | deny | deny | deny | deny |
+| Capability | orchestrator | reader | runner | writer |
+| --- | --- | --- | --- | --- |
+| `read` | allow | allow | allow | allow |
+| `glob`, `grep`, `lsp` | allow | allow | allow | allow |
+| `bash` | deny | deny | allow | allow |
+| `edit`, `apply_patch` | deny | deny | deny | **allow** |
+| `task` (spawn) | three subagents only | deny | deny | deny |
+| `external_directory` | — | deny | allow | allow |
+| `question` (ask the user) | allow | deny | deny | deny |
+| `naru-git-read`, `naru-github-read` | allow | allow | allow | allow |
+| `naru-github-post-review` | allow | deny | deny | deny |
+| `naru-worktree` | allow | deny | deny | deny |
 
 Read denials are identical across all five: `.git/**`, `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH and GPG key material, and `**/.ssh/**`, `**/.aws/**`, `**/.kube/**`, `**/.gnupg/**`, `**/credentials/**`, `**/secrets/**`. `*.env.example` and `env.example` stay readable, so templates still work.
 
@@ -72,7 +87,6 @@ Fan-out is the orchestrator's judgment, not a fixed ladder. It splits work at re
 | Pick | For |
 | --- | --- |
 | `naru-reader` | Finding code, tracing behavior, diagnosing a cause, reading a diff. Cheap — fan out widely. |
-| `naru-reader-deep` | Architecture, security, data models, dependencies, cross-boundary impact, and final review of completed work. |
 | `naru-runner` | Anything that needs a command run: tests, typecheck, lint, build, reproducing a failure. |
 | `naru-writer` | Applying a scoped change. One writer per logical scope. |
 

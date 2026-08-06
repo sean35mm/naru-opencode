@@ -3,7 +3,7 @@ title: Naru for LLMs
 description: A compact reference to Naru's agents, tools, permissions, and operating rules.
 ---
 
-Naru is an extension layer for the OpenCode CLI agent: five agents, five tools, four skills, zero plugins. The design is hard mechanical walls at irreversible edges and near-total freedom inside them. The orchestrator plans and fans out on its own judgment; permissions, not prose, decide what each role may do.
+Naru is an extension layer for the OpenCode CLI agent: four agents, five tools, four skills, zero plugins. The design is hard mechanical walls at irreversible edges and near-total freedom inside them. The orchestrator plans and fans out on its own judgment; permissions, not prose, decide what each role may do.
 
 ## Topology
 
@@ -13,15 +13,14 @@ One primary orchestrator with four leaf subagents at depth 1. Every subagent is 
 
 `agents/*.md`, installed as OpenCode agents.
 
-| Agent | Mode | Model | Edit | Bash | Use for |
-| --- | --- | --- | --- | --- | --- |
-| `naru-orchestrator` | primary, visible | `openai/gpt-5.6-sol-fast` | no | no | coordination: plan, delegate, report |
-| `naru-reader` | subagent, hidden | `openai/gpt-5.6-terra-fast` | no | no | investigation: finding code, tracing behavior, diagnosing, reviewing |
-| `naru-reader-deep` | subagent, hidden | `openai/gpt-5.6-sol-fast` | no | no | high-consequence judgment: architecture, security, data models, dependencies, final review |
-| `naru-runner` | subagent, hidden | `openai/gpt-5.6-terra-fast` | no | yes | running tests, typecheck, lint, build, reproductions |
-| `naru-writer` | subagent, hidden | `openai/gpt-5.6-terra-fast` | yes | yes | the only role that can apply changes |
+| Agent | Mode | Edit | Bash | Use for |
+| --- | --- | --- | --- | --- |
+| `naru-orchestrator` | primary, visible | no | no | coordination: plan, delegate, report |
+| `naru-reader` | subagent, hidden | no | no | investigation: finding code, tracing behavior, diagnosing, reviewing |
+| `naru-runner` | subagent, hidden | no | yes | running tests, typecheck, lint, build, reproductions |
+| `naru-writer` | subagent, hidden | yes | yes | the only role that can apply changes |
 
-The orchestrator delegates to the four subagents and may call `naru-git-read`, `naru-github-read`, `naru-github-post-review`, and `naru-worktree`. Both readers carry `bash: deny` and `external_directory: deny` and fail closed.
+The orchestrator delegates to the three subagents and may call `naru-git-read`, `naru-github-read`, `naru-github-post-review`, and `naru-worktree`. Both readers carry `bash: deny` and `external_directory: deny` and fail closed.
 
 ## Tools
 

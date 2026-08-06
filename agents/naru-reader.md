@@ -2,8 +2,6 @@
 description: Read-only investigator for Naru. Finds, traces, diagnoses, and reviews.
 mode: subagent
 hidden: true
-model: openai/gpt-5.6-terra-fast
-variant: high
 permission:
   '*': deny
   skill:

@@ -51,13 +51,12 @@ The dotted edge is the important one. Everything in the left group is advisory: 
 - **Not durable.** There is no cross-process coordination, no durable run state, and no authoritative background completion. Planning is prompt-local and disappears with the session.
 - **Not a global capacity meter.** `implementation.maxConcurrentWriters` is a local runaway brake, not a provider, account, or machine-wide cap. Other processes on the same repository are invisible to it.
 - **Not automatic authorization.** Nothing in Naru authorizes edits, dependency changes, Git mutation, migrations, database writes, posting, or deployment. Local changes are the default stop; commit, push, PR, and post happen only on an explicit current request, and irreversible actions get one checkpoint that names the exact action.
-- **Not nested autonomy.** The topology is one root orchestrator with leaf subagents at depth 1. All four subagents are `hidden` and hold `task: deny`, so they cannot spawn children of their own. OpenCode's default `subagent_depth` of `1` is sufficient; Naru never asks for more.
+- **Not nested autonomy.** The topology is one root orchestrator with leaf subagents at depth 1. All three subagents are `hidden` and hold `task: deny`, so they cannot spawn children of their own. OpenCode's default `subagent_depth` of `1` is sufficient; Naru never asks for more.
 
 ## What is actually enforced
 
 These are permission frontmatter, not prose, so an agent cannot talk its way past them:
 
-- `naru-writer` is the only role with edit and apply-patch permission. `naru-orchestrator`, `naru-reader`, `naru-reader-deep`, and `naru-runner` cannot modify files.
 - The orchestrator cannot run bash. The read-only readers have `bash: deny` and `external_directory: deny`, so they fail closed rather than degrading.
 - `.env`, `.env.*`, key material, `.ssh`, `.aws`, `.kube`, and `.gnupg` are denied to every role. `.env.example` is allowed.
 

@@ -5,7 +5,7 @@ description: Identifiers, tool contracts, and stable surfaces for integrating an
 
 # Integrate Naru with your own agent
 
-Naru's integration surface is deliberately small: four advisory skills, five agent identifiers, five custom tools, and one optional runtime file. There are no plugins and no generated model aliases. Anything not listed on this page is not a public interface.
+Naru's integration surface is deliberately small: four advisory skills, four agent identifiers, five custom tools, and one optional runtime file. There are no plugins and no generated model aliases. Anything not listed on this page is not a public interface.
 
 Naru requires OpenCode 1.18.4 or newer and Node 24. Its topology is one root orchestrator delegating to leaf subagents at depth 1, so OpenCode's default `subagent_depth` of `1` is sufficient.
 
@@ -15,19 +15,17 @@ Naru requires OpenCode 1.18.4 or newer and Node 24. Its topology is one root orc
 | --- | --- | --- | --- | --- |
 | `naru-orchestrator` | primary | yes | no | no |
 | `naru-reader` | subagent | no | no | no |
-| `naru-reader-deep` | subagent | no | no | no |
 | `naru-runner` | subagent | no | no | yes |
 | `naru-writer` | subagent | no | yes | yes |
 
 - `naru-orchestrator` is selected, not delegated. Users pick it in OpenCode's agent picker, set `"default_agent": "naru-orchestrator"`, or launch `opencode --agent naru-orchestrator`. It plans and coordinates; it cannot edit files or run bash itself.
-- `naru-reader` and `naru-reader-deep` share the same read-only permissions and differ only in model strength. Use the deep variant for high-consequence judgment: architecture, security, data models, dependencies, final review.
 - `naru-runner` adds bash for tests, typecheck, lint, build, and reproduction. It still cannot edit.
 - `naru-writer` is the only role with `edit` and `apply_patch` permission. That is enforced by OpenCode permission frontmatter, not by prose.
-- All four subagents are `hidden: true` and carry `task: deny`, so they cannot spawn children and are not offered as delegation targets to anyone but `naru-orchestrator`.
+- All three subagents are `hidden: true` and carry `task: deny`, so they cannot spawn children and are not offered as delegation targets to anyone but `naru-orchestrator`.
 - Read-only roles set `bash: deny` and `external_directory: deny` so they fail closed.
 - Every role denies `.env`, `.env.*`, key material, `.ssh`, `.aws`, `.kube`, and `.gnupg`. `*.env.example` stays readable.
 
-These names are identifiers, not an integration API. A custom agent must not delegate to `naru-orchestrator` or to any of the four subagents.
+These names are identifiers, not an integration API. A custom agent must not delegate to `naru-orchestrator` or to any of the three subagents.
 
 ## Skills are the only supported integration names
 
@@ -44,7 +42,7 @@ They are loaded on demand when a natural request is relevant or when an agent ex
 flowchart LR
   CA["Your custom agent"]:::entry
   OK["ALLOWED — the entire supported surface<br/>naru-plan · naru-impact<br/>naru-triage · naru-review"]:::read
-  NO["DENIED — fail-closed, never Task targets<br/>naru-orchestrator · naru-reader · naru-reader-deep<br/>naru-runner · naru-writer · Naru custom tools"]:::danger
+  NO["DENIED — fail-closed, never Task targets<br/>naru-orchestrator · naru-reader<br/>naru-runner · naru-writer · Naru custom tools"]:::danger
   G["Advisory guidance only<br/>no tools, no read-only enforcement"]:::artifact
 
   CA --> OK --> G
@@ -115,8 +113,8 @@ Naru installs four custom OpenCode tools. Each returns the same JSON envelope:
 
 | Tool | Callable by | Operations |
 | --- | --- | --- |
-| `naru-git-read` | orchestrator and all four subagents | `repository`, `status`, `diff`, `log`, `file`, `grep`, `merge-base` |
-| `naru-github-read` | orchestrator and all four subagents | `resolve`, `issue`, `pull`, `source` |
+| `naru-git-read` | orchestrator and all three subagents | `repository`, `status`, `diff`, `log`, `file`, `grep`, `merge-base` |
+| `naru-github-read` | orchestrator and all three subagents | `resolve`, `issue`, `pull`, `source` |
 | `naru-github-post-review` | `naru-orchestrator` only | one comment-only review post |
 | `naru-worktree` | `naru-orchestrator` only | `prepare_run`, `recover_run`, `prepare_item`, `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run` |
 
@@ -157,7 +155,7 @@ When the file is absent, the defaults above apply. This file affects workspace m
 Integrate against these:
 
 - The four skill names and the exact `permission.skill` allowlist shape.
-- The five agent identifiers and their permission posture (only `naru-writer` edits; read-only roles fail closed).
+- The four agent identifiers and their permission posture (only `naru-writer` edits; read-only roles fail closed).
 - The four tool ids and their operation names.
 - The envelope fields `ok`, `tool`, `complete`, `contentTruncated`, `limits`, `warnings`, `data`, `error`.
 - The `naru-runtime.json` schemaVersion 1 keys.

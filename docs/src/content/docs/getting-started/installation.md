@@ -5,6 +5,36 @@ description: Install Naru globally, into a project, or into any OpenCode configu
 
 Naru requires OpenCode 1.18.4 or later and Node 24 for the installer and doctor (the installer falls back to Bun when Node is absent). Pull-request workflows also need authenticated `gh`.
 
+## Quick install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstrap.sh | sh
+naru install
+```
+
+The bootstrap downloads a checksum-verified release into `~/.naru` and installs exactly one file, the `naru` command. It does not read or modify your OpenCode configuration, and it will not edit a shell profile unless you pass `--modify-path` — otherwise it prints the `PATH` line and leaves the decision to you.
+
+Everything that changes your OpenCode configuration still goes through the preview-first flow below. `naru install` shows the full change summary and asks before applying; pass `--apply` to skip the prompt in non-interactive use.
+
+| Command | Effect |
+| --- | --- |
+| `naru install` | Install into OpenCode; previews, then asks |
+| `naru upgrade` | Fetch the latest release, then install it |
+| `naru doctor` | Report local install and configuration health |
+| `naru uninstall` | Preview removal and print the exact confirm command |
+| `naru rollback ID` | Restore a previous install transaction |
+| `naru version` | Show installed and latest available versions |
+
+Releases live under `~/.naru/versions/<version>` with `~/.naru/current` pointing at the active one, so an upgrade keeps the previous release on disk. To install an exact version, pass `--version` to the bootstrap:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstrap.sh | sh -s -- --version v0.2.0
+```
+
+## Install from a clone
+
+Contributors and anyone who prefers to read the source first can skip the bootstrap entirely and run the installer directly. Every flag below works the same way.
+
 ```mermaid
 flowchart LR
   A["Clone repository"]:::read
@@ -48,7 +78,6 @@ Clone, preview, explicit apply. There is no curl bootstrapper and no package-reg
 
 ## What gets installed
 
-- **Agents** — `naru-orchestrator`, `naru-reader`, `naru-reader-deep`, `naru-runner`, `naru-writer`.
 - **Skills** — `naru-plan`, `naru-impact`, `naru-triage`, `naru-review`.
 - **Tools** — `naru-git-read`, `naru-github-read`, `naru-github-post-review`, `naru-worktree`, `naru-doctor`, plus their shared helper library.
 - **`naru-runtime.example.json`** — an example only. The installer never creates or enables `naru-runtime.json`.

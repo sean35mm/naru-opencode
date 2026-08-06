@@ -6,13 +6,20 @@ description: Install Naru, select the orchestrator, ask for something, and see w
 ## 1. Install
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstrap.sh | sh
+naru install
+```
+
+The bootstrap installs only the `naru` command; `naru install` shows a full preview of every change and asks before applying it. The default target is `~/.config/opencode`; use `--project` or `--dir PATH` for another target. Naru requires OpenCode 1.18.4+ and Node 24, and works at OpenCode's default `subagent_depth` of `1`.
+
+Prefer to read the source first? Clone and run the installer directly — same flags, same preview:
+
+```sh
 git clone https://github.com/sean35mm/naru-opencode.git
 cd naru-opencode
 sh install.sh --preview
 sh install.sh --apply
 ```
-
-The first run is a read-only preview; the second applies exactly that option set. The default target is `~/.config/opencode`; use `--project` or `--dir PATH` for another target. Naru requires OpenCode 1.18.4+ and Node 24, and works at OpenCode's default `subagent_depth` of `1`.
 
 Restart OpenCode after the applied install.
 
@@ -37,7 +44,6 @@ Rate limiting drops valid requests after a deploy. Find out why and fix it.
 The orchestrator plans, then fans out to subagents on its own judgment:
 
 - **`naru-reader`** investigates — finds the code, traces behavior, diagnoses. Read-only.
-- **`naru-reader-deep`** handles high-consequence judgment — architecture, security, data models, dependencies, final review. Same read-only permissions, stronger model.
 - **`naru-runner`** runs tests, typecheck, lint, build, and reproductions. Read-only plus bash; it cannot edit.
 - **`naru-writer`** applies the change. It is the only role with edit permission.
 

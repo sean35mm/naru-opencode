@@ -2,28 +2,38 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
-## Unreleased
+## [0.2.0] - 2026-08-06
+
+A large simplification. Naru is now thin hard walls and a free interior: the walls
+are mechanical, and inside them the orchestrator plans and fans out on its own
+judgment.
+
+### Added
+
+- `bootstrap.sh` and a `naru` command. `curl -fsSL .../bootstrap.sh | sh` downloads a checksum-verified release into `~/.naru` and installs the CLI without touching OpenCode configuration. `naru install`, `upgrade`, `doctor`, `uninstall`, `rollback`, and `version` front the existing installer; every mutating command previews and asks before applying.
+- A release workflow that verifies the tag matches `VERSION`, runs the suites, publishes a tarball with a SHA-256 checksum, and installs that tarball into a disposable HOME before publishing.
 
 ### Changed
 
+- Simplified the agent surface to `naru-orchestrator` plus three subagents: `naru-reader`, `naru-runner`, and `naru-writer`. Only `naru-writer` can edit files; readers are fail-closed read-only with no shell. Delegation remains depth-1.
+- Agents no longer declare a `model:`; each inherits the user's configured OpenCode default, so Naru runs on any provider without configuration. Per-agent models are set through OpenCode's native `agent` block in `opencode.json`.
+- Replaced fixed analysis modes and child-count ceilings with orchestrator judgment. The only concurrency setting is the `implementation.maxConcurrentWriters` brake.
 - Migrated from the five retired Core slash commands and workflow-agent tree to four native on-demand skills: `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`.
 - Kept review dry-run by default; only an explicit current natural-language request to the directly selected orchestrator can make one validated `COMMENT`-only post.
-- Simplified the canonical agent surface to `naru-orchestrator` plus four subagents: `naru-reader`, `naru-reader-deep`, `naru-runner`, and `naru-writer`. Only `naru-writer` can edit files; readers are fail-closed read-only. Delegation remains depth-1.
-- Replaced fixed analysis modes and child-count ceilings with orchestrator judgment. The orchestrator now decides fan-out itself; the only concurrency setting is the `implementation.maxConcurrentWriters` brake.
-- Replaced runtime model routing with static per-agent `model:` frontmatter.
-- Reinstall now retires healthy manifest-owned legacy definitions while preserving, reporting, and backing up modified or unowned paths according to the reviewed preview.
+- Reinstall retires healthy manifest-owned legacy definitions while preserving, reporting, and backing up modified or unowned paths according to the reviewed preview.
 
 ### Removed
 
-- Scheduling Protocol 2 and Protocol 3, the `naru-scheduler` tool and plugin, admission tokens, run manifests, work-item DAGs, and quality artifacts. Protocol 3 defaulted to `off` and could not enforce anything in `observe`.
+- Scheduling Protocol 2 and Protocol 3, the `naru-scheduler` tool and plugin, admission tokens, run manifests, work-item DAGs, and quality artifacts. Protocol 3 defaulted to `off` and could not refuse anything in `observe`.
 - The `naru-delegate` plugin, generated model aliases, Sol xhigh escalation, and `naru-models.json`.
 - The Naru Activity dashboard plugin, its TUI registration, and scheduler telemetry. Naru now ships no plugins.
-- The TypeScript `src/` tree and release-candidate assembler; `tools/`, `scripts/`, and `plugins/` sources are now edited directly as plain JavaScript.
-- The live-evaluation harness and `--with-dashboard`, which is now a deprecated accepted no-op.
+- The TypeScript `src/` tree and release-candidate assembler; `tools/` and `scripts/` are now edited directly as plain JavaScript.
+- The live-evaluation harness, and `--with-dashboard`, which is now a deprecated accepted no-op.
 
 ### Limitations
 
 - Removing Protocol 3 removes no real enforcement: it was process-local, non-durable, off by default, and fail-open in `observe`. Enforcement continues to come from OpenCode's permission evaluation, the comment-only posting tool, and worktree path containment.
+- Prompt policy is not a sandbox. Checkpoints, scope discipline, and evidence requirements are instructions to a model, not mechanisms.
 
 ## [0.1.0] - 2026-07-22
 

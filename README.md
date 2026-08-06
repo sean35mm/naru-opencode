@@ -13,13 +13,31 @@ Built by [Naru Labs](https://github.com/sean35mm).
 Requirements: OpenCode >= 1.18.4 and Node 24. Naru needs `subagent_depth` of at least 1, which OpenCode's default already satisfies. An authenticated `gh` is needed only for GitHub reads and review posting.
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstrap.sh | sh
+naru install
+```
+
+The bootstrap downloads a checksum-verified release into `~/.naru` and installs one file — the `naru` command. It does not touch your OpenCode configuration. `naru install` does that, and it previews every change and asks before applying anything.
+
+| Command | Effect |
+| --- | --- |
+| `naru install` | Install into OpenCode; previews, then asks |
+| `naru upgrade` | Fetch the latest release, then install it |
+| `naru doctor` | Report local install and configuration health |
+| `naru uninstall` | Preview removal and print the exact confirm command |
+| `naru rollback ID` | Restore a previous install transaction |
+| `naru version` | Show installed and latest available versions |
+
+Prefer to work from a clone? That still works and is what contributors use:
+
+```sh
 git clone https://github.com/sean35mm/naru-opencode.git
 cd naru-opencode
 sh install.sh --preview
 sh install.sh --apply
 ```
 
-`--preview` is the default and mutates nothing; `--apply` is the only mutation boundary. The default target is `~/.config/opencode`, with Markdown symlinked so a `git pull` keeps it current and executable assets copy-pinned.
+`--preview` is the default and mutates nothing; `--apply` is the only mutation boundary. The default target is `~/.config/opencode`, with Markdown symlinked so a `git pull` keeps it current and executable assets copy-pinned. Pass `--copy` to pin a snapshot instead, which is what release installs do.
 
 | Flag | Effect |
 | --- | --- |
@@ -34,19 +52,35 @@ Installs write a `.naru-install.json` ownership manifest, skip unchanged assets,
 
 Restart OpenCode after applying. Then select `naru-orchestrator` in the agent picker, set it as `default_agent`, or launch `opencode --agent naru-orchestrator`.
 
-## The five agents
+## The four agents
 
-| Agent | Mode | Model | Can | Cannot |
-| --- | --- | --- | --- | --- |
-| `naru-orchestrator` | primary, visible | `openai/gpt-5.6-sol-fast` | Plan, read, delegate, call the Naru tools, report | Edit files, run bash |
-| `naru-reader` | subagent | `openai/gpt-5.6-terra-fast` | Read-only investigation: find code, trace behavior, diagnose, review | Run bash, edit files |
-| `naru-reader-deep` | subagent | `openai/gpt-5.6-sol-fast` | The same, on a stronger model, for high-consequence judgment | Run bash, edit files |
-| `naru-runner` | subagent | `openai/gpt-5.6-terra-fast` | Everything a reader can, plus a shell: tests, typecheck, lint, build, repro | Edit files |
-| `naru-writer` | subagent | `openai/gpt-5.6-terra-fast` | The only role with edit and `apply_patch` | Spawn children |
+| Agent | Mode | Can | Cannot |
+| --- | --- | --- | --- |
+| `naru-orchestrator` | primary, visible | Plan, read, delegate, call the Naru tools, report | Edit files, run bash |
+| `naru-reader` | subagent | Read-only investigation: find code, trace behavior, diagnose, review | Run bash, edit files |
+| `naru-runner` | subagent | Everything a reader can, plus a shell: tests, typecheck, lint, build, repro | Edit files |
+| `naru-writer` | subagent | The only role with edit and `apply_patch` | Spawn children |
 
-Use `naru-reader` liberally — it is the cheap, wide instrument for investigation. Reach for `naru-reader-deep` when the answer carries real consequence: architecture, security, data models, dependencies, and final review of completed work.
+Use `naru-reader` liberally — it is the cheap, wide instrument, and the lens belongs in the dispatch prompt rather than in a separate agent. One reader maps ownership, another traces a failure, another weighs a design against its failure modes.
 
-All four subagents are `hidden: true` and have `task: deny`, so they cannot spawn children of their own. The topology is fixed: one root orchestrator, leaf subagents at depth 1. Breadth is unlimited by design; nesting does not exist.
+All three subagents are `hidden: true` and have `task: deny`, so they cannot spawn children of their own. The topology is fixed: one root orchestrator, leaf subagents at depth 1. Breadth is unlimited by design; nesting does not exist.
+
+### Models
+
+The agents ship with no `model:` field, so each one uses whatever model you have configured as your OpenCode default. Naru works with any provider out of the box.
+
+To give a role its own model — for example a stronger one for the orchestrator's planning, or a cheaper one for wide reader fan-out — override it natively in `opencode.json`. No Naru-specific config file is involved:
+
+```json
+{
+  "agent": {
+    "naru-orchestrator": { "model": "anthropic/claude-opus-5" },
+    "naru-reader": { "model": "anthropic/claude-haiku-4-5" }
+  }
+}
+```
+
+The same block accepts `variant`, `temperature`, and `permission`, so you can tighten a role further than Naru ships it. Loosening `naru-writer`'s boundaries, or granting `edit` to another role, defeats the one guarantee the system actually enforces.
 
 ## Skills
 

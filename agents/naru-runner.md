@@ -2,8 +2,6 @@
 description: Read-only checker for Naru. Runs tests, builds, and diagnostics; cannot edit.
 mode: subagent
 hidden: true
-model: openai/gpt-5.6-terra-fast
-variant: high
 permission:
   '*': deny
   skill:

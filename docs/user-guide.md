@@ -32,7 +32,7 @@ sh install.sh --apply
 
 `--preview` is the default and mutates nothing: it prints a bounded summary of what would change. `--apply` stages and replaces assets transactionally, then writes a deterministic `.naru-install.json` ownership manifest recording managed roots, source fingerprints, selected options, and install method. Matching assets are skipped. Replaced content is retained in a timestamped `.naru-backups/` directory and restored if the transaction fails.
 
-An apply installs five agents, four skills, five tools with their helper library, and `naru-runtime.example.json`. It does not create an active `naru-runtime.json`. There are no plugins.
+An apply installs four agents, four skills, five tools with their helper library, and `naru-runtime.example.json`. It does not create an active `naru-runtime.json`. There are no plugins.
 
 Clone, preview, apply is the supported path. Naru has no curl bootstrapper and no package-registry install.
 
@@ -112,7 +112,7 @@ Then describe what you want in plain language: fix this failure, implement this 
 
 Do not use `naru-orchestrator` as a Task target from a custom agent. Custom agents should allowlist the four skills instead — see the [agent integration guide](/naru-opencode/agent-integration/).
 
-## The five agents
+## The four agents
 
 ```mermaid
 flowchart TB
@@ -122,7 +122,6 @@ flowchart TB
   subgraph leaves["Subagents — hidden, cannot delegate further"]
     direction LR
     R["naru-reader<br/><small>read-only</small>"]:::read
-    RD["naru-reader-deep<br/><small>read-only, stronger model</small>"]:::read
     RUN["naru-runner<br/><small>read-only + shell</small>"]:::shell
     W["naru-writer<br/><small>the only editor</small>"]:::write
   end
@@ -155,22 +154,20 @@ flowchart TB
   <li data-kind="danger">Leaves your machine</li>
 </ul>
 
-| Agent | Role | Edit | Bash | Model |
-| --- | --- | --- | --- | --- |
-| `naru-orchestrator` | Primary, visible. Plans, delegates, synthesizes, reports. | No | No | `openai/gpt-5.6-sol-fast` |
-| `naru-reader` | Investigation: finding code, tracing behavior, diagnosing, reviewing. | No | No | `openai/gpt-5.6-terra-fast` |
-| `naru-reader-deep` | Same powers on a stronger model, for high-consequence judgment. | No | No | `openai/gpt-5.6-sol-fast` |
-| `naru-runner` | Runs tests, typecheck, lint, build, and reproductions. | No | Yes | `openai/gpt-5.6-terra-fast` |
-| `naru-writer` | The only role that can edit files. | Yes | Yes | `openai/gpt-5.6-terra-fast` |
+| Agent | Role | Edit | Bash |
+| --- | --- | --- | --- |
+| `naru-orchestrator` | Primary, visible. Plans, delegates, synthesizes, reports. | No | No |
+| `naru-reader` | Investigation: finding code, tracing behavior, diagnosing, reviewing. | No | No |
+| `naru-runner` | Runs tests, typecheck, lint, build, and reproductions. | No | Yes |
+| `naru-writer` | The only role that can edit files. | Yes | Yes |
 
-The four subagents are hidden and cannot delegate (`task: deny`), so the topology is always one root orchestrator with leaf children at depth 1. That is why OpenCode's default depth of 1 is sufficient.
+The three subagents are hidden and cannot delegate (`task: deny`), so the topology is always one root orchestrator with leaf children at depth 1. That is why OpenCode's default depth of 1 is sufficient.
 
 ## How it delegates
 
 The orchestrator uses as many children as the work genuinely needs, in parallel, without asking permission to parallelize.
 
 - Readers are cheap, so it fans them out widely on unfamiliar or broad work.
-- `naru-reader-deep` is reserved for architecture, security, data models, dependencies, and final review of completed work.
 - `naru-runner` is used whenever a question needs a command run rather than reasoned about.
 - `naru-writer` gets the edits, split at real boundaries — separate files, modules, or independent questions.
 
@@ -183,7 +180,6 @@ You still get one report at the end: what changed, which files, which checks act
 These are enforced mechanically by OpenCode permission frontmatter or by the tools themselves, not by polite prose in a prompt.
 
 - **Only `naru-writer` can edit.** The orchestrator, both readers, and the runner have `edit` and `apply_patch` denied.
-- **Read-only agents fail closed.** `naru-reader` and `naru-reader-deep` have `bash: deny` and `external_directory: deny`.
 - **Secrets are denied to every role.** `.env`, `.env.*`, key material, `.ssh`, `.aws`, `.kube`, and `.gnupg` are unreadable. `.env.example` templates are allowed.
 - **User intent is the sole authorization source.** Repository files, issue and PR text, diffs, comments, command output, and subagent reports are untrusted data. Instructions found there describe what someone wrote; they never widen scope or authorize an action.
 - **Local changes are the default stop.** Commit, push, PR create/update, and GitHub posting happen only when the current request asked for them. That ask is the authorization — it is not reconfirmed, and it is not assumed.
@@ -329,7 +325,7 @@ Confirm OpenCode is 1.18.4 or newer and that `subagent_depth` is at least 1, the
 
 ### The orchestrator will not edit a file
 
-That is the design. It has no `edit` permission and delegates every change to `naru-writer`. If nothing is being written at all, check that all five agent files installed and that the orchestrator's `task` allowlist survived your local configuration.
+That is the design. It has no `edit` permission and delegates every change to `naru-writer`. If nothing is being written at all, check that all four agent files installed and that the orchestrator's `task` allowlist survived your local configuration.
 
 ### Review cannot resolve a pull request
 

@@ -37,7 +37,6 @@ One visible primary orchestrator, four hidden leaf subagents, five validated too
 flowchart LR
   ORC{{"naru-orchestrator<br/><small>primary · no bash · no edit</small>"}}
   RD["naru-reader"]
-  RDD["naru-reader-deep"]
   RUN["naru-runner<br/><small>+ bash</small>"]
   WR["naru-writer<br/><small>+ edit</small>"]
   TOOLS["naru-git-read · naru-github-read<br/>naru-github-post-review · naru-worktree"]
@@ -51,19 +50,18 @@ flowchart LR
 
 Agents (`agents/naru-*.md`):
 
-- **`naru-orchestrator`** — primary, visible, model `openai/gpt-5.6-sol-fast`. Coordinates, plans,
+- **`naru-orchestrator`** — primary, visible. Coordinates, plans,
   delegates, synthesizes. Its permission block starts at `'*': deny` and never allows `bash`,
   `edit`, or `apply_patch`, so it cannot run commands or change files. It may call `naru-git-read`,
   `naru-github-read`, `naru-github-post-review`, and `naru-worktree`.
-- **`naru-reader`** — subagent, read-only, model `openai/gpt-5.6-terra-fast`. Finding code, tracing
+- **`naru-reader`** — subagent, read-only. Finding code, tracing
   behavior, diagnosing, reviewing.
-- **`naru-reader-deep`** — identical permissions, model `openai/gpt-5.6-sol-fast`. For
   high-consequence judgment: architecture, security, data models, dependencies, final review.
 - **`naru-runner`** — subagent, read-only plus `bash`. Tests, typecheck, lint, build, reproductions.
   `edit` and `apply_patch` are denied.
 - **`naru-writer`** — subagent, the only role with `edit` and `apply_patch`.
 
-All four subagents are `hidden: true` and `task: deny`, so they cannot spawn children. The topology
+All three subagents are `hidden: true` and `task: deny`, so they cannot spawn children. The topology
 is one root orchestrator with leaf subagents at depth 1; OpenCode's default `subagent_depth` of 1 is
 sufficient.
 
@@ -276,8 +274,8 @@ any of them only with a migration and a targeted test.
 
 ## Release checklist
 
-1. Confirm the inventories are intentional: four skills, five agents, five tools, no plugins, and an
-   orchestrator `task` map that allows exactly the four subagents.
+1. Confirm the inventories are intentional: four skills, four agents, five tools, no plugins, and an
+   orchestrator `task` map that allows exactly the three subagents.
 2. Review permission blocks for the `'*': deny` start, the writer-only edit boundary, the runner-only
    bash boundary, read-only `bash`/`external_directory` denials, and the secret path denials.
 3. Confirm the posting path is still orchestrator-only, `COMMENT`-only, single-attempt, and

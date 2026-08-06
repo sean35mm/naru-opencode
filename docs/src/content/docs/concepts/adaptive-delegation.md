@@ -1,17 +1,16 @@
 ---
 title: Delegation
-description: How the Naru orchestrator fans work out to its four subagents, and the few limits that bound it.
+description: How the Naru orchestrator fans work out to its three subagents, and the few limits that bound it.
 ---
 
-`naru-orchestrator` is the agent you select. It plans and coordinates; it cannot edit files and cannot run bash. Everything it does to a repository happens through four subagents, and how much it fans out is its own judgment call — there is nothing to configure or select.
+`naru-orchestrator` is the agent you select. It plans and coordinates; it cannot edit files and cannot run bash. Everything it does to a repository happens through three subagents, and how much it fans out is its own judgment call — there is nothing to configure or select.
 
-## Four subagents, one writer
+## three subagents, one writer
 
 ```mermaid
 flowchart TB
   ORC{{"naru-orchestrator — coordinates, never edits"}}:::coord
   RD["naru-reader"]:::read
-  DP["naru-reader-deep"]:::read
   RN["naru-runner"]:::read
   WR["naru-writer"]:::write
 
@@ -31,9 +30,8 @@ flowchart TB
 | Subagent | Use it for | Bash | Can edit |
 | --- | --- | --- | --- |
 | `naru-reader` | Finding code, tracing behavior, diagnosing, reviewing a diff | No | No |
-| `naru-reader-deep` | Architecture, security, data models, dependencies, final review | No | No |
 | `naru-runner` | Tests, typecheck, lint, build, reproducing a failure | Yes | No |
-| **`naru-writer`** | Scoped edits | No | **Yes — only this one** |
+| **`naru-writer`** | Scoped edits | Yes | **Yes — only this one** |
 
 All four are hidden and cannot spawn children of their own, so the shape is always one orchestrator over leaf subagents at depth 1. `subagent_depth` must be at least `1`; OpenCode's default already is.
 
@@ -46,7 +44,6 @@ flowchart LR
   O{{"naru-orchestrator"}}:::coord
   R1["reader — module A"]:::read
   R2["reader — module B"]:::read
-  D["reader-deep — design call"]:::read
   W1["writer — scope A"]:::write
   W2["writer — scope B"]:::write
   V["runner — checks once writers finish"]:::gate

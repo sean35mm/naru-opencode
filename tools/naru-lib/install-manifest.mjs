@@ -81,6 +81,9 @@ export const RETIRED_MANAGED_PATHS = new Set([
     'tools/naru-scheduler.js',
     'scripts/naru-live-eval.mjs',
     'scripts/live-evals.example.json',
+    // Retired in 0.2.0: agents inherit the user's default model, so the deep
+    // reader was indistinguishable from the standard reader.
+    'agents/naru-reader-deep.md',
 ]);
 function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
