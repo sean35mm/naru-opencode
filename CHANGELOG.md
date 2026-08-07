@@ -2,7 +2,11 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
-## Unreleased
+## [0.4.0] - 2026-08-07
+
+### Added
+
+- `naru doctor` validates the `models` block: it reports the configured class names and raises `invalid-models-block` with the exact parse error when the block is malformed — previously a typo silently removed every generated variant, since the plugin fails open by design.
 
 ### Changed
 
