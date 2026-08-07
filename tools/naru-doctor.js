@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { INSTALL_MANIFEST_FILE, inferInstallSourceRoot, inspectInstallManifest, loadInstallManifest, } from './naru-lib/install-manifest.mjs';
 import { loadRuntimeConfigFile } from './naru-lib/runtime-config.mjs';
+import { parseModelsConfig } from './naru-lib/dispatch.mjs';
 const REPORT_SCHEMA_VERSION = 1;
 const MIN_OPENCODE_VERSION = '1.18.4';
 const MAX_CONFIG_BYTES = 64 * 1024;
@@ -294,13 +295,27 @@ async function runtimeState(target) {
     }
     try {
         const value = await loadRuntimeConfigFile(file);
+        // The dispatch plugin fails open on a malformed models block, which
+        // silently removes every variant. Surface that here instead.
+        let modelClasses = null;
+        let modelsError = null;
+        if (value.models !== undefined) {
+            try {
+                modelClasses = Object.keys(parseModelsConfig(value.models)).sort();
+            }
+            catch (error) {
+                modelsError = error instanceof Error ? error.message : String(error);
+            }
+        }
         return {
             status: 'custom-valid',
             workspaceMode: value.implementation.workspaceMode,
+            modelClasses,
+            modelsError,
         };
     }
     catch {
-        return { status: 'invalid', workspaceMode: null };
+        return { status: 'invalid', workspaceMode: null, modelClasses: null, modelsError: null };
     }
 }
 async function inspectScope(candidate, options, issues) {
@@ -389,6 +404,8 @@ async function inspectScope(candidate, options, issues) {
     const runtime = await runtimeState(candidate.target);
     if (runtime.status === 'invalid')
         addIssue(issues, 'invalid-runtime-config', candidate.id, 'naru-runtime.json is invalid');
+    if (runtime.modelsError)
+        addIssue(issues, 'invalid-models-block', candidate.id, 'models block is invalid, so no agent variants are generated: ' + runtime.modelsError);
     return {
         id: candidate.id,
         loadState: candidate.loadState,
@@ -492,7 +509,7 @@ function renderPlain(report) {
         if (scope.assets !== null) {
             lines.push(`  assets: ${scope.assets.installed.healthy ?? 0}/${scope.assets.total} healthy; source comparison ${scope.assets.sourceCompared ? 'available' : 'unavailable'}`);
         }
-        lines.push(`  runtime: ${scope.runtime.status}; workspace mode: ${scope.runtime.workspaceMode ?? 'unknown'}`);
+        lines.push(`  runtime: ${scope.runtime.status}; workspace mode: ${scope.runtime.workspaceMode ?? 'unknown'}; model classes: ${scope.runtime.modelsError ? 'INVALID' : (scope.runtime.modelClasses ? scope.runtime.modelClasses.join(', ') : 'none')}`);
         if (scope.issuePaths.length > 0)
             lines.push(`  issue paths: ${scope.issuePaths.join(', ')}`);
     }
