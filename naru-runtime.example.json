@@ -1,8 +1,22 @@
 {
-  "schemaVersion": 1,
   "implementation": {
     "cleanWorkspaceRequired": true,
     "maxConcurrentWriters": 50,
     "workspaceMode": "auto"
-  }
+  },
+  "models": {
+    "deep": {
+      "chain": ["openai/gpt-5.6-sol@high"],
+      "use": "architecture, security, data models, final review, tricky edits"
+    },
+    "light": {
+      "chain": ["opencode/glm-5-free", "opencode/minimax-m3-free"],
+      "use": "wide fan-out, mechanical lookups, simple reads"
+    },
+    "standard": {
+      "chain": ["openai/gpt-5.6-terra@medium"],
+      "use": "ordinary investigation, edits, checks"
+    }
+  },
+  "schemaVersion": 1
 }

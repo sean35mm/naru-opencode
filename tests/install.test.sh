@@ -12,6 +12,7 @@ FIXTURE_PHYS=$(CDPATH= cd -- "$FIXTURE" && pwd -P)
 cp "$ROOT/install.sh" "$FIXTURE/install.sh"
 
 mkdir -p "$FIXTURE/agents"
+mkdir -p "$FIXTURE/plugins"
 mkdir -p "$FIXTURE/skills"
 mkdir -p "$FIXTURE/tools/naru-lib"
 mkdir -p "$FIXTURE/scripts"
@@ -35,6 +36,7 @@ touch "$FIXTURE/tools/naru-worktree.js"
 cp "$ROOT/tools/package.json" "$FIXTURE/tools/package.json"
 touch "$FIXTURE/tools/naru-lib/helper.js"
 cp "$ROOT/tools/naru-lib/install-manifest.mjs" "$FIXTURE/tools/naru-lib/install-manifest.mjs"
+cp "$ROOT/plugins/naru-dispatch.js" "$FIXTURE/plugins/naru-dispatch.js"
 touch "$FIXTURE/naru-runtime.example.json"
 
 LEGACY_MANIFEST_BUILDER="$TMP/legacy-manifest-builder.mjs"
@@ -132,7 +134,7 @@ if is_dir "$T1/tools/naru-lib"; then pass "tool helper dir copy-pinned"; else fa
 if is_file "$T1/tools/naru-worktree.js"; then pass "worktree runtime copy-pinned"; else fail "worktree runtime copy-pinned"; fi
 if is_file "$T1/naru-runtime.example.json"; then pass "runtime example copy-pinned"; else fail "runtime example copy-pinned"; fi
 if [ "$(grep -c '^  naru-worktree: allow$' "$T1/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$T1/agents/naru-writer.md"; then pass "global root and delegated runtime permissions"; else fail "global root and delegated runtime permissions"; fi
-if [ ! -e "$T1/plugins" ]; then pass "no runtime plugins installed"; else fail "no runtime plugins installed"; fi
+if is_file "$T1/plugins/naru-dispatch.js" && [ "$(ls "$T1/plugins" | wc -l | tr -d " ")" = "1" ]; then pass "dispatch is the only plugin installed"; else fail "dispatch is the only plugin installed"; fi
 if [ ! -e "$T1/commands/naru" ] && [ ! -e "$T1/agents/naru" ] && [ ! -e "$T1/commands/naru-plan.md" ]; then pass "no retired Core paths installed"; else fail "no retired Core paths installed"; fi
 
 # 2. Copy mode.

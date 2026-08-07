@@ -50,7 +50,7 @@ export function parseRuntimeConfig(value = undefined) {
         return { schemaVersion: 1, implementation: { ...DEFAULT_RUNTIME_CONFIG.implementation } };
     }
     assertObject(value, 'naru runtime config');
-    assertAllowedKeys(value, ['schemaVersion', 'implementation'], 'naru runtime config');
+    assertAllowedKeys(value, ['implementation', 'models', 'schemaVersion'], 'naru runtime config');
     if (value.schemaVersion !== undefined && value.schemaVersion !== 1) {
         throw new Error('naru runtime config schemaVersion must be 1');
     }
@@ -60,8 +60,15 @@ export function parseRuntimeConfig(value = undefined) {
     if (implementation.cleanWorkspaceRequired !== undefined && implementation.cleanWorkspaceRequired !== true) {
         throw new Error('implementation.cleanWorkspaceRequired must be true');
     }
+    // The optional models block is validated by tools/naru-lib/dispatch.mjs,
+    // which is its only consumer; here it only needs to be a plain object so
+    // that a typo cannot break the worktree tool or doctor.
+    if (value.models !== undefined && !isPlainObject(value.models)) {
+        throw new Error('models must be a plain object of model classes');
+    }
     return {
         schemaVersion: 1,
+        ...(value.models !== undefined ? { models: value.models } : {}),
         implementation: {
             workspaceMode: enumOption(implementation.workspaceMode, DEFAULT_RUNTIME_CONFIG.implementation.workspaceMode, WORKSPACE_MODES, 'implementation.workspaceMode'),
             maxConcurrentWriters: integerOption(implementation.maxConcurrentWriters, DEFAULT_RUNTIME_CONFIG.implementation.maxConcurrentWriters, 'implementation.maxConcurrentWriters', { minimum: 1, maximum: MAX_CONCURRENT_WRITERS }),

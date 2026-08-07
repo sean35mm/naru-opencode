@@ -2,6 +2,17 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## Unreleased
+
+### Added
+
+- The `naru-dispatch` plugin and tool: the orchestrator can now pick a model class per dispatch. An optional `models` block in `naru-runtime.json` maps class names (for example `light`, `standard`, `deep`) to ordered model chains like `"openai/gpt-5.6-sol@high"`; the tool description is generated from the configured classes, an optional per-dispatch `effort` overrides the chain default, chains fall through on failure, and an unconfigured or fully failed chain inherits the parent session model instead of failing the dispatch.
+- Dispatch visibility: the running tool title and the child session title carry `agent · provider/model@effort`, results name the model that actually ran (including fallbacks), and the orchestrator reports a one-line dispatch ledger.
+
+### Security
+
+- Dispatched children are bound to their agent by name, so OpenCode applies the agent's own permission frontmatter; the dispatch prompt body never carries a `tools` map, session permissions passed at create are deny-only, only `naru-orchestrator` may call the tool, and children are denied `naru-dispatch` and `task`, keeping delegation at depth 1.
+
 ## [0.2.1] - 2026-08-06
 
 ### Fixed

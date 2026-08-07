@@ -17,7 +17,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 async function copyInstallSource(destination) {
-  for (const directory of ['agents', 'skills', 'tools']) {
+  for (const directory of ['agents', 'plugins', 'skills', 'tools']) {
     await cp(path.join(root, directory), path.join(destination, directory), { recursive: true });
   }
   await cp(path.join(root, 'install.sh'), path.join(destination, 'install.sh'));

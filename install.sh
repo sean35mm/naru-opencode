@@ -552,6 +552,9 @@ add_copy "${SRC_DIR}/tools/naru-worktree.js"          "tools/naru-worktree.js"
 add_copy "${SRC_DIR}/tools/package.json"               "tools/package.json"
 add_copy "${SRC_DIR}/tools/naru-lib"                  "tools/naru-lib"
 
+# Dispatch plugin (always copy-pinned). Registers the naru-dispatch tool.
+add_copy "${SRC_DIR}/plugins/naru-dispatch.js"  "plugins/naru-dispatch.js"
+
 # Runtime configuration example.
 add_copy "${SRC_DIR}/naru-runtime.example.json"         "naru-runtime.example.json"
 
