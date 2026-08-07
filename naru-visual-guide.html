@@ -239,7 +239,7 @@
       <div class="flow" role="list" aria-label="How a task moves through Naru">
         <div class="flow-step" role="listitem"><b>You ask</b><small>Plain request in OpenCode with <code>naru-orchestrator</code> selected. Your intent is the only source of authorization.</small></div>
         <div class="flow-step" role="listitem"><b>It plans</b><small>Reads the repo, consults a fresh code graph or LSP if available, splits work at real boundaries.</small></div>
-        <div class="flow-step" role="listitem"><b>It fans out</b><small>Readers investigate, runners run checks, writers edit — in parallel, via <code>task</code> or <code>naru-dispatch</code>.</small></div>
+        <div class="flow-step" role="listitem"><b>It fans out</b><small>Readers investigate, runners run checks, writers edit — in parallel, all through the native <code>task</code> tool, on model-class variants when the model matters.</small></div>
         <div class="flow-step" role="listitem"><b>It verifies</b><small>Real evidence from actual runs, after every writer has finished — never a subagent's assurance.</small></div>
         <div class="flow-step" role="listitem"><b>It stops</b><small>Local changes are the default stop. Commit, push, PR, or posting happen only when you asked in the current request.</small></div>
       </div>
@@ -263,7 +263,7 @@
         <div class="card">
           <p class="meta">Plugin</p>
           <h3>naru-dispatch</h3>
-          <p class="micro">One plugin, one tool: pick a model class per dispatch. Config maps class names to ordered model chains.</p>
+          <p class="micro">One plugin, zero tools: at startup it clones the subagents into hidden per-class variants. The orchestrator picks a model class by dispatching the variant by name.</p>
         </div>
       </div>
 
@@ -302,10 +302,10 @@
         <p class="micro" style="color:var(--muted)">
           Plans, reads, delegates to the three subagents, calls the Naru tools, and reports.
           The only role holding <code>question</code> (so only it talks to you),
-          <code>naru-github-post-review</code>, <code>naru-worktree</code>, and
-          <code>naru-dispatch</code>. Its <code>task</code> map denies everything except the three
-          Naru subagents. Delegates freely: fan-out is its judgment, launched concurrently, with no
-          child-count ceiling.
+          <code>naru-github-post-review</code>, and <code>naru-worktree</code>. Its
+          <code>task</code> map denies everything except the three Naru subagents and their
+          generated model-class variants. Delegates freely: fan-out is its judgment, launched
+          concurrently, with no child-count ceiling.
         </p>
         <ul class="plain-list">
           <li><b>Can:</b> read (secrets excluded), glob/grep/lsp, webfetch, todowrite, skills, git/GitHub reads, dispatch, post one comment-only review on explicit request.</li>
@@ -383,7 +383,6 @@
             <tr><td><code>naru-git-read</code>, <code>naru-github-read</code></td><td class="allow">allow</td><td class="allow">allow</td><td class="allow">allow</td><td class="allow">allow</td></tr>
             <tr><td><code>naru-github-post-review</code></td><td class="hot">allow</td><td class="deny">deny*</td><td class="deny">deny*</td><td class="deny">deny*</td></tr>
             <tr><td><code>naru-worktree</code></td><td class="hot">allow</td><td class="deny">deny*</td><td class="deny">deny*</td><td class="deny">deny*</td></tr>
-            <tr><td><code>naru-dispatch</code></td><td class="hot">allow</td><td class="deny">deny*</td><td class="deny">deny*</td><td class="deny">deny*</td></tr>
             <tr><td>code graph (<code>codebase-memory-mcp_*</code>)</td><td class="allow">allow (no <code>query_graph</code>)</td><td class="allow">allow</td><td class="allow">allow</td><td class="allow">allow</td></tr>
             <tr><td><code>doom_loop</code></td><td class="deny">deny*</td><td class="deny">deny*</td><td class="allow">ask</td><td class="allow">ask</td></tr>
           </tbody>
@@ -409,12 +408,15 @@
       <p class="section-number">03</p>
       <h2>Dispatch &amp; model classes</h2>
       <p class="section-intro">
-        Naru's one plugin registers one tool: <code>naru-dispatch</code>. It runs the same three
-        subagents as the built-in <code>task</code> tool, but lets the orchestrator pick a
-        <b>model class</b> — and an optional reasoning-effort override — per dispatch. Use
-        <code>task</code> when the model doesn't matter (children inherit the session model);
-        both can be used in the same turn, and dispatches in one turn run concurrently.
-        Dispatch is foreground-only: each call runs the child to completion and returns its answer.
+        Naru's one plugin, <code>naru-dispatch</code>, registers no tools. At startup its
+        <code>config</code> hook reads the optional <code>models</code> block in
+        <code>naru-runtime.json</code> and clones the three base subagents into hidden per-class
+        variants — <code>naru-reader-&lt;class&gt;</code>, <code>naru-runner-&lt;class&gt;</code>,
+        <code>naru-writer-&lt;class&gt;</code> — with the class's model and reasoning effort baked
+        in. The orchestrator picks a <b>model class</b> by dispatching the variant by name through
+        OpenCode's native <code>task</code> tool; the plain base agents remain for when the model
+        doesn't matter (they inherit the session model). Bases and variants mix freely in one turn,
+        and dispatches in one turn run concurrently.
       </p>
 
       <div class="grid-2">
@@ -441,39 +443,34 @@
 }</pre>
         </div>
         <div class="card">
-          <p class="meta">How a dispatch resolves</p>
+          <p class="meta">How a class becomes a variant</p>
           <ul class="plain-list">
-            <li><b>Class → chain.</b> Each class maps to an ordered chain of up to 4 models, written <code>provider/model@effort</code>. Up to 16 classes; names and uses are yours.</li>
-            <li><b>Fall-through.</b> Providers you aren't authenticated with are skipped; a failed attempt falls to the next chain entry; if every model fails, the dispatch <b>inherits the session model</b> rather than hard-failing.</li>
-            <li><b>Effort override.</b> <code>effort</code> (e.g. <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>) overrides the chain default for that one dispatch. Escalate for consequence, not by default.</li>
-            <li><b>Permissions travel by name.</b> The child agent is bound <i>by name</i>, so OpenCode applies its frontmatter itself. Session permissions passed at create are <b>deny-only</b> (task, naru-dispatch, todowrite, question) — a dispatch can tighten a child, never loosen it.</li>
-            <li><b>Orchestrator-only.</b> The tool refuses any caller other than the <code>naru-orchestrator</code> identity, and only dispatches <code>naru-reader</code>, <code>naru-runner</code>, <code>naru-writer</code>.</li>
-            <li><b>Fails soft.</b> A missing or malformed <code>naru-runtime.json</code> never takes the tool down — dispatches simply inherit until it's fixed.</li>
+            <li><b>Class → chain.</b> Each class maps a short <code>use</code> to an ordered chain of <code>provider/model@effort</code> entries. Names and uses are yours.</li>
+            <li><b>First authenticated entry wins — once.</b> At config load, the first chain entry whose provider is authenticated is baked into the class's variants. Unknown auth state: the first entry is used. No authenticated entry: the class is skipped — no variants, nothing breaks. There is no runtime fallthrough; a model that fails mid-run is a failed child, not a silent fallback.</li>
+            <li><b>Effort is part of the class.</b> The <code>@effort</code> suffix (<code>low</code> … <code>max</code>) is baked into the variant. Finer granularity means more classes — e.g. <code>"deep-max"</code> with <code>openai/gpt-5.6-sol@max</code>.</li>
+            <li><b>Permission clones.</b> Variants are <b>byte-for-byte permission clones</b> of the base agents — model selection never touches permissions. Only <code>naru-writer</code> variants can edit.</li>
+            <li><b>Managed namespace.</b> <code>naru-reader-*</code>, <code>naru-runner-*</code>, <code>naru-writer-*</code> are reserved Naru-managed names; the orchestrator's <code>task</code> allowlist and its "Model classes" prompt appendix are refreshed idempotently on every config load. Don't hand-define agents under these names.</li>
+            <li><b>Fails open.</b> The plugin creates no sessions and registers no tools. A missing or malformed config leaves OpenCode's config untouched — the base agents keep working on the session model. Restart OpenCode after editing.</li>
           </ul>
         </div>
       </div>
 
       <h3 style="margin-top:2rem">What you see in the TUI</h3>
       <div>
-        <span class="block-title">Visibility · every dispatch names its model</span>
-        <pre class="block"><span class="c"># tool title while it runs</span>
-naru-reader · opencode/glm-5-free — <span class="a">map auth ownership</span>
+        <span class="block-title">Visibility · the agent name carries the class</span>
+        <pre class="block"><span class="c"># a normal subagent task card — click to open the child thread, cycle threads as usual</span>
+task · naru-reader-light — <span class="a">map auth ownership</span>
 
-<span class="c"># the child session's own title</span>
-map auth ownership (@naru-reader · opencode/glm-5-free)
-
-<span class="c"># the result, wrapped so the transcript names what actually ran</span>
-&lt;dispatch agent="naru-reader" model="opencode/glm-5-free" class="light" session="ses_…"&gt;
-  …the reader's final answer…
-&lt;/dispatch&gt;
+<span class="c"># the exact model is the child session's model — open the thread to see it</span>
 
 <span class="c"># and the orchestrator's final report carries a ledger line</span>
-Dispatched: 3× reader (light/luna-fast@high), 1× writer (standard/sol-fast@medium)</pre>
+Dispatched: 3× naru-reader-light, 1× naru-writer-standard</pre>
       </div>
 
       <div class="callout">
-        <b>Rule of thumb:</b> the tool's own description lists your configured classes and what
-        each is for, so the orchestrator picks from what you actually set up.
+        <b>Rule of thumb:</b> a generated "Model classes" appendix in the orchestrator's prompt
+        lists your configured classes and what each is for, so it picks from what you actually
+        set up.
         <code>light</code> for wide fan-out, <code>standard</code> for ordinary work,
         <code>deep</code> for consequence — a wide fan-out on a heavy class burns time and money
         for nothing.
@@ -587,16 +584,16 @@ Dispatched: 3× reader (light/luna-fast@high), 1× writer (standard/sol-fast@med
           <p class="micro">Read-only local install and configuration health report. Contacts nothing. <code>node tools/naru-doctor.js --json</code>, or <code>naru doctor</code> from the CLI.</p>
         </div>
         <div class="card">
-          <p class="meta">plugin tool · orchestrator only</p>
+          <p class="meta">plugin · config hook only</p>
           <h3>naru-dispatch</h3>
-          <p class="micro">Per-dispatch model classes — the plugin's one tool, covered in <a href="#dispatch">section 03</a>. Deny-only child permissions, depth-1 topology preserved.</p>
+          <p class="micro">Per-class agent variants, generated at startup — covered in <a href="#dispatch">section 03</a>. No tools registered, no sessions created; variants are byte-for-byte permission clones, depth-1 topology preserved.</p>
         </div>
       </div>
 
       <details>
         <summary>Runtime configuration — the whole surface</summary>
         <div class="details-body">
-          <p><code>naru-runtime.json</code> is optional; defaults match the shipped example exactly. Two blocks: <code>implementation</code> (how writers use the workspace) and <code>models</code> (dispatch classes, section 03).</p>
+          <p><code>naru-runtime.json</code> is optional; defaults match the shipped example exactly. Two blocks: <code>implementation</code> (how writers use the workspace) and <code>models</code> (model classes, section 03).</p>
           <pre class="block">{
   "schemaVersion": 1,
   "implementation": {
@@ -697,12 +694,12 @@ sh install.sh --apply     <span class="c"># the only mutation boundary</span></p
           <p class="micro">Checkpoints, scope discipline, and evidence requirements are instructions to a model. Only the permission maps, the comment-only posting tool, and worktree path containment are mechanical.</p>
         </div>
         <div class="card">
-          <h3>Model availability is attempt-based</h3>
-          <p class="micro">Dispatch skips providers you aren't authenticated with and falls through its chain on failure, ending at inherit. It attempts; it does not guarantee a specific model ran — which is why every result names the model that actually did.</p>
+          <h3>Chain selection is startup-time, auth-based</h3>
+          <p class="micro">The first authenticated chain entry is baked into a class's variants at plugin load — auth-based, not liveness-based. A model that fails at runtime is a failed child, not an automatic fallback; a class with no authenticated entry generates no variants at all.</p>
         </div>
         <div class="card">
-          <h3>Foreground-only dispatch</h3>
-          <p class="micro">A dispatch runs its child to completion inside the tool call. Concurrency comes from issuing several dispatches in one turn, not from a background scheduler — there isn't one.</p>
+          <h3>Reserved variant namespace</h3>
+          <p class="micro"><code>naru-reader-*</code>, <code>naru-runner-*</code>, <code>naru-writer-*</code> are Naru-managed names. Agents you hand-define under them can be shadowed or replaced on config load — and config edits take effect only after an OpenCode restart.</p>
         </div>
         <div class="card">
           <h3>Isolation is containment, not protection</h3>
@@ -720,11 +717,11 @@ sh install.sh --apply     <span class="c"># the only mutation boundary</span></p
         <dt>depth-1 topology</dt>
         <dd>One root, leaf subagents. Every subagent has <code>task: deny</code>; grandchildren cannot exist. Breadth is unlimited.</dd>
         <dt>dispatch</dt>
-        <dd>One subagent run via the <code>naru-dispatch</code> tool, on a chosen model class, foreground, concurrent within a turn.</dd>
+        <dd>One subagent run via OpenCode's native <code>task</code> tool — on a base agent, or on a model-class variant when the model matters. Concurrent within a turn.</dd>
         <dt>model class</dt>
-        <dd>A named entry in <code>naru-runtime.json</code>'s <code>models</code> block: a short <code>use</code> plus an ordered <code>chain</code> of up to four <code>provider/model@effort</code> entries.</dd>
+        <dd>A named entry in <code>naru-runtime.json</code>'s <code>models</code> block: a short <code>use</code> plus an ordered <code>chain</code> of <code>provider/model@effort</code> entries. At startup each class becomes hidden variant agents (<code>naru-reader-&lt;class&gt;</code>, …) with the first authenticated chain entry baked in.</dd>
         <dt>effort</dt>
-        <dd>A reasoning-effort token (<code>low</code> … <code>max</code>) attached to a chain entry or overridden per dispatch.</dd>
+        <dd>A reasoning-effort token (<code>low</code> … <code>max</code>) attached to a chain entry and baked into the class's variants. Finer granularity means defining more classes.</dd>
         <dt>the edit wall</dt>
         <dd>Only <code>naru-writer</code>'s frontmatter allows <code>edit</code>/<code>apply_patch</code>. OpenCode enforces it; no prose can change it.</dd>
         <dt>scope / claim</dt>

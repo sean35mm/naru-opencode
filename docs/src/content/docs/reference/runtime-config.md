@@ -3,7 +3,7 @@ title: Runtime configuration
 description: The optional naru-runtime.json file — three implementation fields and the models block for per-dispatch model classes.
 ---
 
-Naru runs on defaults with no configuration file. `naru-runtime.json` is optional and covers two things: how implementation writers use the workspace, and the model classes the `naru-dispatch` tool can select per dispatch. The installer copies `naru-runtime.example.json` into the install root; it never creates or enables `naru-runtime.json`.
+Naru runs on defaults with no configuration file. `naru-runtime.json` is optional and covers two things: how implementation writers use the workspace, and the model classes the `naru-dispatch` plugin turns into per-class agent variants. The installer copies `naru-runtime.example.json` into the install root; it never creates or enables `naru-runtime.json`.
 
 ```sh
 cp .opencode/naru-runtime.example.json .opencode/naru-runtime.json
@@ -45,7 +45,7 @@ This is the entire configuration surface:
 
 ## The models block
 
-`models` is optional. It defines the model classes the [`naru-dispatch` tool](/naru-opencode/workflows/agents/#models) offers the orchestrator, mapping class names of your choosing to a purpose and an ordered fallback chain:
+`models` is optional. It defines the model classes the [`naru-dispatch` plugin](/naru-opencode/workflows/agents/#models) turns into per-class agent variants at startup, mapping class names of your choosing to a purpose and an ordered chain:
 
 ```json
 "models": {
@@ -56,12 +56,13 @@ This is the entire configuration surface:
 }
 ```
 
-- **Class names are yours.** `light`, `standard`, and `deep` are the examples shipped in `naru-runtime.example.json`, not names the code knows. The `use` string is what the orchestrator reads when choosing a class, so write it as selection guidance.
-- **Chain entries are `provider/model` with an optional `@effort` suffix** — for example `openai/gpt-5.6-sol@high`. The suffix sets reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`, and similar) where the model supports it; a per-dispatch `effort` argument overrides it.
-- **The chain is ordered fallback.** Entry 0 is tried first. An entry whose provider definitely has no credentials is skipped; an entry that fails at session create or prompt time falls to the next; if every entry fails, the dispatch runs with no model at all and inherits the parent session model. Model resolution never hard-fails a dispatch.
-- **Absent means inherit.** With no `models` block the tool still registers, and every dispatch inherits the parent session model — the same behavior as omitting the `class` argument.
+- **Class names are yours.** `light`, `standard`, and `deep` are the examples shipped in `naru-runtime.example.json`, not names the code knows. The `use` string is what the orchestrator reads when choosing a class — it lands in a generated "Model classes" appendix in the orchestrator's prompt — so write it as selection guidance.
+- **Each class becomes a set of agent variants.** At plugin load, the three base subagents are cloned into hidden per-class variants — `naru-reader-<class>`, `naru-runner-<class>`, `naru-writer-<class>` — with the class's model and reasoning effort baked in. The orchestrator dispatches a variant by name through OpenCode's native `task` tool. Variants are byte-for-byte permission clones of the base agents; model selection never touches permissions.
+- **Chain entries are `provider/model` with an optional `@effort` suffix** — for example `openai/gpt-5.6-sol@high`. The suffix sets reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`, and similar) where the model supports it, via OpenCode's `variant` field. There is no per-dispatch effort override; finer granularity means defining more classes (for example `"deep-max": { "chain": ["openai/gpt-5.6-sol@max"] }`).
+- **The chain resolves once, at config load.** The first entry whose provider is authenticated (per OpenCode's auth state) is baked into the class's variants. If the auth state is unknown, the first entry is used. If no entry is authenticated, the class is skipped and generates no variants — nothing breaks. There is no runtime fallthrough; a model that fails at runtime surfaces as a failed child dispatch.
+- **Absent means no variants.** With no `models` block the orchestrator uses the plain base agents, which inherit the parent session model.
 
-The class list is baked into the tool's description when the plugin loads, so the orchestrator always sees the currently configured classes. Restart OpenCode after editing the block.
+The variants, the orchestrator's `task` allowlist, and the "Model classes" prompt appendix are regenerated idempotently on every config load. The block is read when the plugin loads, so restart OpenCode after editing it.
 
 ## Workspace mode resolution
 
@@ -99,4 +100,4 @@ Isolated worktrees are a containment convenience, not a sandbox. They do not pro
 - Unknown fields at either level are rejected rather than ignored.
 - An invalid file is an error, not a silent fallback to defaults. `node tools/naru-doctor.js --json` reports it as `invalid-runtime-config` and shows the effective workspace mode.
 - The file is read when `naru-worktree` runs, not cached once at startup.
-- The `models` block is the one exception to both points: the dispatch plugin reads it once at plugin load, and a missing or malformed file never takes the `naru-dispatch` tool down — dispatches simply inherit the parent session model until the file is fixed and OpenCode restarts.
+- The `models` block is the one exception to both points: the `naru-dispatch` plugin reads it once at plugin load and fails open — a missing or malformed file leaves OpenCode's config untouched, so no variants are generated and the base agents keep working on the session model until the file is fixed and OpenCode restarts.

@@ -24,7 +24,7 @@ What remains to migrate:
   the custom-tool calling convention and its input-schema validation.
 - **One worktree adapter** — the only component with real platform overlap.
 
-One plugin remains: `naru-dispatch`, which registers a single tool and hooks nothing else. It is the only Naru dependency on the plugin API surface.
+One plugin remains: `naru-dispatch`, which uses only the `config` hook to generate per-class agent variants — no tool registration, no session creation. It is the only Naru dependency on the plugin API surface.
 
 ## Architectural boundary
 
@@ -100,7 +100,7 @@ Merged code beats open proposals. Recheck at migration time.
 | [PR #34947](https://github.com/anomalyco/opencode/pull/34947) | Open proposal | Yes — dispatch controls |
 | [PR #38954](https://github.com/anomalyco/opencode/pull/38954) | Open proposal | Yes — child cap |
 | [PR #29789](https://github.com/anomalyco/opencode/pull/29789) | Open proposal | No — Naru no longer has a workflow engine to reconcile |
-| [PR #40327](https://github.com/anomalyco/opencode/pull/40327) | Open proposal | Revisit — the `naru-dispatch` plugin now exists |
+| [PR #40327](https://github.com/anomalyco/opencode/pull/40327) | Open proposal | Revisit — the `naru-dispatch` plugin now uses only the `config` hook, not tool registration |
 | [PR #35935](https://github.com/anomalyco/opencode/pull/35935) | Open proposal | No — no telemetry surface remains |
 | [Issue #34359](https://github.com/anomalyco/opencode/issues/34359) | Open issue | No — no TUI surface remains |
 

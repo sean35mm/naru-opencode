@@ -82,7 +82,7 @@ To give a role its own model — for example a stronger one for the orchestrator
 
 The same block accepts `variant`, `temperature`, and `permission`, so you can tighten a role further than Naru ships it. Loosening `naru-writer`'s boundaries, or granting `edit` to another role, defeats the one guarantee the system actually enforces.
 
-These overrides are static — one model per role, fixed for the session. For per-task model selection, configure model classes and let the orchestrator pick a class per dispatch through `naru-dispatch` (see [Per-dispatch models](#per-dispatch-models-naru-dispatch)). Both mechanisms coexist; without either, every agent inherits your session model.
+These overrides are static — one model per role, fixed for the session. For per-task model selection, configure model classes and the `naru-dispatch` plugin generates per-class agent variants the orchestrator picks per dispatch (see [Per-dispatch models](#per-dispatch-models-naru-dispatch)). Both mechanisms coexist; without either, every agent inherits your session model.
 
 ## Skills
 
@@ -99,15 +99,14 @@ Skill text is advisory guidance, never authorization. A skill cannot change an a
 | `naru-github-post-review` | Orchestrator-only. Hard-coded `COMMENT` event, one attempt, no retry, dedupe marker |
 | `naru-worktree` | Isolated writer worktrees: `prepare_run`, `recover_run`, `prepare_item`, `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run` |
 | `naru-doctor` | Provider-free local install and config health report |
-| `naru-dispatch` | Orchestrator-only. Spawns a subagent on a model class chosen per dispatch. Registered by Naru's one plugin |
 
 `naru-github-post-review` cannot approve a pull request, request changes, or merge — the event type is not a parameter. Only `naru-orchestrator` holds permission to call it, so custom agents and subagents cannot post through Naru at all.
 
 ### Per-dispatch models (naru-dispatch)
 
-Naru ships one plugin, `plugins/naru-dispatch.js`. It registers the `naru-dispatch` tool, which the orchestrator uses instead of the built-in `task` tool when the model choice matters for a dispatch: a cheap model for wide reader fan-out, a strong one for a tricky edit, both in the same turn if the work calls for it. When model choice doesn't matter, `task` remains the right tool; without the plugin, nothing breaks — the orchestrator just uses `task`.
+Naru ships one plugin, `plugins/naru-dispatch.js`. It registers no tools and creates no sessions — it hooks only OpenCode's `config` hook. At startup it reads the optional `models` block from `naru-runtime.json` and clones the three base subagents into hidden per-class variants — `naru-reader-<class>`, `naru-runner-<class>`, `naru-writer-<class>` — each with the class's model and reasoning effort baked in. The orchestrator dispatches these variants by name through OpenCode's native `task` tool: a cheap class for wide reader fan-out, a strong one for a tricky edit, both in the same turn if the work calls for it. In the TUI they render as ordinary subagent cards with the class visible in the agent name. When model choice doesn't matter, the plain base agents remain the right target; without the plugin, nothing breaks — there are simply no variants.
 
-Classes are your own names, defined in an optional `models` block in `naru-runtime.json`. Each maps to a short description of when to pick it and an ordered fallback chain of `provider/model@effort` entries:
+Classes are your own names, defined in an optional `models` block in `naru-runtime.json` (the schema is unchanged from earlier releases). Each maps to a short description of when to pick it and an ordered chain of `provider/model@effort` entries:
 
 ```json
 "models": {
@@ -117,9 +116,9 @@ Classes are your own names, defined in an optional `models` block in `naru-runti
 }
 ```
 
-The tool's description is built from this config at plugin load, so the orchestrator always sees the current class list. If a chain entry's provider has no credentials it is skipped; if a dispatch fails to start it falls to the next entry; if every entry fails, the dispatch runs on the parent session model rather than hard-failing. Omitting the class — or the whole `models` block — means the child inherits the parent model, exactly as `task` would.
+Each class's chain resolves once, at config load: the first entry whose provider is authenticated is baked into that class's variants; if the auth state is unknown, the first entry is used; if no entry is authenticated, the class is skipped and generates no variants — nothing breaks. There is no runtime fallthrough. Reasoning effort is part of the class definition, not a per-call knob: finer granularity comes from defining more classes (for example `"deep-max": { "chain": ["openai/gpt-5.6-sol@max"] }` — six discrete effort levels means a few class lines cover the space). The orchestrator's `task` allowlist and a generated "Model classes" appendix in its prompt are refreshed idempotently on every config load, and `naru-reader-*`, `naru-runner-*`, `naru-writer-*` is a reserved Naru-managed namespace — do not hand-define agents with these names.
 
-Dispatch changes only the model, never the permissions. The child agent is bound by name, so OpenCode applies that agent's own permission frontmatter — `naru-writer` stays the only editor, readers stay shell-less — and the session permissions the plugin passes are deny-only (`task`, `naru-dispatch`, `todowrite`, `question`), which can only tighten. Only `naru-orchestrator` may call the tool, and children have it denied, so the topology stays depth-1.
+Variants are byte-for-byte permission clones of the base agents — model selection never touches permissions. Only `naru-writer` variants can edit, readers stay shell-less. The plugin fails open: a broken or malformed config leaves OpenCode's config untouched, and the base agents keep working, inheriting the session model. The config is read at plugin load, so restart OpenCode after editing it.
 
 ### Code intelligence
 
@@ -161,7 +160,7 @@ Configuration is optional. `naru-runtime.example.json` ships as an example; copy
 - `maxConcurrentWriters` — integer from 1 to 50. A runaway brake, not a target; the orchestrator decides actual fan-out.
 - `workspaceMode` — `auto` isolates when the repository is clean and shares otherwise; `shared` and `worktree` force one behavior.
 
-The file also accepts an optional `models` block defining the classes `naru-dispatch` can select per dispatch — see [Per-dispatch models](#per-dispatch-models-naru-dispatch). Absent, every dispatch inherits the parent session model.
+The file also accepts an optional `models` block defining the classes the `naru-dispatch` plugin turns into per-class agent variants — see [Per-dispatch models](#per-dispatch-models-naru-dispatch). Absent, no variants exist and every subagent inherits the parent session model.
 
 That is the entire configuration surface. Prefer configuring the current project; changing global configuration deserves explicit approval.
 

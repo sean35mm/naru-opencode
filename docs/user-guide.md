@@ -177,15 +177,15 @@ You still get one report at the end: what changed, which files, which checks act
 
 ### Per-dispatch models
 
-If you configure model classes (see [runtime configuration](#runtime-configuration)), the orchestrator also picks a model per dispatch through the `naru-dispatch` tool: a cheap class for wide reader fan-out, a strong one for the dispatch that deserves it, both in the same turn. Without a `models` block — or without the plugin at all — every subagent inherits your session model and nothing else changes.
+If you configure model classes (see [runtime configuration](#runtime-configuration)), the `naru-dispatch` plugin clones each subagent into hidden per-class variants at startup — `naru-reader-light`, `naru-writer-deep`, and so on — with the class's model and effort baked in, and the orchestrator picks a variant per dispatch: a cheap class for wide reader fan-out, a strong one for the dispatch that deserves it, both in the same turn. Without a `models` block — or without the plugin at all — there are no variants; every subagent inherits your session model and nothing else changes.
 
-You can watch it happen in the TUI. While a dispatch runs, the tool's title reads `agent · provider/model@effort — description`, and the child session is titled `description (@agent · provider/model@effort)`. The final report then includes a one-line ledger of what was dispatched where, for example:
+Dispatches look like any other subagent in the TUI: normal task cards you can click into to open the child thread, and you can cycle between threads as usual. The class is right in the agent name on the card; the exact model is the child session's model, visible when you open the thread. The final report then includes a one-line ledger of what was dispatched where, for example:
 
 ```text
-Dispatched: 3× reader (light/luna-fast@high), 1× writer (standard/sol-fast@medium)
+Dispatched: 3× naru-reader-light, 1× naru-writer-standard
 ```
 
-Dispatch changes the model, never the walls: the child runs under its own agent permissions, so `naru-writer` stays the only editor and readers stay shell-less regardless of which model a dispatch lands on.
+Model selection changes the model, never the walls: variants are byte-for-byte permission clones of the base agents, so `naru-writer` variants stay the only editors and readers stay shell-less regardless of which model a class lands on. Class config is read once at plugin load — restart OpenCode after editing it.
 
 ## The walls
 
@@ -243,7 +243,6 @@ Tool-owned Git operations suppress hooks, serialize mutations per run, contain p
 | `naru-github-post-review` | Orchestrator-only. One `COMMENT`-only attempt, no retry, dedupe marker. |
 | `naru-worktree` | Orchestrator-only isolated writer worktrees and integration. |
 | `naru-doctor` | Provider-free local install and configuration health report. |
-| `naru-dispatch` | Orchestrator-only. Spawns a subagent on a per-dispatch model class. Registered by Naru's one plugin. |
 
 The GitHub tools invoke authenticated `gh` through a validated interface rather than exposing a general shell.
 
@@ -276,11 +275,11 @@ cp .opencode/naru-runtime.example.json .opencode/naru-runtime.json
 | `cleanWorkspaceRequired` | must be `true` | Isolated worktrees require a clean repository. |
 | `maxConcurrentWriters` | integer 1–50 | Runaway brake only. It does not shape the plan. |
 | `workspaceMode` | `auto`, `shared`, `worktree` | `auto` uses isolation when the repository is clean; `shared` disables the worktree tool entirely; `worktree` selects isolation. |
-| `models` | optional map | The model classes `naru-dispatch` can pick per dispatch. |
+| `models` | optional map | The model classes the `naru-dispatch` plugin turns into per-class agent variants. |
 
-Model classes are named by you — `light`/`standard`/`deep` are just the shipped example. Each class carries a `use` string telling the orchestrator when to pick it and a `chain` of `provider/model` entries tried in order, with an optional `@effort` suffix (`low`, `medium`, `high`, `xhigh`, `max`) where the model supports it. An entry whose provider isn't authenticated is skipped, a failing entry falls to the next, and if the whole chain fails the dispatch simply runs on your session model. Leave `models` out entirely and every dispatch inherits your session model. The class list is read once at plugin load, so restart OpenCode after changing it.
+Model classes are named by you — `light`/`standard`/`deep` are just the shipped example. Each class carries a `use` string telling the orchestrator when to pick it and a `chain` of `provider/model` entries with an optional `@effort` suffix (`low`, `medium`, `high`, `xhigh`, `max`) where the model supports it. At startup, the first chain entry whose provider is authenticated is baked into that class's variants; a class with no authenticated entry is skipped and generates no variants — nothing breaks. Want finer effort control? Define more classes (for example `"deep-max"` with `["openai/gpt-5.6-sol@max"]`). Leave `models` out entirely and no variants exist — every subagent inherits your session model. The class list is read once at plugin load, so restart OpenCode after changing it.
 
-That is the entire configuration surface. The file must be regular, non-symlinked JSON no larger than 64 KiB, unknown fields are rejected, and an invalid file is a startup-visible error rather than a silent partial policy. Prefer project-local configuration; changing global OpenCode configuration deserves explicit approval.
+That is the entire configuration surface. The file must be regular, non-symlinked JSON no larger than 64 KiB, unknown fields are rejected, and an invalid file is a startup-visible error rather than a silent partial policy. The `models` block is the one exception: the plugin fails open, leaving OpenCode's config untouched and generating no variants until the file is fixed. Prefer project-local configuration; changing global OpenCode configuration deserves explicit approval.
 
 ## Health check
 

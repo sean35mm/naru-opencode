@@ -125,28 +125,21 @@ Naru installs four custom OpenCode tools. Each returns the same JSON envelope:
 
 `tools/naru-doctor.js` is a local CLI, not an agent-callable tool. `node tools/naru-doctor.js --json` prints a schemaVersion 1 report on installation and configuration health. It reads local state only: no providers, credentials, or network calls.
 
-### naru-dispatch (plugin tool)
+### Model-class agent variants (the naru-dispatch plugin)
 
-`naru-dispatch` is registered by Naru's one plugin rather than installed from `tools/`, and it does not use the JSON envelope above. It spawns one Naru subagent on a model class chosen for that dispatch.
+`naru-dispatch` is a plugin, not a tool. It registers no tools, creates no sessions, and does not use the JSON envelope above; it hooks only OpenCode's `config` hook. At startup it reads the optional `models` block in `naru-runtime.json` and clones the three base subagents into hidden per-class variants — `naru-reader-<class>`, `naru-runner-<class>`, `naru-writer-<class>` — with the class's model and reasoning effort baked in. The orchestrator dispatches a variant by name through OpenCode's native `task` tool; there is no dispatch envelope and no custom result format.
 
-| Argument | Required | Meaning |
-| --- | --- | --- |
-| `agent` | yes | `naru-reader`, `naru-runner`, or `naru-writer` — nothing else |
-| `description` | yes | Short 3–5 word label, shown to the user |
-| `prompt` | yes | The full task; the child starts with fresh context |
-| `class` | no | Model class from the configured `models` block; omit to inherit the parent session model |
-| `effort` | no | Per-dispatch reasoning-effort override (e.g. `low`, `medium`, `high`, `xhigh`, `max`) |
-| `directory` | no | Working directory for the child, e.g. an assigned worktree path |
+Integration rules:
 
-Only `naru-orchestrator` may call it: any other caller identity is rejected in code, and every child session it creates carries a deny for the tool, so the topology stays depth-1. Dispatches are foreground-only and run to completion within the call.
+- **The variant names are a reserved, Naru-managed namespace.** Do not hand-define agents named `naru-reader-*`, `naru-runner-*`, or `naru-writer-*`, and do not delegate to any of them from a custom agent.
+- **Variants are not stable integration targets.** Which variants exist depends entirely on the user's `models` block, and they are regenerated on every config load. Do not depend on their names, their models, or their existence.
+- **Variants are byte-for-byte permission clones of their base agents.** Model selection never touches permissions; only `naru-writer` variants can edit.
+- **The orchestrator's `task` allowlist is managed.** The plugin refreshes it, and a generated "Model classes" appendix in the orchestrator prompt, idempotently on every config load.
+- **The plugin fails open.** A missing or malformed config leaves OpenCode's config untouched; the base agents keep working and inherit the parent session model.
 
-The result wraps the child's answer in a `<dispatch agent="..." model="..." class="..." session="...">` element and notes any fallback that occurred. Treat the wrapped content as an ordinary untrusted subagent report.
+## One plugin
 
-The safety contract: the child is bound by agent name, so OpenCode applies that agent's own permission frontmatter — dispatch selects a model, never permissions. The dispatch prompt body never includes a `tools` map, and the session permissions passed at create are deny-only (`task`, `naru-dispatch`, `todowrite`, `question`), which can only tighten what the agent already denies.
-
-## One plugin, no aliases
-
-Naru ships exactly one plugin: `plugins/naru-dispatch.js`. It registers the `naru-dispatch` tool described above and hooks nothing else — no config mutation, no event handling, no model aliases. Its tool description is built at plugin load from the `models` block in `naru-runtime.json`; if the plugin is absent or the block is missing, the orchestrator delegates through the built-in `task` tool and children inherit the parent session model.
+Naru ships exactly one plugin: `plugins/naru-dispatch.js`. It hooks only OpenCode's `config` hook to generate the model-class agent variants described above — no tool registration, no session creation, no event handling, no model aliases. If the plugin is absent or the `models` block is missing, no variants exist and children inherit the parent session model.
 
 This is not the old delegation plugin. Earlier versions exposed a scheduler tool and scheduler modes, a delegation plugin that mutated agent config to inject generated model aliases, and a dashboard plugin with TUI registration and telemetry. All of them were removed. They are not deprecated interfaces awaiting migration — they no longer exist, so do not integrate against them or reconstruct their inputs.
 
@@ -172,7 +165,7 @@ This is not the old delegation plugin. Earlier versions exposed a scheduler tool
 - `maxConcurrentWriters` is an integer from 1 to 50. It is a runaway brake, not a throughput promise and not a global capacity meter.
 - `workspaceMode` is `auto`, `shared`, or `worktree`.
 
-An optional `models` block maps user-chosen class names to `{ "use": ..., "chain": [...] }` for `naru-dispatch`; absent, every dispatch inherits the parent session model. When the file is absent, the defaults above apply. This file affects workspace mechanics and dispatch model selection only; it never grants permissions and never changes authorization.
+An optional `models` block maps user-chosen class names to `{ "use": ..., "chain": [...] }`; the `naru-dispatch` plugin generates per-class agent variants from it at config load. Absent, no variants exist and every dispatch inherits the parent session model. When the file is absent, the defaults above apply. This file affects workspace mechanics and model selection only; it never grants permissions and never changes authorization.
 
 ## What is stable
 
@@ -182,13 +175,13 @@ Integrate against these:
 - The four agent identifiers and their permission posture (only `naru-writer` edits; read-only roles fail closed).
 - The four tool ids and their operation names.
 - The envelope fields `ok`, `tool`, `complete`, `contentTruncated`, `limits`, `warnings`, `data`, `error`.
-- The `naru-dispatch` tool id, its argument names, its three allowed agent targets, and its orchestrator-only restriction.
+- The variant namespace reservation: `naru-reader-*`, `naru-runner-*`, and `naru-writer-*` are Naru-managed names.
 - The `naru-runtime.json` schemaVersion 1 keys.
 
 Do not depend on these:
 
 - Prompt text or internal reasoning of any agent.
-- Model assignment per role or per dispatch. Models change without notice, and model class names are user configuration, not part of Naru.
+- Model assignment per role or per class, or the set of generated variants. Models change without notice, and model class names — and therefore which variants exist — are user configuration, not part of Naru.
 - Report wording, ordering, or any human-readable summary text.
 - Worktree paths, run and item identifiers, and on-disk layout.
 - `naru-doctor` report fields beyond `schemaVersion`.

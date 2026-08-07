@@ -88,11 +88,11 @@ The same block accepts `variant`, `temperature`, and `permission`. Tightening a 
 
 ### Per-dispatch model classes
 
-The `opencode.json` override is static: one model per role, fixed for the session. Naru's one plugin, `naru-dispatch`, adds selection per task. It registers a tool of the same name that spawns `naru-reader`, `naru-runner`, or `naru-writer` on a model class chosen at dispatch time — cheap models for wide fan-out, a strong one for the dispatch that deserves it, in the same turn.
+The `opencode.json` override is static: one model per role, fixed for the session. Naru's one plugin, `naru-dispatch`, adds selection per task. It hooks OpenCode's `config` hook and nothing else: at startup it reads the optional `models` block in `naru-runtime.json` and clones the three base subagents into hidden per-class variants — `naru-reader-<class>`, `naru-runner-<class>`, `naru-writer-<class>` — with the class's model and reasoning effort baked in. The orchestrator dispatches a variant by name through the native `task` tool — cheap classes for wide fan-out, a strong one for the dispatch that deserves it, in the same turn — and the agent name itself carries the class, so the TUI's task cards show which class each child ran on.
 
-Classes come from an optional `models` block in `naru-runtime.json`. Each class names a purpose and an ordered fallback chain of `provider/model@effort` entries; the [runtime configuration reference](/naru-opencode/reference/runtime-config/#the-models-block) documents the schema and fallback semantics. The tool's description is built from that block at plugin load, so the orchestrator sees exactly the classes you configured.
+Each class names a purpose and an ordered chain of `provider/model@effort` entries; the [runtime configuration reference](/naru-opencode/reference/runtime-config/#the-models-block) documents the schema and resolution semantics. The chain resolves once, at config load: the first entry whose provider is authenticated is baked in, and a class with no authenticated entry is skipped — no variants, nothing broken. The orchestrator's `task` allowlist and a generated "Model classes" appendix in its prompt are refreshed idempotently on every config load. The `naru-reader-*`, `naru-runner-*`, and `naru-writer-*` names are a reserved Naru-managed namespace — do not hand-define agents under them.
 
-Dispatch selects a model, never permissions. The child is bound by agent name, so its own permission frontmatter applies unchanged — `naru-writer` stays the only editor, readers stay shell-less — and the session permissions the plugin adds are deny-only (`task`, `naru-dispatch`, `todowrite`, `question`), which can only tighten. Only `naru-orchestrator` may call the tool; children have it denied, so the depth-1 topology holds. Omitting the class, the `models` block, or the plugin entirely leaves the default behavior above: every agent inherits your session model, and the orchestrator delegates through the built-in `task` tool.
+Model selection never touches permissions. Variants are byte-for-byte permission clones of their base agents — `naru-writer` variants stay the only editors, reader variants stay shell-less — and like their bases they are hidden and cannot spawn children, so the depth-1 topology holds. The plugin registers no tools and creates no sessions, and it fails open: a broken config leaves OpenCode's config untouched and the base agents keep working. Omitting the `models` block, or the plugin entirely, leaves the default behavior above: no variants, and every agent inherits your session model.
 
 ## Exact permissions
 
@@ -104,13 +104,14 @@ Every agent starts from `'*': deny` and allows only what its role needs.
 | `glob`, `grep`, `lsp` | allow | allow | allow | allow |
 | `bash` | deny | deny | allow | allow |
 | `edit`, `apply_patch` | deny | deny | deny | **allow** |
-| `task` (spawn) | three subagents only | deny | deny | deny |
+| `task` (spawn) | three subagents (plus their generated class variants) | deny | deny | deny |
 | `external_directory` | — | deny | allow | allow |
 | `question` (ask the user) | allow | deny | deny | deny |
 | `naru-git-read`, `naru-github-read` | allow | allow | allow | allow |
 | `naru-github-post-review` | allow | deny | deny | deny |
 | `naru-worktree` | allow | deny | deny | deny |
-| `naru-dispatch` | allow | deny | deny | deny |
+
+When model classes are configured, the generated `naru-reader-<class>`, `naru-runner-<class>`, and `naru-writer-<class>` variants carry exactly their base agent's row — the plugin clones permissions byte for byte.
 
 Read denials are identical across all four: `.git/**`, `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH and GPG key material, and `**/.ssh/**`, `**/.aws/**`, `**/.kube/**`, `**/.gnupg/**`, `**/credentials/**`, `**/secrets/**`. `*.env.example` and `env.example` stay readable, so templates still work.
 

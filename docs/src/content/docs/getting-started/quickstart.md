@@ -65,6 +65,6 @@ Use the `naru-plan` skill to plan <your objective>
 node ~/.config/opencode/tools/naru-doctor.js --json
 ```
 
-**Runtime config.** Copy `naru-runtime.example.json` to `naru-runtime.json` only if you need to change writer workspace behavior or define model classes — an optional `models` block that lets the orchestrator pick a model per dispatch (cheap for wide fan-out, strong for hard problems). Without it, every subagent inherits your session model. See [runtime configuration](/naru-opencode/reference/runtime-config/).
+**Runtime config.** Copy `naru-runtime.example.json` to `naru-runtime.json` only if you need to change writer workspace behavior or define model classes — an optional `models` block that generates per-class agent variants the orchestrator picks per task (cheap for wide fan-out, strong for hard problems). Without it, every subagent inherits your session model. See [runtime configuration](/naru-opencode/reference/runtime-config/).
 
 Continue with [installation](/naru-opencode/getting-started/installation/) for project targets, lifecycle previews, conflicts, and backups, or see the [user guide](/naru-opencode/user-guide/) for full operational detail.
