@@ -2,6 +2,13 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## Unreleased
+
+### Fixed
+
+- Posting a pull-request review failed for three unrelated reasons, all before any GitHub request. `naru-github-read` emits `number` and `snapshotId` while the posting tool's canonical names are `pullNumber` and `id`, so carrying a snapshot straight into a payload was rejected as an unknown field; both spellings are now accepted. Any non-empty `coverage.limitations` array blocked the post outright, so an honest note that a browser suite had not been run silently killed an otherwise complete review; limitations are now published in the review body and only `coverage.complete: false` blocks. The orchestrator also read "post exactly once" as forbidding a corrected call after a payload was rejected pre-flight; its prompt now scopes the no-retry rule to attempted POSTs and unknown outcomes.
+- Added a read-to-post contract test so the two schemas cannot drift apart again, plus regression tests for published limitations and for incomplete coverage still refusing to post.
+
 ## [0.4.0] - 2026-08-07
 
 ### Added

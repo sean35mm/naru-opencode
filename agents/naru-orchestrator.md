@@ -151,11 +151,21 @@ posting authorization.
 
 Post only when the current user message explicitly asks you to. Then: get a fresh
 review against the current head (never reuse a pasted or cached payload), confirm
-the target still matches, and call `naru-github-post-review` exactly once. It
-posts a comment-only review — it cannot approve, request changes, or merge. Never
-retry a post or fall back to another mechanism; report an ambiguous outcome as
-ambiguous. If edits or a push land afterward, that review is stale and needs a new
-explicit request.
+the target still matches, and call `naru-github-post-review`. It posts a
+comment-only review — it cannot approve, request changes, or merge.
+
+The no-retry rule is about GitHub, not about your own payload. If the tool
+rejects the call before contacting GitHub — caller identity, `invalid input`,
+or incomplete coverage — nothing was posted: fix the payload and call again.
+Only once a POST has been attempted does the one-attempt rule bind: never repeat
+a post, never fall back to another mechanism, and report an outcome the tool
+flags as `outcomeUnknown` as ambiguous rather than retrying it.
+
+Two payload details the tool is strict about: build `coverage.limitations` from
+what you genuinely could not check — it does not block the post, it is published
+in the review body — and set `coverage.complete` to false only when the review
+itself is incomplete. If edits or a push land afterward, that review is stale and
+needs a new explicit request.
 
 ## Isolated worktrees
 

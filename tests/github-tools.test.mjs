@@ -603,3 +603,75 @@ test('OpenCode wrappers expose one input schema and return JSON text', async () 
   assert.equal(typeof postResult, 'string');
   assert.match(JSON.parse(postResult).error, /identity/);
 });
+
+test('a pull snapshot from naru-github-read feeds the posting tool without renaming fields', async () => {
+  // Regression: naru-github-read emits `number`/`snapshotId` while the posting
+  // tool's canonical names are `pullNumber`/`id`. Carrying a snapshot straight
+  // into a payload used to fail with "unknown fields: number".
+  const snapshotShaped = {
+    owner: 'sean35mm',
+    repo: 'naru-opencode',
+    number: 42,
+    snapshotId: `naru-snap-${'a'.repeat(64)}`,
+    baseSha: 'b'.repeat(40),
+    headSha: 'c'.repeat(40),
+    feedbackDigest: 'd'.repeat(64),
+    complete: true,
+    warnings: [],
+  };
+  const payload = {
+    reviewResult: {
+      schemaVersion: 2,
+      target: { owner: snapshotShaped.owner, repo: snapshotShaped.repo, number: snapshotShaped.number },
+      snapshot: {
+        id: undefined,
+        snapshotId: snapshotShaped.snapshotId,
+        baseSha: snapshotShaped.baseSha,
+        headSha: snapshotShaped.headSha,
+        feedbackDigest: snapshotShaped.feedbackDigest,
+        complete: true,
+        warnings: [],
+      },
+      coverage: { complete: true, limitations: [] },
+      body: 'Looks good.',
+      inlineComments: [],
+      skippedInlineComments: [],
+    },
+  };
+  delete payload.reviewResult.snapshot.id;
+  const validated = validateReviewPayload(payload);
+  assert.equal(validated.target.number, 42);
+  assert.equal(validated.snapshot.id, snapshotShaped.snapshotId);
+});
+
+test('honest coverage limitations are published, not treated as incomplete coverage', async () => {
+  // Regression: any non-empty limitations array blocked posting outright, so an
+  // honest "did not run the browser suite" note silently killed the review.
+  let posted;
+  const { spawn } = fakeSpawn([
+    ...snapshotHandlers(),
+    {
+      match: (argv) => argv.includes('POST'),
+      reply: (_argv, options) => {
+        posted = JSON.parse(options.input);
+        return response({ id: 7, html_url: 'https://github.com/owner/repo/pull/42#pullrequestreview-7' });
+      },
+    },
+  ]);
+  const input = reviewInput();
+  input.reviewResult.coverage.limitations = ['Did not run the browser suite', 'Native build not exercised'];
+  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+  assert.equal(result.ok, true, result.error);
+  assert.match(posted.body, /\*\*Review limitations\*\*/);
+  assert.match(posted.body, /Did not run the browser suite/);
+  assert.match(posted.body, /Native build not exercised/);
+});
+
+test('coverage.complete false still refuses to post', async () => {
+  const result = await postReview(
+    reviewInput({ status: 'incomplete', degraded: true }),
+    { agent: 'naru-orchestrator' },
+    { spawn: async () => { throw new Error('unexpected I/O'); } },
+  );
+  assert.match(result.error, /incomplete/);
+});

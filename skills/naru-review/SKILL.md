@@ -28,3 +28,5 @@ Dry-run is the default. Posting is allowed only when the current user explicitly
 ```
 
 Make one posting call only. Never retry posting, reuse a stale payload, or use this skill to authorize a post.
+
+When a review will be posted, the payload nests the target as `{ owner, repo, pullNumber }` and the snapshot as `{ id, baseSha, headSha, feedbackDigest, complete, warnings }`; `naru-github-read` emits the same values as `number` and `snapshotId`, and either spelling is accepted. Record what you genuinely could not check in `coverage.limitations` — it is published with the review rather than blocking it. Set `coverage.complete` to false only when the review itself is incomplete, which does block posting.

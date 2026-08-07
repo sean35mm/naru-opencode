@@ -52,6 +52,25 @@ function requireStringArray(value, name, max) {
     }
     return value;
 }
+// naru-github-read emits `number` and `snapshotId`; this tool's canonical
+// names are `pullNumber` and `id`. Accept both spellings so a snapshot can be
+// carried straight into a posting payload without a silent rename trap.
+function normalizeTargetAliases(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+    if (raw.pullNumber === undefined && raw.number !== undefined) {
+        const { number, ...rest } = raw;
+        return { ...rest, pullNumber: number };
+    }
+    return raw;
+}
+function normalizeSnapshotAliases(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+    if (raw.id === undefined && raw.snapshotId !== undefined) {
+        const { snapshotId, ...rest } = raw;
+        return { ...rest, id: snapshotId };
+    }
+    return raw;
+}
 function validateTarget(raw) {
     assertPlainObject(raw, 'reviewResult.target');
     validateAllowedKeys(raw, ['owner', 'repo', 'pullNumber']);
@@ -119,8 +138,8 @@ export function validateReviewPayload(raw) {
     ]);
     if (result.schemaVersion !== 2)
         throw new Error('reviewResult.schemaVersion must be 2');
-    const target = validateTarget(requireField(result, 'target', isUnknownRecord));
-    const snapshot = validateSnapshot(requireField(result, 'snapshot', isUnknownRecord));
+    const target = validateTarget(normalizeTargetAliases(requireField(result, 'target', isUnknownRecord)));
+    const snapshot = validateSnapshot(normalizeSnapshotAliases(requireField(result, 'snapshot', isUnknownRecord)));
     const coverage = validateCoverage(requireField(result, 'coverage', isUnknownRecord));
     const body = requireField(result, 'body', (value) => isBoundedText(value, MAX_BODY_LENGTH - 256));
     if (/<!--\s*naru-review:/i.test(body))
@@ -391,7 +410,10 @@ async function postReviewLocked(payload, spawn, key) {
     const validComments = finalValidation.valid;
     const droppedComments = finalValidation.dropped;
     const marker = markerTag(payload, digest);
-    const body = `${marker}\n${payload.body}`;
+    const limitationsNote = payload.coverage.limitations.length > 0
+        ? `\n\n---\n\n**Review limitations**\n${payload.coverage.limitations.map(item => `- ${item}`).join('\n')}`
+        : '';
+    const body = `${marker}\n${payload.body}${limitationsNote}`;
     const ghPayload = {
         body,
         event: 'COMMENT',
@@ -488,7 +510,7 @@ export async function postReview(rawPayload, context, { spawn } = {}) {
     catch (error) {
         return errEnvelope('naru-github-post-review', `invalid input: ${safeError(error)}`);
     }
-    if (!payload.coverage.complete || payload.coverage.limitations.length > 0 || !payload.snapshot.complete) {
+    if (!payload.coverage.complete || !payload.snapshot.complete) {
         return errEnvelope('naru-github-post-review', 'incomplete coverage or snapshot cannot be posted');
     }
     const key = targetKey(payload.target);
