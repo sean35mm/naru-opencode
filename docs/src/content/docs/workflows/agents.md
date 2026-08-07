@@ -1,9 +1,9 @@
 ---
 title: Agent workflows
-description: The five Naru agents, their exact permissions, and when the orchestrator picks each.
+description: The four Naru agents, their exact permissions, and when the orchestrator picks each.
 ---
 
-Naru installs five OpenCode agents: one visible primary orchestrator and four hidden subagents. The orchestrator plans and delegates; it cannot edit files or run commands. Exactly one subagent — `naru-writer` — can change your workspace.
+Naru installs four OpenCode agents: one visible primary orchestrator and three hidden subagents. The orchestrator plans and delegates; it cannot edit files or run commands. Exactly one subagent — `naru-writer` — can change your workspace.
 
 The topology is flat. The orchestrator is the only root, the three subagents are leaves, and every subagent has `task: deny`, so nothing can spawn grandchildren. `subagent_depth` of `1` is enough; OpenCode's default is fine.
 
@@ -14,7 +14,7 @@ flowchart TB
   RUN["naru-runner"]:::shell
   WR["naru-writer"]:::write
 
-  ORC --> RD & RDD & RUN
+  ORC --> RD & RUN
   ORC ==>|"only writer"| WR
 
   classDef coord fill:#ccd3ff,stroke:#3f4fbe,color:#1b2456
@@ -86,6 +86,14 @@ To give a role its own model — a stronger one for the orchestrator's planning,
 
 The same block accepts `variant`, `temperature`, and `permission`. Tightening a role further than Naru ships it is safe. Granting `edit` to a role other than `naru-writer`, or handing a reader a shell, removes the only guarantee the system mechanically enforces.
 
+### Per-dispatch model classes
+
+The `opencode.json` override is static: one model per role, fixed for the session. Naru's one plugin, `naru-dispatch`, adds selection per task. It registers a tool of the same name that spawns `naru-reader`, `naru-runner`, or `naru-writer` on a model class chosen at dispatch time — cheap models for wide fan-out, a strong one for the dispatch that deserves it, in the same turn.
+
+Classes come from an optional `models` block in `naru-runtime.json`. Each class names a purpose and an ordered fallback chain of `provider/model@effort` entries; the [runtime configuration reference](/naru-opencode/reference/runtime-config/#the-models-block) documents the schema and fallback semantics. The tool's description is built from that block at plugin load, so the orchestrator sees exactly the classes you configured.
+
+Dispatch selects a model, never permissions. The child is bound by agent name, so its own permission frontmatter applies unchanged — `naru-writer` stays the only editor, readers stay shell-less — and the session permissions the plugin adds are deny-only (`task`, `naru-dispatch`, `todowrite`, `question`), which can only tighten. Only `naru-orchestrator` may call the tool; children have it denied, so the depth-1 topology holds. Omitting the class, the `models` block, or the plugin entirely leaves the default behavior above: every agent inherits your session model, and the orchestrator delegates through the built-in `task` tool.
+
 ## Exact permissions
 
 Every agent starts from `'*': deny` and allows only what its role needs.
@@ -102,8 +110,9 @@ Every agent starts from `'*': deny` and allows only what its role needs.
 | `naru-git-read`, `naru-github-read` | allow | allow | allow | allow |
 | `naru-github-post-review` | allow | deny | deny | deny |
 | `naru-worktree` | allow | deny | deny | deny |
+| `naru-dispatch` | allow | deny | deny | deny |
 
-Read denials are identical across all five: `.git/**`, `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH and GPG key material, and `**/.ssh/**`, `**/.aws/**`, `**/.kube/**`, `**/.gnupg/**`, `**/credentials/**`, `**/secrets/**`. `*.env.example` and `env.example` stay readable, so templates still work.
+Read denials are identical across all four: `.git/**`, `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH and GPG key material, and `**/.ssh/**`, `**/.aws/**`, `**/.kube/**`, `**/.gnupg/**`, `**/credentials/**`, `**/secrets/**`. `*.env.example` and `env.example` stay readable, so templates still work.
 
 The two readers are fail-closed: `bash: deny` and `external_directory: deny` mean a reader cannot escape into a shell or reach outside the workspace even if something in the repository tells it to.
 

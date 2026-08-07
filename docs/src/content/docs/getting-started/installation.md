@@ -74,7 +74,7 @@ Everything left of `--apply` is read-only. `--apply` is the single mutation boun
 
 **Walkthrough:** `install.sh` previews by default and does not create the target. After reviewing the bounded change summary, repeat the command with `--apply` and the same options. The installer stages changed assets, preserves conflicts unless you explicitly replace them, writes `.naru-install.json`, and skips unchanged paths. Restart OpenCode after an applied change, select `naru-orchestrator`, and ask for something in plain language.
 
-Clone, preview, explicit apply. There is no curl bootstrapper and no package-registry installer.
+Clone, preview, explicit apply — the same transactional flow the curl path drives through the naru CLI.
 
 ## What gets installed
 
@@ -82,7 +82,7 @@ Clone, preview, explicit apply. There is no curl bootstrapper and no package-reg
 - **Tools** — `naru-git-read`, `naru-github-read`, `naru-github-post-review`, `naru-worktree`, `naru-doctor`, plus their shared helper library.
 - **`naru-runtime.example.json`** — an example only. The installer never creates or enables `naru-runtime.json`.
 
-Agent and skill Markdown is symlinked by default so a `git pull` in the checkout keeps it current; `--copy` pins copies instead. Executable tools and their helper library are always copied. Naru ships no plugins.
+Agent and skill Markdown is symlinked by default so a `git pull` in the checkout keeps it current; `--copy` pins copies instead. Executable tools, their helper library, and the one plugin (`naru-dispatch`) are always copied.
 
 Skill content is advisory guidance. It cannot change role, tools, scope, safety, or action authorization, and it never grants a tool or makes an agent read-only. OpenCode controls skill origins and duplicate-name precedence, so check which source is selected when global and project copies overlap. The installer does not modify non-Naru agents.
 

@@ -9,1032 +9,814 @@
   <style>
     :root {
       --ink: #000;
-      --ink-2: #000;
-      --panel: #000;
-      --panel-2: #000;
       --line: #ffffff1f;
       --line-strong: #ffffff66;
       --text: #fff;
-      --muted: #8a8a8a;
-      --quiet: #8a8a8a;
-      --teal: #fff;
-      --teal-soft: transparent;
-      --amber: #d8451d;
-      --amber-soft: transparent;
-      --violet: #fff;
-      --violet-soft: transparent;
-      --red: #d8451d;
-      --red-soft: transparent;
-      --white-soft: transparent;
-      --measure: 88rem;
+      --muted: #9a9a9a;
+      --quiet: #6f6f6f;
+      --accent: #d8451d;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      --measure: 76rem;
     }
     * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; scroll-padding-top: 12rem; background: var(--ink); }
-    body {
-      margin: 0;
-      color: var(--text);
-      background: var(--ink);
-      font: 400 1rem/1.65 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      min-width: 320px;
+    html { scroll-behavior: smooth; scroll-padding-top: 7.5rem; background: var(--ink); }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation: none !important; transition: none !important; }
     }
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      opacity: .12;
-      background-image: none;
-      background-size: 44px 44px;
-      mask-image: none;
+    body {
+      margin: 0; min-width: 320px;
+      color: var(--text); background: var(--ink);
+      font: 400 .95rem/1.7 var(--mono);
     }
     a { color: inherit; }
-    button, input { font: inherit; }
-    button { color: inherit; }
-    :focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
-    ::selection { background: var(--violet); color: var(--ink); }
+    a:hover { color: var(--accent); }
+    button, input { font: inherit; color: inherit; }
+    code, pre { font-family: var(--mono); }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    ::selection { background: var(--accent); color: var(--ink); }
+
     .skip-link {
-      position: fixed; z-index: 100; left: 1rem; top: 1rem; transform: translateY(-180%);
-      padding: .75rem 1rem; background: var(--text); color: var(--ink); border-radius: 0;
+      position: fixed; z-index: 100; left: 1rem; top: 1rem; transform: translateY(-200%);
+      padding: .7rem 1rem; background: var(--text); color: var(--ink); text-decoration: none;
     }
     .skip-link:focus { transform: translateY(0); }
-    .site-header {
-      position: sticky; top: 0; z-index: 30;
-      border-bottom: 1px solid var(--line);
-      background: var(--ink);
-    }
-    .header-inner { max-width: var(--measure); margin: auto; padding: .8rem 1.25rem; display: flex; align-items: center; gap: 1rem; }
-    .brand { display: flex; align-items: center; gap: .75rem; min-width: max-content; }
-    .brand-mark { width: 2.25rem; height: 2.25rem; display: grid; place-items: center; border: 1px solid var(--violet); border-radius: 0; color: var(--violet); font-weight: 800; }
-    .brand strong { letter-spacing: .13em; text-transform: uppercase; font-size: .82rem; }
-    .brand small { display: block; color: var(--quiet); font-size: .68rem; letter-spacing: .06em; }
-    .header-search { flex: 1; position: relative; }
+
+    .site-header { position: sticky; top: 0; z-index: 30; background: var(--ink); border-bottom: 1px solid var(--line); }
+    .header-inner { max-width: var(--measure); margin: auto; padding: .75rem 1.25rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    .brand { display: flex; align-items: center; gap: .7rem; min-width: max-content; }
+    .brand-mark { width: 2.1rem; height: 2.1rem; display: grid; place-items: center; border: 1px solid var(--accent); color: var(--accent); font-weight: 700; }
+    .brand strong { letter-spacing: .16em; text-transform: uppercase; font-size: .8rem; }
+    .brand small { display: block; color: var(--quiet); font-size: .66rem; letter-spacing: .08em; }
+    .header-search { flex: 1; min-width: 14rem; }
     .header-search label { position: absolute; clip: rect(0 0 0 0); clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; }
     input[type="search"] {
-      width: 100%; min-height: 44px; color: var(--text); background: var(--ink); border: 1px solid var(--line); border-radius: 0; padding: .65rem .85rem;
+      width: 100%; min-height: 42px; padding: .55rem .85rem;
+      color: var(--text); background: var(--ink); border: 1px solid var(--line); border-radius: 0;
     }
     input[type="search"]::placeholder { color: var(--quiet); }
-    .detail-control { display: flex; gap: .25rem; padding: .2rem; border: 1px solid var(--line); border-radius: 0; background: var(--ink); }
-    .detail-control label { cursor: pointer; min-height: 38px; display: grid; place-items: center; padding: 0 .72rem; border-radius: 0; color: var(--muted); font-size: .78rem; font-weight: 700; }
-    .detail-control input { position: absolute; opacity: 0; pointer-events: none; }
-    .detail-control label:has(input:checked) { color: var(--ink); background: var(--text); }
-    .detail-control label:has(input:focus-visible) { outline: 3px solid var(--amber); outline-offset: 3px; }
-    .legend-bar { position: sticky; top: 4.05rem; z-index: 25; border-bottom: 1px solid var(--line); background: var(--ink); }
-    .legend-inner { max-width: var(--measure); margin: auto; padding: .55rem 1.25rem; display: flex; gap: .48rem; flex-wrap: wrap; align-items: center; }
-    .legend-title { color: var(--quiet); font: 700 .66rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; margin-right: .25rem; }
-    .tag { display: inline-flex; align-items: center; gap: .38rem; min-height: 24px; padding: .18rem .5rem; border: 1px solid currentColor; border-radius: 0; font: 750 .62rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
-    .tag::before { content: ""; width: .38rem; height: .38rem; border-radius: 0; background: currentColor; }
-    .advisory, .read-only, .checks { color: var(--teal); background: var(--teal-soft); }
-    .checks { border-style: dashed; }
-    .coordinates, .gate { color: var(--violet); background: var(--violet-soft); }
-    .write { color: var(--amber); background: var(--amber-soft); }
-    .blocked { color: var(--red); background: var(--red-soft); }
-    .outward { color: var(--amber); border-color: var(--red); background: transparent; }
-    .outward::before { background: var(--red); }
-    .section-nav { max-width: var(--measure); margin: 0 auto; padding: 1rem 1.25rem 0; overflow-x: auto; scrollbar-width: thin; }
-    .section-nav ul { list-style: none; display: flex; gap: .45rem; margin: 0; padding: 0 0 .6rem; min-width: max-content; }
-    .section-nav a { display: block; min-height: 42px; padding: .62rem .78rem; border: 1px solid var(--line); border-radius: 0; color: var(--muted); text-decoration: none; font-size: .78rem; }
-    .section-nav a:hover, .section-nav a:focus-visible { color: var(--text); border-color: var(--line-strong); background: var(--white-soft); }
+    input[type="search"]:focus { border-color: var(--line-strong); }
+    .search-count { color: var(--quiet); font-size: .72rem; min-width: 8ch; text-align: right; }
+
+    .section-nav { max-width: var(--measure); margin: 0 auto; padding: .8rem 1.25rem 0; overflow-x: auto; scrollbar-width: thin; }
+    .section-nav ul { list-style: none; display: flex; gap: .4rem; margin: 0; padding: 0 0 .8rem; min-width: max-content; }
+    .section-nav a { display: block; padding: .5rem .75rem; border: 1px solid var(--line); color: var(--muted); text-decoration: none; font-size: .74rem; white-space: nowrap; }
+    .section-nav a:hover, .section-nav a:focus-visible { color: var(--text); border-color: var(--line-strong); }
+    .section-nav a span { color: var(--accent); margin-right: .45rem; }
+
     main { max-width: var(--measure); margin: auto; padding: 0 1.25rem 6rem; }
-    .hero { padding: clamp(4.5rem, 9vw, 8rem) 0 4rem; display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(17rem, .7fr); gap: 3rem; align-items: end; border-bottom: 1px solid var(--line); }
-    .eyebrow { margin: 0 0 1rem; color: var(--teal); font: 750 .72rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .16em; text-transform: uppercase; }
-    h1 { margin: 0; max-width: 13ch; font-size: clamp(3rem, 8vw, 7.6rem); line-height: .88; letter-spacing: -.07em; font-weight: 790; }
-    h1 span { color: var(--muted); font-weight: 400; }
-    .lede { margin: 1.8rem 0 0; color: var(--muted); max-width: 58ch; font-size: clamp(1.06rem, 2vw, 1.35rem); }
-    .hero-note { border-left: 2px solid var(--violet); padding: .4rem 0 .4rem 1.3rem; color: var(--muted); }
-    .hero-note strong { display: block; color: var(--text); font-size: 1.2rem; margin-bottom: .4rem; }
-    .hero-note code, code { color: var(--text); font: .88em ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
-    section.guide-section { padding: clamp(4rem, 8vw, 7rem) 0; border-bottom: 1px solid var(--line); position: relative; }
-    section.is-search-match { border-radius: 0; border-left: 2px solid var(--amber); }
-    section.is-search-dim { opacity: .28; }
-    .section-number { color: var(--quiet); font: 700 .7rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .16em; }
-    .section-head { display: grid; grid-template-columns: minmax(0, .72fr) minmax(17rem, .28fr); gap: 2rem; align-items: end; margin-bottom: 2.4rem; }
-    h2 { margin: .8rem 0 0; max-width: 18ch; font-size: clamp(2.25rem, 5vw, 4.8rem); line-height: .98; letter-spacing: -.05em; }
-    .section-intro { color: var(--muted); margin: 0; max-width: 45ch; }
-    h3 { margin: 0 0 .65rem; font-size: 1.25rem; letter-spacing: -.02em; line-height: 1.25; }
-    h4 { margin: 0 0 .5rem; font-size: 1rem; }
+    .hero { padding: clamp(4rem, 8vw, 7rem) 0 3.5rem; border-bottom: 1px solid var(--line); }
+    .eyebrow { margin: 0 0 1rem; color: var(--accent); font-weight: 700; font-size: .72rem; letter-spacing: .2em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: clamp(2.4rem, 7vw, 5.4rem); line-height: 1.02; letter-spacing: -.04em; font-weight: 700; max-width: 22ch; }
+    h1 em { font-style: normal; color: var(--accent); }
+    .lede { margin: 1.6rem 0 0; color: var(--muted); max-width: 68ch; font-size: clamp(.95rem, 1.6vw, 1.1rem); }
+    .lede strong { color: var(--text); }
+    .hero-meta { margin-top: 2.2rem; display: flex; flex-wrap: wrap; gap: .5rem; }
+    .chip { border: 1px solid var(--line); padding: .3rem .7rem; font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    .chip b { color: var(--accent); font-weight: 700; margin-right: .35rem; }
+
+    section.guide-section { padding: clamp(3.2rem, 6vw, 5.2rem) 0; border-bottom: 1px solid var(--line); }
+    section.search-hidden { display: none; }
+    .section-number { color: var(--accent); font-weight: 700; font-size: .72rem; letter-spacing: .2em; }
+    h2 { margin: .5rem 0 1rem; font-size: clamp(1.6rem, 4vw, 2.6rem); line-height: 1.05; letter-spacing: -.03em; max-width: 24ch; }
+    .section-intro { color: var(--muted); margin: 0 0 2rem; max-width: 66ch; }
+    h3 { margin: 0 0 .6rem; font-size: 1.05rem; letter-spacing: -.01em; }
+    h4 { margin: 0 0 .4rem; font-size: .9rem; }
     p { margin-top: 0; }
-    .grid-2, .grid-3, .grid-4, .agent-grid, .component-grid { display: grid; gap: 1rem; }
+
+    .grid-2, .grid-3, .grid-4 { display: grid; gap: .8rem; }
     .grid-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
     .grid-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
     .grid-4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
-    .agent-grid { grid-template-columns: repeat(4, minmax(0,1fr)); }
-    .component-grid { grid-template-columns: repeat(3, minmax(0,1fr)); }
-    .card { background: transparent; border: 1px solid var(--line); border-radius: 0; padding: 1.25rem; min-width: 0; }
+    .card { border: 1px solid var(--line); padding: 1.1rem 1.2rem; min-width: 0; }
     .card p:last-child, .card ul:last-child { margin-bottom: 0; }
-    .card .meta { color: var(--quiet); font: 700 .65rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .11em; text-transform: uppercase; }
-    .card.accent-teal { border-top: 2px solid var(--teal); }
-    .card.accent-amber { border-top: 2px solid var(--amber); }
-    .card.accent-violet { border-top: 2px solid var(--violet); }
-    .card.accent-red { border-top: 2px solid var(--red); }
-    .plain-list { padding-left: 1.15rem; color: var(--muted); }
-    .plain-list li + li { margin-top: .38rem; }
-    .micro { color: var(--quiet); font-size: .82rem; }
-    .callout { margin: 1rem 0; border: 1px solid var(--line); border-left: 3px solid var(--teal); border-radius: 0; background: var(--teal-soft); padding: 1rem 1.2rem; }
-    .callout.warning { border-left-color: var(--amber); background: var(--amber-soft); }
-    .callout.danger { border-left-color: var(--red); background: var(--red-soft); }
-    .callout.violet { border-left-color: var(--violet); background: var(--violet-soft); }
-    .big-rule { font-size: clamp(1.4rem, 3vw, 2.35rem); line-height: 1.2; letter-spacing: -.035em; max-width: 32ch; }
-    .flow { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: .65rem; align-items: stretch; counter-reset: flow; }
-    .flow-step { min-height: 9rem; border: 1px solid var(--line); border-radius: 0; padding: 1rem; position: relative; background: var(--panel); }
-    .flow-step::after { content: "→"; position: absolute; right: -.65rem; top: 50%; transform: translate(50%,-50%); z-index: 2; width: 1.6rem; height: 1.6rem; display: grid; place-items: center; border-radius: 0; color: var(--violet); background: var(--ink); border: 1px solid var(--line); }
+    .card.accent { border-top: 2px solid var(--accent); }
+    .meta { color: var(--quiet); font-weight: 700; font-size: .64rem; letter-spacing: .14em; text-transform: uppercase; }
+    .plain-list { padding-left: 1.1rem; color: var(--muted); margin: .5rem 0 0; }
+    .plain-list li + li { margin-top: .35rem; }
+    .plain-list b, .plain-list code { color: var(--text); }
+    .micro { color: var(--quiet); font-size: .78rem; }
+    .callout { margin: 1.4rem 0 0; border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: .9rem 1.1rem; color: var(--muted); }
+    .callout b, .callout code { color: var(--text); }
+
+    pre.block {
+      margin: 0; padding: 1rem 1.2rem; overflow-x: auto;
+      border: 1px solid var(--line); background: #060606;
+      font-size: .8rem; line-height: 1.65; color: var(--text);
+    }
+    pre.block .c { color: var(--quiet); }
+    pre.block .a { color: var(--accent); }
+    .block-title { display: block; border: 1px solid var(--line); border-bottom: 0; padding: .4rem 1.2rem; color: var(--quiet); font-size: .68rem; letter-spacing: .14em; text-transform: uppercase; }
+
+    .flow { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: .6rem; margin: 1.6rem 0 0; }
+    .flow-step { border: 1px solid var(--line); padding: .9rem; position: relative; min-height: 8rem; }
+    .flow-step::after {
+      content: "→"; position: absolute; right: -.75rem; top: 50%; transform: translateY(-50%);
+      z-index: 2; width: 1.4rem; height: 1.4rem; display: grid; place-items: center;
+      color: var(--accent); background: var(--ink); border: 1px solid var(--line); font-size: .8rem;
+    }
     .flow-step:last-child::after { display: none; }
-    .flow-step b { display: block; margin-bottom: .45rem; }
-    .flow-step small { color: var(--muted); }
-    .lane-map { display: grid; grid-template-columns: 1fr auto 1fr; gap: 1rem; align-items: stretch; }
-    .lane { border-radius: 0; padding: 1.5rem; border: 1px solid var(--line); background: var(--panel); }
-    .lane.read-lane { border-top-color: var(--text); }
-    .lane.run-lane { border-top-color: var(--amber); }
-    .lane-arrow { display: grid; place-items: center; color: var(--quiet); font-size: 2rem; }
-    .skill-row { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: .55rem; margin-top: 1rem; }
-    .skill-key { border: 1px solid var(--line); background: var(--teal-soft); border-radius: 0; padding: .75rem; color: var(--teal); font: 700 .74rem/1.25 ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .button-row, .tab-list { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 1.2rem; }
-    .choice-button, .tab-button, .tree-action { min-height: 44px; border: 1px solid var(--line-strong); border-radius: 0; background: var(--panel); padding: .62rem .9rem; cursor: pointer; }
-    .choice-button:hover, .tab-button:hover, .tree-action:hover { border-color: var(--teal); }
-    .choice-button[aria-pressed="true"], .tab-button[aria-selected="true"] { color: var(--ink); background: var(--teal); border-color: var(--teal); font-weight: 750; }
-    .journey-panel, .tab-panel { border: 1px solid var(--line); border-radius: 0; padding: 1.35rem; background: var(--panel); }
-    .js .journey-panel:not(.active), .js .tab-panel[hidden] { display: none; }
-    .journey-track { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: .55rem; margin: 1rem 0; }
-    .journey-node { position: relative; min-height: 7.5rem; border: 1px solid var(--line); border-radius: 0; padding: .8rem; }
-    .journey-node + .journey-node::before { content: ""; position: absolute; top: 50%; left: -.6rem; width: .6rem; border-top: 1px solid var(--line-strong); }
-    .journey-node strong { display: block; font-size: .9rem; }
-    .journey-node small { color: var(--muted); }
-    .agent-card { display: flex; flex-direction: column; gap: .75rem; }
-    .agent-card .agent-icon { width: 3rem; height: 3rem; border-radius: 0; display: grid; place-items: center; border: 1px solid currentColor; font: 800 .8rem ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .agent-card dl { margin: 0; }
-    .agent-card dt { margin-top: .65rem; color: var(--quiet); font: 700 .62rem ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .09em; text-transform: uppercase; }
-    .agent-card dd { margin: .15rem 0 0; color: var(--muted); font-size: .86rem; }
-    .model-orbit { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; align-items: stretch; }
-    .model { min-height: 17rem; border-radius: 0; padding: 1.6rem 1.2rem 1.2rem; border: 1px solid var(--line); background: var(--panel); }
-    .model .glyph { font-size: 2.5rem; line-height: 1; margin-bottom: 1rem; }
-    .model ul { color: var(--muted); padding-left: 1.1rem; }
-    .mode-meter { display: grid; grid-template-columns: repeat(6,1fr); gap: .5rem; }
-    .mode-card { border: 1px solid var(--line); border-radius: 0; padding: .85rem; min-height: 8rem; background: var(--panel); }
-    .mode-card.is-mode-active { border-color: var(--violet); background: var(--violet-soft); }
-    .mode-card strong { display: block; }
-    .mode-card span { color: var(--muted); font-size: .78rem; }
-    .mode-card em { display: block; color: var(--violet); font: 700 .67rem ui-monospace, SFMono-Regular, Menlo, monospace; font-style: normal; margin-top: .5rem; }
-    .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-    .compare > article { padding: 1.5rem; border: 1px solid var(--line); border-radius: 0; background: var(--panel); }
-    .sequence { display: grid; gap: .55rem; margin-top: 1rem; }
-    .sequence-row { display: grid; grid-template-columns: minmax(7rem,.55fr) 2rem minmax(10rem,1.45fr); gap: .5rem; align-items: center; }
-    .sequence-row .actor { color: var(--violet); font: 700 .72rem ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
-    .sequence-row .arrow { text-align: center; color: var(--quiet); }
-    .sequence-row .message { border: 1px solid var(--line); border-radius: 0; padding: .65rem .8rem; color: var(--muted); background: var(--white-soft); }
-    .timeline { position: relative; display: grid; gap: .75rem; margin-left: .75rem; }
-    .timeline::before { content: ""; position: absolute; left: .6rem; top: .7rem; bottom: .7rem; border-left: 1px solid var(--line-strong); }
-    .timeline-item { position: relative; margin-left: 2.2rem; display: grid; grid-template-columns: minmax(8rem,.28fr) minmax(0,.72fr); gap: 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: 0; background: var(--panel); }
-    .timeline-item::before { content: ""; position: absolute; left: -2rem; top: 1.35rem; width: .72rem; height: .72rem; border-radius: 0; border: 2px solid var(--ink); background: var(--violet); }
-    .timeline-item.write-point::before { background: var(--amber); }
-    .timeline-item.block-point::before { background: var(--red); }
-    .timeline-item p { color: var(--muted); margin: 0; }
-    .workspace-map { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-    .workcell { border: 1px solid var(--line); border-radius: 0; background: var(--panel); padding: 1.3rem; }
-    .file-slices { display: flex; gap: .35rem; margin: 1rem 0; min-height: 5rem; }
-    .file-slices span { flex: 1; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 0; font: 700 .65rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); writing-mode: vertical-rl; }
-    .file-slices span:nth-child(2n) { border-color: var(--amber); color: var(--amber); }
-    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 0; }
-    table { width: 100%; border-collapse: collapse; min-width: 46rem; background: var(--panel); }
-    th, td { padding: .85rem .9rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
-    th { color: var(--quiet); font: 700 .68rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: .08em; }
-    td { color: var(--muted); font-size: .88rem; }
-    tr:last-child td { border-bottom: 0; }
-    .yes { color: var(--teal); font-weight: 750; }
-    .no { color: var(--quiet); }
-    .conditional { color: var(--amber); font-weight: 700; }
-    .component-card { min-height: 12.5rem; position: relative; }
-    .component-card .component-id { color: var(--violet); font: 700 .68rem ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .tree-toolbar { display: grid; grid-template-columns: 1fr auto auto; gap: .55rem; margin-bottom: 1rem; }
-    .repo-tree { border: 1px solid var(--line); border-radius: 0; background: var(--ink); padding: 1rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .repo-tree details { margin-left: .9rem; border-left: 1px solid var(--line); padding-left: .8rem; }
-    .repo-tree > details { margin-left: 0; }
-    .repo-tree summary { cursor: pointer; min-height: 42px; display: flex; align-items: center; gap: .55rem; color: var(--text); }
-    .repo-tree summary::marker { color: var(--violet); }
-    .tree-item { min-height: 38px; display: grid; grid-template-columns: minmax(8rem,.3fr) minmax(12rem,.7fr); gap: 1rem; align-items: center; padding: .35rem .5rem; color: var(--muted); border-radius: 0; }
-    .tree-item span:first-child { color: var(--teal); }
-    .tree-item[hidden], .repo-tree details.tree-empty { display: none; }
-    .tree-flag { color: var(--amber)!important; }
-    .review-pipe { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: .45rem; }
-    .review-pipe > div { min-height: 8.5rem; border: 1px solid var(--line); border-radius: 0; padding: .75rem; background: var(--panel); position: relative; }
-    .review-pipe > div + div::before { content: "→"; position: absolute; left: -.48rem; color: var(--quiet); }
-    .review-pipe strong { display: block; font-size: .82rem; }
-    .review-pipe small { color: var(--muted); }
-    .state-machine { display: grid; grid-template-columns: repeat(4,1fr); gap: .8rem; }
-    .state { min-height: 11rem; border: 1px solid var(--red); border-radius: 0; padding: 1rem; background: var(--red-soft); }
-    .state .next { display: block; margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--line); color: var(--text); }
-    .layers { display: grid; grid-template-columns: repeat(4,1fr); gap: .75rem; align-items: stretch; }
-    .layer { border: 1px solid var(--line); border-radius: 0; padding: 1.1rem; background: var(--panel); }
-    .layer:nth-child(1) { border-top: 3px solid var(--teal); }
-    .layer:nth-child(2) { border-top: 3px solid var(--amber); }
-    .layer:nth-child(3) { border-top: 3px solid var(--violet); }
-    .layer:nth-child(4) { border-top: 3px solid var(--red); }
-    .glossary-controls { margin-bottom: 1rem; }
-    .glossary { display: grid; grid-template-columns: repeat(2,1fr); gap: .7rem; }
-    .glossary details { border: 1px solid var(--line); border-radius: 0; background: var(--panel); padding: .3rem .9rem; }
-    .glossary summary { cursor: pointer; min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 1rem; font-weight: 700; }
-    .glossary summary span { color: var(--teal); font-size: .8rem; font-weight: 500; }
-    .glossary details p { color: var(--muted); }
-    .glossary details[hidden] { display: none; }
-    .source-list { columns: 2; column-gap: 2rem; padding-left: 1.15rem; color: var(--muted); }
-    .source-list li { break-inside: avoid; margin: 0 0 .65rem; }
-    details.tech-detail { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: .75rem; }
-    details.tech-detail summary { cursor: pointer; color: var(--violet); min-height: 44px; display: flex; align-items: center; font-weight: 700; }
-    .detail-pm .technical-detail { display: none!important; }
-    .detail-technical .pm-detail { display: none!important; }
-    footer { max-width: var(--measure); margin: auto; padding: 2rem 1.25rem 4rem; color: var(--quiet); display: flex; justify-content: space-between; gap: 2rem; border-top: 1px solid var(--line); }
-    .no-results { display: none; color: var(--red); padding: 1rem; border: 1px solid var(--red); border-radius: 0; }
-    .no-results.visible { display: block; }
-    @media (max-width: 980px) {
-      .header-inner { flex-wrap: wrap; }
-      .header-search { order: 3; flex-basis: 100%; }
-      .legend-bar { top: 8.15rem; }
-      html { scroll-padding-top: 17rem; }
-      .hero, .section-head { grid-template-columns: 1fr; }
-      .hero { gap: 2rem; }
-      .agent-grid, .grid-4 { grid-template-columns: repeat(2,1fr); }
-      .component-grid, .grid-3 { grid-template-columns: repeat(2,1fr); }
-      .flow { grid-template-columns: repeat(3,1fr); }
-      .flow-step:nth-child(3)::after { display: none; }
-      .journey-track { grid-template-columns: repeat(3,1fr); }
-      .mode-meter { grid-template-columns: repeat(3,1fr); }
-      .review-pipe { grid-template-columns: repeat(4,1fr); }
-      .state-machine, .layers { grid-template-columns: repeat(2,1fr); }
+    .flow-step b { display: block; margin-bottom: .35rem; font-size: .85rem; }
+    .flow-step small { color: var(--muted); font-size: .74rem; line-height: 1.5; display: block; }
+
+    .tab-list { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 -1px; padding: 0; }
+    .tab-button {
+      min-height: 42px; padding: .5rem .9rem; cursor: pointer;
+      border: 1px solid var(--line); background: var(--ink); color: var(--muted); font-size: .82rem;
     }
-    @media (max-width: 680px) {
-      .site-header { position: relative; }
-      .brand small { display: none; }
-      .detail-control label { padding: 0 .48rem; }
-      .legend-bar { position: sticky; top: 0; }
-      html { scroll-padding-top: 8rem; }
-      .legend-inner { gap: .35rem; }
-      .legend-title { width: 100%; margin-bottom: .15rem; }
-      main, .header-inner, .legend-inner, .section-nav, footer { padding-left: 1rem; padding-right: 1rem; }
-      .hero { padding-top: 3.5rem; }
-      .lane-map, .compare, .workspace-map, .grid-2, .grid-3, .grid-4, .agent-grid, .component-grid, .model-orbit, .glossary { grid-template-columns: 1fr; }
-      .lane-arrow { transform: rotate(90deg); min-height: 2rem; }
-      .skill-row { grid-template-columns: repeat(2,1fr); }
-      .flow, .journey-track, .mode-meter, .review-pipe, .state-machine, .layers { grid-template-columns: 1fr; }
-      .flow-step::after { display: none; }
-      .journey-node + .journey-node::before { display: none; }
-      .timeline-item { grid-template-columns: 1fr; }
-      .sequence-row { grid-template-columns: 1fr; border-left: 1px solid var(--violet); padding-left: 1rem; }
-      .sequence-row .actor { text-align: left; }
-      .sequence-row .arrow { display: none; }
-      .tree-toolbar { grid-template-columns: 1fr 1fr; }
-      .tree-toolbar input { grid-column: 1/-1; }
-      .tree-item { grid-template-columns: 1fr; gap: .1rem; }
-      .source-list { columns: 1; }
-      footer { flex-direction: column; }
+    .tab-button:hover { border-color: var(--line-strong); color: var(--text); }
+    .tab-button[aria-selected="true"] { color: var(--ink); background: var(--accent); border-color: var(--accent); font-weight: 700; }
+    .tab-panel { border: 1px solid var(--line); padding: 1.3rem; }
+    .js .tab-panel[hidden] { display: none; }
+    .no-js-note { color: var(--quiet); font-size: .78rem; }
+    .js .no-js-note { display: none; }
+
+    table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); }
+    th, td { border: 1px solid var(--line); padding: .55rem .7rem; text-align: left; vertical-align: top; }
+    th { color: var(--quiet); font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; }
+    tbody tr:hover { background: #0d0d0d; }
+    td.allow { color: var(--text); font-weight: 700; }
+    td.deny { color: var(--quiet); }
+    td.hot { color: var(--accent); font-weight: 700; }
+    caption { caption-side: bottom; color: var(--quiet); font-size: .72rem; padding: .6rem .2rem; text-align: left; }
+
+    details { border: 1px solid var(--line); margin-top: .8rem; }
+    details + details { margin-top: .5rem; }
+    summary { cursor: pointer; padding: .7rem 1rem; list-style: none; display: flex; gap: .6rem; align-items: baseline; }
+    summary::-webkit-details-marker { display: none; }
+    summary::before { content: "+"; color: var(--accent); font-weight: 700; width: 1ch; }
+    details[open] summary::before { content: "–"; }
+    summary:hover { background: #0d0d0d; }
+    details .details-body { padding: 0 1rem 1rem 2.1rem; color: var(--muted); }
+    details .details-body code { color: var(--text); }
+
+    dl.glossary { margin: 0; display: grid; grid-template-columns: minmax(11rem, max-content) 1fr; border: 1px solid var(--line); }
+    dl.glossary dt { padding: .6rem .9rem; border-top: 1px solid var(--line); color: var(--accent); font-weight: 700; font-size: .82rem; }
+    dl.glossary dd { margin: 0; padding: .6rem .9rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .82rem; }
+    dl.glossary dt:first-of-type, dl.glossary dt:first-of-type + dd { border-top: 0; }
+
+    footer.site-footer { max-width: var(--measure); margin: auto; padding: 2rem 1.25rem 3rem; color: var(--quiet); font-size: .76rem; }
+    footer.site-footer p { margin: .3rem 0; }
+
+    kbd.tui { display: block; white-space: pre; overflow-x: auto; padding: .2rem 0; }
+
+    @media (max-width: 900px) {
+      .grid-3, .grid-4 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .flow { grid-template-columns: 1fr; }
+      .flow-step { min-height: 0; }
+      .flow-step::after { right: 50%; top: auto; bottom: -.85rem; transform: translateX(50%); content: "↓"; }
     }
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { scroll-behavior: auto!important; animation-duration: .001ms!important; animation-iteration-count: 1!important; transition-duration: .001ms!important; }
-      body::before { display: none; }
-    }
-    @media print {
-      :root { --ink: #fff; --panel: #fff; --panel-2: #fff; --text: #111; --muted: #333; --quiet: #555; --line: #aaa; --white-soft: #fff; }
-      body { background: #fff; color: #111; font-size: 10pt; }
-      body::before, .site-header, .section-nav { display: none!important; }
-      .legend-bar { position: static; background: #fff; }
-      .legend-inner { padding: .5rem 0; }
-      main { max-width: none; padding: 0; }
-      .hero, section.guide-section { padding: 1.5rem 0; break-inside: auto; }
-      h1 { font-size: 42pt; }
-      h2 { font-size: 27pt; }
-      .card, .lane, .journey-panel, .tab-panel, .workcell, .layer, .state, .model, .component-card { break-inside: avoid; }
-      .technical-detail, .pm-detail, .journey-panel, .tab-panel[hidden] { display: block!important; }
-      details > * { display: block!important; }
-      details summary { display: flex!important; }
-      .button-row, .tab-list, .tree-toolbar, .glossary-controls { display: none; }
-      footer { padding: 1rem 0; }
-    }
-  </style>
-  <style>
-    :root {
-      --ink: #000;
-      --ink-2: #000;
-      --panel: #000;
-      --panel-2: #000;
-      --line: #ffffff1f;
-      --line-strong: #ffffff66;
-      --text: #fff;
-      --muted: #8a8a8a;
-      --quiet: #8a8a8a;
-      --teal: #fff;
-      --teal-soft: transparent;
-      --amber: #d8451d;
-      --amber-soft: transparent;
-      --violet: #fff;
-      --violet-soft: transparent;
-      --red: #d8451d;
-      --red-soft: transparent;
-      --white-soft: transparent;
-      --measure: 88rem;
-      --mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    }
-    html { scroll-padding-top: 2rem; }
-    body { background: var(--ink); font-family: var(--mono); }
-    body::before { display: none; }
-    :focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
-    ::selection { background: var(--amber); color: var(--text); }
-    .skip-link { background: var(--text); color: var(--ink); border-radius: 0; }
-    .site-header { position: static; border-color: var(--line); background: var(--ink); }
-    .header-inner { padding: 1rem 1.5rem; display: grid; grid-template-columns: auto minmax(12rem, 1fr) auto; gap: clamp(1rem, 4vw, 4rem); }
-    .brand { align-items: baseline; gap: .65rem; }
-    .brand-mark { width: auto; height: auto; display: inline; border: 0; border-radius: 0; color: var(--amber); font-size: 1.25rem; font-weight: 300; }
-    .brand strong { letter-spacing: -.04em; text-transform: none; font-size: .9rem; font-weight: 500; }
-    .brand small { display: inline; margin-left: .65rem; color: var(--quiet); font-size: .62rem; text-transform: uppercase; }
-    input[type="search"] { background: var(--ink); border: 0; border-bottom: 1px solid var(--line-strong); border-radius: 0; padding: .65rem 0; }
-    .detail-control { gap: 0; margin: 0; padding: 0; border: 1px solid var(--line-strong); border-radius: 0; background: var(--ink); }
-    .detail-control label { min-height: 40px; padding: 0 .72rem; border-radius: 0; font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; }
-    .detail-control label + label { border-left: 1px solid var(--line-strong); }
-    .detail-control label:has(input:focus-visible) { outline: 2px solid var(--amber); }
-    .legend-bar { position: static; border-color: var(--line); background: var(--ink); }
-    .legend-inner { padding: .8rem 1.5rem; gap: .45rem 1.4rem; }
-    .legend-title { color: var(--amber); font: 700 .6rem/1 var(--mono); }
-    .tag { min-height: 22px; gap: .4rem; padding: 0; border: 0; border-radius: 0; color: var(--muted); background: transparent; font: 700 .6rem/1.25 var(--mono); }
-    .tag::before { content: "—"; width: auto; height: auto; border-radius: 0; color: var(--line-strong); background: transparent; }
-    .checks, .blocked { border-bottom: 1px dashed var(--line-strong); }
-    .write, .outward, .tree-flag { color: var(--amber)!important; }
-    .outward { border-color: var(--amber); background: transparent; }
-    .outward::before { background: transparent; color: var(--amber); }
-    .section-nav { padding: 1.2rem 1.5rem 0; }
-    .section-nav ul { gap: 0; }
-    .section-nav li + li { border-left: 1px solid var(--line); }
-    .section-nav a { min-height: 40px; padding: .62rem .8rem; border: 0; border-radius: 0; font-size: .7rem; text-transform: uppercase; }
-    .section-nav a:hover { color: var(--ink); border-color: var(--text); background: var(--text); }
-    main { padding: 0 1.5rem 8rem; }
-    .hero { min-height: min(48rem, 78dvh); padding: clamp(3.5rem, 8vw, 6rem) 0 4rem; grid-template-columns: minmax(0, 1.35fr) minmax(18rem, .65fr); gap: clamp(3rem, 8vw, 8rem); }
-    .eyebrow { color: var(--muted); font: 700 .66rem/1.2 var(--mono); }
-    h1 { max-width: none; line-height: .82; letter-spacing: -.09em; font-weight: 300; }
-    h1 .wordmark { display: block; color: var(--text); font-size: clamp(6rem, 18vw, 16rem); font-weight: 300; }
-    h1 .signal { color: var(--amber); }
-    h1 .hero-title { display: block; margin-top: 1.5rem; color: var(--muted); font-size: clamp(.85rem, 1.4vw, 1.15rem); font-weight: 400; letter-spacing: .1em; line-height: 1.4; text-transform: uppercase; }
-    .lede { margin-top: 2rem; max-width: 62ch; font-size: clamp(.92rem, 1.5vw, 1.08rem); }
-    .hero-note { max-width: 42ch; padding: 1.1rem 0 0; border: 0; border-top: 2px solid var(--amber); }
-    .hero-note strong { font-size: .74rem; letter-spacing: .12em; text-transform: uppercase; }
-    .hero-note code, code { color: var(--text); font-family: var(--mono); }
-    section.guide-section { padding: clamp(6rem, 11vw, 10rem) 0; }
-    section.is-search-match { padding-left: clamp(1rem, 3vw, 2rem); border-left: 2px solid var(--amber); border-radius: 0; }
-    .section-number { display: block; color: var(--amber); font: 700 .65rem/1 var(--mono); }
-    .section-head { display: block; margin-bottom: clamp(3rem, 6vw, 5rem); }
-    h2 { margin-top: 1.2rem; max-width: 17ch; font-size: clamp(2.45rem, 5.4vw, 5.6rem); font-weight: 400; line-height: .96; letter-spacing: -.065em; }
-    .section-intro { margin-top: 1.5rem; max-width: 62ch; }
-    h3 { font-size: 1.15rem; font-weight: 500; }
-    .grid-2, .grid-3, .grid-4, .agent-grid, .component-grid { gap: 0; }
-    .agent-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
-    .card, .lane, .journey-panel, .tab-panel, .journey-node, .model, .mode-card, .compare > article, .sequence-row .message, .timeline-item, .workcell, .table-wrap, .repo-tree, .review-pipe > div, .state, .layer, .glossary details { border-radius: 0; background: transparent; }
-    .card { border: 0; border-top: 1px solid var(--line); padding: 1.35rem 1.25rem 2.5rem 0; }
-    .grid-2 > .card:nth-child(even), .grid-3 > .card:not(:nth-child(3n + 1)), .grid-4 > .card:not(:nth-child(4n + 1)), .agent-grid > .card:nth-child(even), .component-grid > .card:not(:nth-child(3n + 1)) { padding-left: 1.25rem; border-left: 1px solid var(--line); }
-    .card .meta, .meta { font: 700 .62rem/1.3 var(--mono); }
-    .card.accent-teal, .card.accent-violet { border-top: 1px solid var(--line); }
-    .card.accent-amber, .card.accent-red { border-top: 1px solid var(--amber); }
-    .callout, .callout.warning, .callout.danger, .callout.violet { max-width: 78ch; margin: 2rem 0; padding: .25rem 0 .25rem 1.25rem; border: 0; border-left: 2px solid var(--amber); border-radius: 0; background: transparent; }
-    .flow { grid-template-columns: repeat(3, minmax(0,1fr)); gap: 0; }
-    .flow-step { min-height: 10rem; padding: 1rem 1.5rem 2rem 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; counter-increment: flow; }
-    .flow-step:not(:nth-child(3n + 1)) { padding-left: 1.5rem; border-left: 1px solid var(--line); }
-    .flow-step::before { content: "0" counter(flow); display: block; margin-bottom: 2rem; color: var(--amber); font-size: .62rem; letter-spacing: .12em; }
-    .flow-step::after { display: none; }
-    .lane { padding: 1.4rem 0 2rem; border: 0; border-top: 1px solid var(--line); }
-    .lane.read-lane { border-top-color: var(--text); }
-    .lane.run-lane { border-top-color: var(--amber); }
-    .skill-row { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0; margin-top: 2rem; }
-    .skill-key { padding: .75rem .75rem .75rem 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; color: var(--text); background: transparent; font: 700 .7rem/1.25 var(--mono); }
-    .skill-key:nth-child(even) { padding-left: .75rem; border-left: 1px solid var(--line); }
-    .skill-key small { color: var(--muted); }
-    .button-row, .tab-list { gap: 0; margin-bottom: 2rem; }
-    .choice-button, .tab-button, .tree-action { border-radius: 0; background: var(--ink); }
-    .choice-button + .choice-button, .tab-button + .tab-button, .tree-action + .tree-action { border-left: 0; }
-    .choice-button:hover, .tab-button:hover, .tree-action:hover { color: var(--amber); border-color: var(--line-strong); }
-    .choice-button:active, .tab-button:active, .tree-action:active { transform: translateY(1px); }
-    .choice-button[aria-pressed="true"], .tab-button[aria-selected="true"] { color: var(--ink); background: var(--text); border-color: var(--text); }
-    .journey-panel, .tab-panel { padding: 2rem 0 0; border: 0; border-top: 1px solid var(--line); }
-    .journey-track { gap: 0; margin: 2rem 0; }
-    .journey-node { min-height: 9rem; padding: .8rem 1rem 1rem 0; border: 0; border-top: 1px solid var(--line); }
-    .journey-node + .journey-node { padding-left: 1rem; border-left: 1px solid var(--line); }
-    .journey-node + .journey-node::before { display: none; }
-    .agent-card .agent-icon { border-radius: 0; color: var(--text); }
-    .agent-card dt { font-family: var(--mono); }
-    .model-orbit { gap: 0; }
-    .model { min-height: 17rem; padding: 1.4rem 1.4rem 2rem 0; border: 0; border-top: 1px solid var(--line); }
-    .model + .model { padding-left: 1.4rem; border-left: 1px solid var(--line); }
-    .mode-meter { grid-template-columns: repeat(3,1fr); gap: 0; }
-    .mode-card { min-height: 9rem; padding: 1rem 1rem 2rem 0; border: 0; border-top: 1px solid var(--line); }
-    .mode-card:not(:nth-child(3n + 1)) { padding-left: 1rem; border-left: 1px solid var(--line); }
-    .mode-card.is-mode-active { border-top: 2px solid var(--amber); background: transparent; }
-    .mode-card em { color: var(--amber); font-family: var(--mono); }
-    .compare { gap: 0; }
-    .compare > article { padding: 1.4rem 1.4rem 2rem 0; border: 0; border-top: 1px solid var(--line); }
-    .compare > article + article { padding-left: 1.4rem; border-left: 1px solid var(--line); }
-    .sequence-row .actor { color: var(--text); font-family: var(--mono); }
-    .sequence-row .message { border: 0; border-top: 1px solid var(--line); }
-    .timeline { gap: 0; margin-left: 0; }
-    .timeline::before, .timeline-item::before { display: none; }
-    .timeline-item { margin-left: 0; grid-template-columns: minmax(10rem,.28fr) minmax(0,.72fr); gap: clamp(1rem, 5vw, 5rem); padding: 1.25rem 0 2rem; border: 0; border-top: 1px solid var(--line); }
-    .timeline-item.write-point, .timeline-item.block-point { border-top-color: var(--amber); }
-    .workspace-map { gap: 0; }
-    .workcell { padding: 1.4rem 1.4rem 2rem 0; border: 0; border-top: 1px solid var(--line); }
-    .workcell + .workcell { padding-left: 1.4rem; border-left: 1px solid var(--line); }
-    .file-slices span { border: 0; border-top: 1px solid var(--line); border-radius: 0; font-family: var(--mono); }
-    .file-slices span:nth-child(2n) { border-color: var(--amber); color: var(--text); }
-    .table-wrap { border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-    table { background: var(--ink); }
-    th { font-family: var(--mono); }
-    .yes { color: var(--text); }
-    .conditional { color: var(--amber); }
-    .component-card .component-id { color: var(--amber); font-family: var(--mono); }
-    .repo-tree { padding: 1rem 0; border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-family: var(--mono); }
-    .repo-tree summary::marker { color: var(--amber); }
-    .tree-item { border-radius: 0; }
-    .tree-item span:first-child { color: var(--text); }
-    .review-pipe { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0; }
-    .review-pipe > div { min-height: 8.5rem; padding: 1rem 1rem 2rem 0; border: 0; border-top: 1px solid var(--line); }
-    .review-pipe > div:nth-child(even) { padding-left: 1rem; border-left: 1px solid var(--line); }
-    .review-pipe > div + div::before { display: none; }
-    .state-machine { grid-template-columns: repeat(2,1fr); gap: 0; }
-    .state { min-height: 12rem; padding: 1.1rem 1.1rem 2.5rem 0; border: 0; border-top: 1px solid var(--amber); }
-    .state:nth-child(even) { padding-left: 1.1rem; border-left: 1px solid var(--line); }
-    .state .next { border-color: var(--line); }
-    .layers { gap: 0; }
-    .layer { padding: 1.1rem 1.1rem 2rem 0; border: 0; border-top: 1px solid var(--line); }
-    .layer + .layer { padding-left: 1.1rem; border-left: 1px solid var(--line); }
-    .layer:nth-child(1), .layer:nth-child(2), .layer:nth-child(3) { border-top: 1px solid var(--line); }
-    .layer:nth-child(4) { border-top: 1px solid var(--amber); }
-    .glossary { gap: 0; }
-    .glossary details { padding: .3rem 1rem .3rem 0; border: 0; border-top: 1px solid var(--line); }
-    .glossary details:nth-child(even) { padding-left: 1rem; border-left: 1px solid var(--line); }
-    .glossary summary span { color: var(--muted); }
-    details.tech-detail summary { color: var(--amber); }
-    .no-results { padding: 1rem 0; color: var(--amber); border: 0; border-top: 1px solid var(--amber); border-radius: 0; }
-    svg rect { fill: var(--ink); stroke: var(--line-strong); }
-    svg path, svg line { stroke: var(--line-strong); }
-    svg marker path { fill: var(--muted); stroke: none; }
-    svg text { fill: var(--text); font-family: var(--mono); }
-    svg text[fill] { fill: var(--muted); }
-    @media (max-width: 1100px) {
-      .header-inner { grid-template-columns: auto 1fr; }
-      .header-search { grid-column: 1 / -1; grid-row: 2; }
-      .hero { grid-template-columns: 1fr; min-height: 0; }
-      .agent-grid, .grid-4, .layers { grid-template-columns: repeat(2,1fr); }
-      .component-grid, .grid-3 { grid-template-columns: repeat(2,1fr); }
-      .grid-3 > .card:not(:nth-child(3n + 1)), .component-grid > .card:not(:nth-child(3n + 1)) { padding-left: 0; border-left: 0; }
-      .grid-3 > .card:nth-child(even), .component-grid > .card:nth-child(even) { padding-left: 1.25rem; border-left: 1px solid var(--line); }
-    }
-    @media (max-width: 680px) {
-      .header-inner { grid-template-columns: 1fr; }
-      .detail-control { width: 100%; }
-      .detail-control label { flex: 1; }
-      .legend-bar { position: static; }
-      .wordmark { font-size: clamp(5.2rem, 29vw, 9rem)!important; }
-      .flow, .journey-track, .mode-meter, .review-pipe, .state-machine, .layers { grid-template-columns: 1fr; }
-      .card, .grid-2 > .card:nth-child(even), .grid-3 > .card:nth-child(even), .grid-4 > .card:not(:nth-child(4n + 1)), .agent-grid > .card:nth-child(even), .component-grid > .card:nth-child(even), .flow-step, .flow-step:not(:nth-child(3n + 1)), .journey-node, .journey-node + .journey-node, .model, .model + .model, .mode-card, .mode-card:not(:nth-child(3n + 1)), .compare > article, .compare > article + article, .workcell, .workcell + .workcell, .review-pipe > div, .review-pipe > div:nth-child(even), .state, .state:nth-child(even), .layer, .layer + .layer, .glossary details, .glossary details:nth-child(even) { padding-left: 0; padding-right: 0; border-left: 0; }
-      .sequence-row { border-left-color: var(--amber); }
-    }
-    @media print {
-      :root { --ink: #fff; --panel: #fff; --text: #111; --muted: #333; --quiet: #555; --line: #aaa; --line-strong: #777; --amber: #111; }
-      .wordmark { font-size: 72pt!important; }
+    @media (max-width: 620px) {
+      .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+      dl.glossary { grid-template-columns: 1fr; }
+      dl.glossary dd { border-top: 0; padding-top: 0; }
     }
   </style>
 </head>
-<body class="detail-pm">
-  <a class="skip-link" href="#main-content">Skip to the guide</a>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
   <header class="site-header">
     <div class="header-inner">
-      <div class="brand" aria-label="Naru visual field guide">
+      <div class="brand">
         <span class="brand-mark" aria-hidden="true">N</span>
-        <span><strong>Naru</strong><small>visual field guide · source snapshot</small></span>
+        <span><strong>Naru</strong><small>visual field guide · for OpenCode</small></span>
       </div>
       <div class="header-search">
-        <label for="guide-search">Search sections</label>
-        <input id="guide-search" type="search" placeholder="Find protocols, review, worktrees…" autocomplete="off">
+        <label for="guide-search">Search this guide</label>
+        <input type="search" id="guide-search" placeholder="Search sections… (Esc clears)" autocomplete="off">
       </div>
-      <fieldset class="detail-control" aria-label="Detail level">
-        <label><input type="radio" name="detail" value="pm" checked>PM</label>
-        <label><input type="radio" name="detail" value="technical">Technical</label>
-        <label><input type="radio" name="detail" value="both">Both</label>
-      </fieldset>
+      <span class="search-count" id="search-count" aria-live="polite"></span>
     </div>
+    <nav class="section-nav" aria-label="Sections">
+      <ul>
+        <li><a href="#overview"><span>01</span>Overview</a></li>
+        <li><a href="#agents"><span>02</span>Agents</a></li>
+        <li><a href="#dispatch"><span>03</span>Dispatch</a></li>
+        <li><a href="#walls"><span>04</span>The walls</a></li>
+        <li><a href="#tools"><span>05</span>Tools</a></li>
+        <li><a href="#install"><span>06</span>Install</a></li>
+        <li><a href="#limits"><span>07</span>Limits</a></li>
+        <li><a href="#glossary"><span>08</span>Glossary</a></li>
+      </ul>
+    </nav>
   </header>
 
-  <aside class="legend-bar" aria-label="Diagram legend">
-    <div class="legend-inner">
-      <span class="legend-title">Always-on legend</span>
-      <span class="tag advisory">Advisory</span>
-      <span class="tag coordinates">Coordinates</span>
-      <span class="tag read-only">Read only</span>
-      <span class="tag checks">Targeted checks</span>
-      <span class="tag write">Scoped write</span>
-      <span class="tag gate">Runtime gate</span>
-      <span class="tag blocked">Blocked</span>
-      <span class="tag outward">Outward action</span>
-    </div>
-  </aside>
+  <main id="main">
 
-  <nav class="section-nav" aria-label="Guide sections">
-    <ul>
-      <li><a href="#overview">Overview</a></li><li><a href="#journeys">Journeys</a></li><li><a href="#agents">Agents</a></li>
-      <li><a href="#routing">Routing</a></li><li><a href="#adaptive">Adaptive loop</a></li><li><a href="#protocols">Protocols</a></li>
-      <li><a href="#timeline">Timeline</a></li><li><a href="#workspaces">Workspaces</a></li><li><a href="#safety">Safety</a></li>
-      <li><a href="#runtime-map">Runtime</a></li><li><a href="#repository">Repository</a></li><li><a href="#review-lane">Review</a></li>
-      <li><a href="#recovery">Recovery</a></li><li><a href="#boundaries">Boundaries</a></li><li><a href="#glossary">Glossary</a></li><li><a href="#sources">Sources</a></li>
-    </ul>
-  </nav>
-
-  <main id="main-content">
     <div class="hero">
-      <div>
-        <p class="eyebrow">OpenCode workflow system · August 2026</p>
-        <h1><span class="wordmark">naru<span class="signal">.</span></span><span class="hero-title">A visual field guide</span></h1>
-        <p class="lede pm-detail">A visual explanation of how a request becomes advice, a carefully owned edit, a verified candidate—or a deliberate refusal.</p>
-        <p class="lede technical-detail">A source-grounded map of prompt policy, canonical agents, model routes, rolling cohorts, process-local Protocol 3 gates, worktree integration, review posting, and release-candidate assembly.</p>
+      <p class="eyebrow">Naru for OpenCode</p>
+      <h1>Thin hard walls, <em>free interior.</em></h1>
+      <p class="lede">
+        Naru is an extension layer for OpenCode: one visible orchestrating agent, three hidden
+        subagents it delegates to, four advisory skills, five bounded tools, and one plugin.
+        The walls stand at the irreversible edges and are <strong>mechanical rather than
+        advisory</strong> — exactly one role can edit files, read-only roles have no shell at all,
+        secrets are denied to every role, and the tool that posts a pull-request review can only
+        leave a comment. Inside those walls the orchestrator plans, splits the work, and fans out
+        on its own judgment. No modes, no protocols, no ceremony.
+      </p>
+      <div class="hero-meta">
+        <span class="chip"><b>4</b>agents</span>
+        <span class="chip"><b>4</b>skills</span>
+        <span class="chip"><b>5</b>tools</span>
+        <span class="chip"><b>1</b>plugin</span>
+        <span class="chip"><b>1</b>role that can edit</span>
       </div>
-      <aside class="hero-note">
-        <strong>The central idea</strong>
-        Naru is a coordination and safety discipline layered over OpenCode. It plans who should do what, limits the one role that can edit, and demands fresh evidence before completion. It does not replace OpenCode, prove an agent truthful, or turn repository code into a sandbox.
-        <p class="micro technical-detail">Observed baseline: <code>14746d45c28ec5dd38fa3be3eff1de200778a8c0</code></p>
-      </aside>
     </div>
-    <p id="guide-no-results" class="no-results" role="status">No section matched that search. Try “protocol”, “review”, “agent”, or “worktree”.</p>
 
-    <section id="overview" class="guide-section" data-search="overview entry skills orchestrator mental model">
-      <div class="section-head">
-        <div><span class="section-number">01 / 16</span><h2>The 60-second system</h2></div>
-        <p class="section-intro">There are two public entry lanes. One returns guidance. The other coordinates a scoped workflow. Neither entry lane silently expands what the user authorized.</p>
-      </div>
-      <div class="lane-map">
-        <article class="lane read-lane">
-          <span class="tag advisory">Advisory lane</span>
-          <h3>Ask naturally for analysis</h3>
-          <p>OpenCode loads the matching native skill on demand. A skill is advice—not a slash command, Task target, tool grant, or authorization token.</p>
-          <div class="skill-row" aria-label="Four advisory skills">
-            <div class="skill-key">naru-plan<br><small>approach</small></div>
-            <div class="skill-key">naru-impact<br><small>blast radius</small></div>
-            <div class="skill-key">naru-triage<br><small>diagnosis</small></div>
-            <div class="skill-key">naru-review<br><small>dry run</small></div>
-          </div>
-        </article>
-        <div class="lane-arrow" aria-hidden="true">or</div>
-        <article class="lane run-lane">
-          <span class="tag coordinates">Selected orchestrator</span>
-          <h3>Select <code>naru-orchestrator</code></h3>
-          <p>The visible primary agent plans and delegates to exactly seven canonical minions. It coordinates; it never edits. Only the Implement minion may change files.</p>
-          <div class="grid-3">
-            <div><strong>Understand</strong><br><small class="micro">read-only lenses</small></div>
-            <div><strong>Change</strong><br><small class="micro">scoped writer</small></div>
-            <div><strong>Prove</strong><br><small class="micro">Verify + Judge</small></div>
-          </div>
-        </article>
-      </div>
-      <div class="callout violet big-rule"><strong>Mental model:</strong> a control tower, not an autonomous software factory. OpenCode owns execution; Naru owns workflow policy, evidence interpretation, refill/stop decisions, verification coverage, and judgment.</div>
-      <svg viewBox="0 0 1000 250" role="img" aria-labelledby="overview-svg-title overview-svg-desc" style="width:100%;height:auto;margin-top:1rem">
-        <title id="overview-svg-title">Naru system flow</title>
-        <desc id="overview-svg-desc">Requests enter through advisory skills or the selected orchestrator. The orchestrator coordinates read-only agents and the one scoped writer, then sends the candidate through verification and judgment.</desc>
-        <g fill="#000" stroke="#ffffff1f" stroke-width="2">
-          <rect x="20" y="80" width="150" height="90" rx="2"/><rect x="220" y="25" width="180" height="80" rx="2"/><rect x="220" y="145" width="180" height="80" rx="2"/>
-          <rect x="460" y="70" width="180" height="110" rx="2" stroke="#fff"/><rect x="705" y="20" width="130" height="75" rx="2" stroke="#fff"/><rect x="705" y="155" width="130" height="75" rx="2" stroke="#d8451d"/><rect x="875" y="80" width="105" height="90" rx="2" stroke="#fff"/>
-        </g>
-        <g stroke="#8a8a8a" stroke-width="2"><path d="M170 125 L220 65"/><path d="M170 125 L220 185"/><path d="M400 65 L460 110"/><path d="M400 185 L460 140"/><path d="M640 105 L705 60"/><path d="M640 145 L705 190"/><path d="M835 60 L875 105"/><path d="M835 190 L875 145"/></g>
-        <g fill="#fff" font-family="ui-monospace,monospace" text-anchor="middle"><text x="95" y="116" font-size="16" font-weight="700">USER REQUEST</text><text x="95" y="140" font-size="12" fill="#8a8a8a">authorization source</text><text x="310" y="60" font-size="16" font-weight="700">4 SKILLS</text><text x="310" y="82" font-size="12" fill="#8a8a8a">advisory only</text><text x="310" y="180" font-size="16" font-weight="700">ORCHESTRATOR</text><text x="310" y="202" font-size="12" fill="#8a8a8a">selected primary</text><text x="550" y="118" font-size="17" font-weight="700">PLAN + ROUTE</text><text x="550" y="143" font-size="12" fill="#8a8a8a">adaptive coordination</text><text x="770" y="55" font-size="14" font-weight="700">READ LENSES</text><text x="770" y="76" font-size="11" fill="#8a8a8a">6 roles</text><text x="770" y="190" font-size="14" font-weight="700">IMPLEMENT</text><text x="770" y="211" font-size="11" fill="#d8451d">only writer</text><text x="927" y="116" font-size="13" font-weight="700">VERIFY</text><text x="927" y="136" font-size="13" font-weight="700">+ JUDGE</text></g>
-      </svg>
-    </section>
+    <section class="guide-section" id="overview">
+      <p class="section-number">01</p>
+      <h2>Sixty-second overview</h2>
+      <p class="section-intro">
+        You talk to <code>naru-orchestrator</code>. It cannot edit files or run bash — it reads,
+        plans, and delegates. The topology is flat and fixed: one root, leaf subagents at depth 1.
+        Subagents are hidden and carry <code>task: deny</code>, so nothing can spawn grandchildren.
+        Breadth is unlimited by design; nesting does not exist.
+      </p>
 
-    <section id="journeys" class="guide-section" data-search="request journey advisory implementation triage impact review posting authorization">
-      <div class="section-head">
-        <div><span class="section-number">02 / 16</span><h2>Choose a request journey</h2></div>
-        <p class="section-intro">The wording of the current user request determines which boundary is crossed. Explore six common journeys; every path names its mutation boundary.</p>
+      <div class="flow" role="list" aria-label="How a task moves through Naru">
+        <div class="flow-step" role="listitem"><b>You ask</b><small>Plain request in OpenCode with <code>naru-orchestrator</code> selected. Your intent is the only source of authorization.</small></div>
+        <div class="flow-step" role="listitem"><b>It plans</b><small>Reads the repo, consults a fresh code graph or LSP if available, splits work at real boundaries.</small></div>
+        <div class="flow-step" role="listitem"><b>It fans out</b><small>Readers investigate, runners run checks, writers edit — in parallel, via <code>task</code> or <code>naru-dispatch</code>.</small></div>
+        <div class="flow-step" role="listitem"><b>It verifies</b><small>Real evidence from actual runs, after every writer has finished — never a subagent's assurance.</small></div>
+        <div class="flow-step" role="listitem"><b>It stops</b><small>Local changes are the default stop. Commit, push, PR, or posting happen only when you asked in the current request.</small></div>
       </div>
-      <div class="button-row" aria-label="Request journey selector">
-        <button class="choice-button" type="button" data-journey-button="advice" aria-pressed="true">Plan / advice</button>
-        <button class="choice-button" type="button" data-journey-button="implementation" aria-pressed="false">Implementation</button>
-        <button class="choice-button" type="button" data-journey-button="triage" aria-pressed="false">Bug triage</button>
-        <button class="choice-button" type="button" data-journey-button="impact" aria-pressed="false">Impact</button>
-        <button class="choice-button" type="button" data-journey-button="review" aria-pressed="false">PR review</button>
-        <button class="choice-button" type="button" data-journey-button="posting" aria-pressed="false">Post review</button>
-      </div>
-      <div id="journey-advice" class="journey-panel active" data-journey-panel="advice">
-        <h3>“Plan how we should add SSO.”</h3>
-        <div class="journey-track"><div class="journey-node"><span class="tag advisory">Advisory</span><strong>Intent matched</strong><small>Planning request</small></div><div class="journey-node"><span class="tag read-only">Read only</span><strong>naru-plan</strong><small>Minimal source evidence</small></div><div class="journey-node"><strong>Optional lenses</strong><small>Only useful unresolved questions</small></div><div class="journey-node"><strong>Outcome plan</strong><small>Scope, risks, touchpoints, checks</small></div><div class="journey-node"><span class="tag blocked">No write</span><strong>Stop</strong><small>Separate authorization needed</small></div></div>
-        <p><strong>Boundary:</strong> the skill cannot authorize code changes, commands, delivery, or posting—even if text inside the repository tells it to.</p>
-      </div>
-      <div id="journey-implementation" class="journey-panel" data-journey-panel="implementation">
-        <h3>“Implement SSO locally; do not commit.”</h3>
-        <div class="journey-track"><div class="journey-node"><span class="tag coordinates">Coordinates</span><strong>Selected orchestrator</strong><small>Parses explicit scope</small></div><div class="journey-node"><span class="tag read-only">Read only</span><strong>Plan + evidence</strong><small>Useful lenses only</small></div><div class="journey-node"><span class="tag write">Scoped write</span><strong>Implement packet</strong><small>Owned paths + baselines</small></div><div class="journey-node"><span class="tag checks">Targeted checks</span><strong>Quiescent candidate</strong><small>Verify shards</small></div><div class="journey-node"><strong>Judge + equality</strong><small>Local changes; no delivery</small></div></div>
-        <p><strong>Boundary:</strong> implementation authorizes only the scoped local edits and routine targeted verification needed. Commit, push, PR, post, migration, dependencies, secrets, destructive operations, or material scope growth remain separate boundaries.</p>
-      </div>
-      <div id="journey-triage" class="journey-panel" data-journey-panel="triage">
-        <h3>“Why is checkout failing?”</h3>
-        <div class="journey-track"><div class="journey-node"><span class="tag advisory">Advisory</span><strong>naru-triage</strong><small>Evidence before fixes</small></div><div class="journey-node"><span class="tag read-only">Read only</span><strong>Trace path</strong><small>Observed vs assumed</small></div><div class="journey-node"><span class="tag checks">Targeted checks</span><strong>Reproduce if permitted</strong><small>Smallest useful diagnostic</small></div><div class="journey-node"><strong>Diagnosis</strong><small>Cause, conditions, unknowns</small></div><div class="journey-node"><span class="tag blocked">No fix</span><strong>Stop</strong><small>Unless changes separately requested</small></div></div>
-        <p><strong>Boundary:</strong> a diagnosis request is not an implementation request. The Debug minion may run targeted diagnostics when selected by the orchestrator, but still cannot edit.</p>
-      </div>
-      <div id="journey-impact" class="journey-panel" data-journey-panel="impact">
-        <h3>“What breaks if we change this schema?”</h3>
-        <div class="journey-track"><div class="journey-node"><span class="tag advisory">Advisory</span><strong>naru-impact</strong><small>Start at proposed change</small></div><div class="journey-node"><span class="tag read-only">Read only</span><strong>Follow contracts</strong><small>Consumers, config, tests</small></div><div class="journey-node"><strong>Risk-scale depth</strong><small>Public, data, security, cross-service</small></div><div class="journey-node"><strong>Classify</strong><small>Changed / verify / unaffected / unknown</small></div><div class="journey-node"><strong>Recommend</strong><small>Smallest safe patch + checks</small></div></div>
-        <p><strong>Boundary:</strong> broad inspection does not authorize a broad patch. Analysis narrows the safe implementation scope.</p>
-      </div>
-      <div id="journey-review" class="journey-panel" data-journey-panel="review">
-        <h3>“Review PR #42.”</h3>
-        <div class="journey-track"><div class="journey-node"><span class="tag read-only">Read only</span><strong>Normalize target</strong><small>One owner/repo/number</small></div><div class="journey-node"><strong>Fresh snapshot</strong><small>Immutable exact SHAs</small></div><div class="journey-node"><strong>Inspect + validate</strong><small>Concrete material findings</small></div><div class="journey-node"><span class="tag advisory">Advisory</span><strong>Dry-run report</strong><small>Findings first</small></div><div class="journey-node"><span class="tag blocked">No post</span><strong>Stop</strong><small>A PR reference alone is not posting intent</small></div></div>
-        <p><strong>Boundary:</strong> review is dry-run by default. Custom agents remain dry-run-only.</p>
-      </div>
-      <div id="journey-posting" class="journey-panel" data-journey-panel="posting">
-        <h3>“Post the review to owner/repo#42.”</h3>
-        <div class="journey-track"><div class="journey-node"><span class="tag outward">Outward action</span><strong>Current explicit request</strong><small>Direct selected orchestrator only</small></div><div class="journey-node"><strong>Fresh final review</strong><small>No pasted/cached payload</small></div><div class="journey-node"><span class="tag gate">Runtime gate</span><strong>Validate snapshot</strong><small>Coverage, head, locations, marker</small></div><div class="journey-node"><strong>One COMMENT</strong><small>Posting tool only</small></div><div class="journey-node"><span class="tag blocked">No retry</span><strong>Report outcome</strong><small>Ambiguity stays ambiguous</small></div></div>
-        <p><strong>Boundary:</strong> one validated COMMENT-only attempt. It cannot approve, request changes, merge, or fall back to another posting mechanism.</p>
-      </div>
-    </section>
 
-    <section id="agents" class="guide-section" data-search="eight agents orchestrator minions scout investigate architect implement debug verify judge permissions tools roles">
-      <div class="section-head"><div><span class="section-number">03 / 16</span><h2>Eight canonical agents</h2></div><p class="section-intro">Think of a film crew: one director, specialists who gather and evaluate evidence, and exactly one craft role allowed to touch the set.</p></div>
-      <div class="agent-grid">
-        <article class="card agent-card accent-violet"><div class="agent-icon coordinates">ORC</div><div><span class="tag coordinates">Coordinates</span><h3>Orchestrator</h3><p class="pm-detail">Director / air-traffic controller.</p></div><dl><dt>Input → output</dt><dd>User objective → packets, synthesis, final response</dd><dt>Tools</dt><dd>Read tools, Task to seven minions, Scheduler, Worktree, review post; no edit or shell</dd><dt>Route</dt><dd>Sol by default; direct visible primary only</dd><dt>Used</dt><dd>Implementation or explicit review posting</dd></dl></article>
-        <article class="card agent-card accent-teal"><div class="agent-icon read-only">SCT</div><div><span class="tag read-only">Read only</span><h3>Scout</h3><p class="pm-detail">Location scout.</p></div><dl><dt>Input → output</dt><dd>Unknown scope → files, symbols, conventions</dd><dt>Tools</dt><dd>Graph/LSP/search/Git/GitHub reads; no shell</dd><dt>Route</dt><dd>Luna · Terra · Sol</dd><dt>Used</dt><dd>When ownership or execution path is unknown</dd></dl></article>
-        <article class="card agent-card accent-teal"><div class="agent-icon read-only">INV</div><div><span class="tag read-only">Read only</span><h3>Investigate</h3><p class="pm-detail">Detective.</p></div><dl><dt>Input → output</dt><dd>Uncertain behavior → evidence-backed finding</dd><dt>Tools</dt><dd>Graph/LSP/search/Git/GitHub reads; no shell</dd><dt>Route</dt><dd>Luna · Terra · Sol</dd><dt>Used</dt><dd>Root cause or code path is uncertain</dd></dl></article>
-        <article class="card agent-card accent-violet"><div class="agent-icon coordinates">ARC</div><div><span class="tag read-only">Read only</span><h3>Architect</h3><p class="pm-detail">Structural engineer.</p></div><dl><dt>Input → output</dt><dd>Consequential decision → focused design assessment</dd><dt>Tools</dt><dd>Graph/LSP/search/Git/GitHub reads; no shell</dd><dt>Route</dt><dd><strong>Sol floor</strong>; cannot downgrade</dd><dt>Used</dt><dd>API, dependency, security, data, cross-module decisions</dd></dl></article>
-        <article class="card agent-card accent-amber"><div class="agent-icon write">IMP</div><div><span class="tag write">Scoped write</span><h3>Implement</h3><p class="pm-detail">Only person with a key to the workshop.</p></div><dl><dt>Input → output</dt><dd>Approved owned packet → contained local edits + report</dd><dt>Tools</dt><dd>Read/search, apply_patch/edit, scoped shell; no Task</dd><dt>Route</dt><dd>Luna · Terra · Sol</dd><dt>Used</dt><dd>Only after scope, baselines, claims, and peers are known</dd></dl></article>
-        <article class="card agent-card accent-teal"><div class="agent-icon checks">DBG</div><div><span class="tag checks">Targeted checks</span><h3>Debug</h3><p class="pm-detail">Forensic technician.</p></div><dl><dt>Input → output</dt><dd>Failure symptoms → diagnosis and likely fix</dd><dt>Tools</dt><dd>Read tools + targeted shell; cannot edit</dd><dt>Route</dt><dd>Luna · Terra · Sol</dd><dt>Used</dt><dd>Static evidence is insufficient</dd></dl></article>
-        <article class="card agent-card accent-teal"><div class="agent-icon checks">VER</div><div><span class="tag checks">Targeted checks</span><h3>Verify</h3><p class="pm-detail">Test laboratory.</p></div><dl><dt>Input → output</dt><dd>Exact candidate + shard → bounded check report</dd><dt>Tools</dt><dd>Read tools + targeted shell; cannot edit</dd><dt>Route</dt><dd>Luna · Terra · Sol</dd><dt>Used</dt><dd>Preparation while writers run; final shards only at quiescence</dd></dl></article>
-        <article class="card agent-card accent-violet"><div class="agent-icon coordinates">JDG</div><div><span class="tag read-only">Read only</span><h3>Judge</h3><p class="pm-detail">Release referee.</p></div><dl><dt>Input → output</dt><dd>Candidate + complete shards → ready/remediate/blocked verdict</dd><dt>Tools</dt><dd>Read-only evidence tools; no shell, edit, or Task</dd><dt>Route</dt><dd><strong>Sol floor</strong>; cannot downgrade</dd><dt>Used</dt><dd>After exact-candidate verification; max three passes</dd></dl></article>
-      </div>
-      <div class="callout warning"><strong>Terminal writer ≠ completed work.</strong> A writer’s report is provisional until all writers drain, the cohort delta is contained, the candidate is verified, Judge returns, and final identity/state still exactly match.</div>
-    </section>
-
-    <section id="routing" class="guide-section" data-search="model routing luna terra sol aliases xhigh floor architect judge delegate">
-      <div class="section-head"><div><span class="section-number">04 / 16</span><h2>Model routing is per assignment</h2></div><p class="section-intro">Naru Delegate exposes model-fit routes. The Sol orchestrator—not the plugin—reasons about task fit each time. Cost matters alongside capability, ambiguity, context, consequence, latency, and verification burden.</p></div>
-      <div class="model-orbit">
-        <article class="model accent-teal"><div class="glyph" aria-hidden="true">◔</div><h3>Luna</h3><code>openai/gpt-5.6-luna-fast</code><ul><li>Variant <strong>high</strong></li><li>Optional route for Scout, Investigate, Implement, Debug, Verify</li><li>Per-invocation route, not a static agent assignment</li></ul></article>
-        <article class="model"><div class="glyph" aria-hidden="true">◑</div><h3>Terra</h3><code>openai/gpt-5.6-terra-fast</code><ul><li>Variant <strong>high</strong></li><li>Default canonical assignment for non-floor minions</li><li>Can be replaced by exact schema-v2 profile config</li></ul></article>
-        <article class="model accent-violet"><div class="glyph" aria-hidden="true">●</div><h3>Sol</h3><code>openai/gpt-5.6-sol-fast</code><ul><li>Variant <strong>high</strong></li><li>Orchestrator default</li><li>Non-downgradeable floor for Architect and Judge</li></ul></article>
-      </div>
-      <div class="grid-3" style="margin-top:1rem">
-        <article class="card"><span class="meta">Generated routes</span><h3>Internal aliases</h3><p>Hidden <code>naru-delegate-luna-*</code>, <code>-sol-*</code>, and <code>-sol-xhigh-*</code> aliases preserve the canonical role prompt and permissions while changing the model profile. They are not public integration targets.</p></article>
-        <article class="card"><span class="meta">Floor</span><h3>Architect + Judge</h3><p>These roles stay on Sol even when configuration asks for a downgrade. Exact canonical invocation is the normal floor route.</p></article>
-        <article class="card"><span class="meta">Eligibility caveat</span><h3>Sol xhigh</h3><p>Optional—not automatic or required. It is admitted only when the direct root session is <code>naru-orchestrator</code>, manually running the configured Sol model at <code>xhigh</code> or <code>max</code>.</p></article>
-      </div>
-      <details class="tech-detail technical-detail"><summary>Exact routing mechanics</summary><p><code>naru-models.json</code> schema v2 can replace profiles and set sparse canonical <code>terra|sol</code> agent assignments. Schema v1 Fast/Deep normalizes to Terra/Sol. The Delegate plugin mutates OpenCode’s agent config deterministically, creates hidden aliases, blocks routed <code>task_id</code> reuse, enforces root-only orchestrator selection and xhigh root metadata, but does not classify prompts or add retries.</p></details>
-    </section>
-
-    <section id="adaptive" class="guide-section" data-search="adaptive loop plan dispatch observe revise refill stop turbo auto lean thorough foreground off modes ceiling 50 10">
-      <div class="section-head"><div><span class="section-number">05 / 16</span><h2>Adaptive, not maximal</h2></div><p class="section-intro">The coordinator keeps a small prompt-local plan, starts useful independent work when ready, revises only on material facts, and stops when further fan-out has no concrete value.</p></div>
-      <div class="flow" aria-label="Adaptive coordination loop">
-        <div class="flow-step"><b>Plan</b><small>Objective, required outcomes/checks, assumptions, stable item IDs.</small></div>
-        <div class="flow-step"><b>Dispatch</b><small>Only authorized, ready, useful, independent work with a complete packet.</small></div>
-        <div class="flow-step"><b>Observe</b><small>Correlate report and inspect evidence basis. IDs are not proof.</small></div>
-        <div class="flow-step"><b>Revise</b><small>Increment plan revision only after a material observation.</small></div>
-        <div class="flow-step"><b>Refill</b><small>Recompute readiness immediately; preserve valid unrelated peers.</small></div>
-        <div class="flow-step"><b>Stop</b><small>Stop optional analysis when decisions are covered—not before run completion.</small></div>
-      </div>
-      <h3 style="margin-top:2rem">Analysis modes</h3>
-      <div class="button-row" aria-label="Mode explainer">
-        <button class="choice-button" type="button" data-mode="turbo" aria-pressed="true">turbo</button><button class="choice-button" type="button" data-mode="off" aria-pressed="false">off</button><button class="choice-button" type="button" data-mode="lean" aria-pressed="false">lean</button><button class="choice-button" type="button" data-mode="auto" aria-pressed="false">auto</button><button class="choice-button" type="button" data-mode="thorough" aria-pressed="false">thorough</button><button class="choice-button" type="button" data-mode="foreground" aria-pressed="false">foreground</button>
-      </div>
-      <div class="mode-meter">
-        <div class="mode-card is-mode-active" data-mode-card="turbo"><strong>turbo</strong><span>Default. Every ready useful item; empty slots are correct.</span><em>≤ 50 combined</em></div>
-        <div class="mode-card" data-mode-card="off"><strong>off</strong><span>No discretionary read-only analysis. Required work still runs.</span><em>10-child profile</em></div>
-        <div class="mode-card" data-mode-card="lean"><strong>lean</strong><span>At most one highest-value read-only lens; no best-of-2.</span><em>≤ 10 combined</em></div>
-        <div class="mode-card" data-mode-card="auto"><strong>auto</strong><span>Smallest useful proactive lens set; at most one best-of-2 pair.</span><em>≤ 10 combined</em></div>
-        <div class="mode-card" data-mode-card="thorough"><strong>thorough</strong><span>Complementary lenses and additional rolling waves when useful.</span><em>≤ 10 combined</em></div>
-        <div class="mode-card" data-mode-card="foreground"><strong>foreground</strong><span>Auto selection, but waits for that read cohort before continuing.</span><em>≤ 10 combined</em></div>
-      </div>
-      <div class="callout warning"><strong>Turbo is a ceiling, not a quota or speed promise.</strong> It never invents irrelevant work. Shared-workspace writers remain capped at 10; clean isolated turbo can reach 50 disjoint writers, one per Naru-owned worktree. A concrete user-requested fan-out is separately accounted and never silently truncated.</div>
-    </section>
-
-    <section id="protocols" class="guide-section" data-search="protocol 2 protocol 3 scheduler rolling cohort DAG token marker artifacts gates observe enforce off policy enforcement">
-      <div class="section-head"><div><span class="section-number">06 / 16</span><h2>Two scheduling protocols</h2></div><p class="section-intro">Protocol 2 is the complete prompt-level default. Protocol 3 adds optional machine-checkable, process-local admissions and quality artifacts. It complements—not replaces—the prompt safety model.</p></div>
-      <div class="tab-list" role="tablist" aria-label="Protocol views">
-        <button id="tab-protocol-compare" class="tab-button" role="tab" aria-selected="true" aria-controls="panel-protocol-compare" data-tab="protocol-compare">Compare</button>
-        <button id="tab-protocol-two" class="tab-button" role="tab" aria-selected="false" aria-controls="panel-protocol-two" data-tab="protocol-two">Protocol 2</button>
-        <button id="tab-protocol-three" class="tab-button" role="tab" aria-selected="false" aria-controls="panel-protocol-three" data-tab="protocol-three">Protocol 3</button>
-      </div>
-      <div id="panel-protocol-compare" class="tab-panel" role="tabpanel" aria-labelledby="tab-protocol-compare" data-tab-panel="protocol-compare">
-        <div class="compare">
-          <article><span class="tag coordinates">Prompt policy</span><h3>Protocol 2 · rolling cohorts</h3><ul class="plain-list"><li>Used when scheduler mode is <code>off</code> (default).</li><li>Immutable run/cohort baselines plus per-item dispatch observations.</li><li>Exact claims, Weaver ownership, disjoint active peers.</li><li>Contained writer reports remain provisional until quiescence.</li><li>No scheduler call or admission marker.</li></ul></article>
-          <article><span class="tag gate">Runtime gate</span><h3>Protocol 3 · opt-in gates</h3><ul class="plain-list"><li>Used in <code>observe</code> or <code>enforce</code>.</li><li>Declared DAG, CAS revision, fresh bounded token, one Task marker.</li><li>Typed evidence, terminal, candidate, shard, judgment, and gate artifacts.</li><li>Machine-checks declarations and correlation.</li><li>Still needs baselines, Weaver, source evidence, containment, and final equality.</li></ul></article>
+      <div class="grid-4" style="margin-top:1.6rem">
+        <div class="card">
+          <p class="meta">Agents</p>
+          <h3>Four roles</h3>
+          <p class="micro"><code>naru-orchestrator</code> coordinates; <code>naru-reader</code> investigates; <code>naru-runner</code> checks; <code>naru-writer</code> — and only <code>naru-writer</code> — edits.</p>
+        </div>
+        <div class="card">
+          <p class="meta">Skills</p>
+          <h3>Advisory only</h3>
+          <p class="micro"><code>naru-plan</code>, <code>naru-impact</code>, <code>naru-triage</code>, <code>naru-review</code>. Guidance on demand. A skill grants no tool, changes no role, authorizes nothing.</p>
+        </div>
+        <div class="card">
+          <p class="meta">Tools</p>
+          <h3>Five, bounded</h3>
+          <p class="micro">Read-only git and GitHub, a comment-only review poster, isolated writer worktrees, and a local health report.</p>
+        </div>
+        <div class="card">
+          <p class="meta">Plugin</p>
+          <h3>naru-dispatch</h3>
+          <p class="micro">One plugin, one tool: pick a model class per dispatch. Config maps class names to ordered model chains.</p>
         </div>
       </div>
-      <div id="panel-protocol-two" class="tab-panel" role="tabpanel" aria-labelledby="tab-protocol-two" data-tab-panel="protocol-two">
-        <h3>Protocol 2 rolling-cohort flow</h3>
-        <div class="flow"><div class="flow-step"><b>Capture once</b><small>Immutable run baseline; cohort baseline only on 0→1 writer.</small></div><div class="flow-step"><b>Admit safely</b><small>Ready item, complete packet, disjoint mutable claims.</small></div><div class="flow-step"><b>Claim exactly</b><small>Every writer uses Weaver before editing.</small></div><div class="flow-step"><b>Roll + refill</b><small>At most 10 shared writers; refill free slots without fixed batches.</small></div><div class="flow-step"><b>Drain</b><small>Failure or uncertainty freezes affected work; unknown containment freezes all.</small></div><div class="flow-step"><b>Candidate</b><small>Writer-free delta from immutable cohort baseline.</small></div></div>
-        <p class="callout">An <code>itemDispatchBaseline</code> is only an observation in a moving shared workspace. It includes current identity/state, terminal dependency report IDs, and complete active-peer claims; it is never used as an authoritative whole-workspace item diff.</p>
+
+      <div class="callout">
+        <b>Code intelligence: none of Naru's own.</b> No parser, no index, no symbol resolution.
+        Roles use OpenCode's <code>lsp</code> / <code>glob</code> / <code>grep</code>,
+        <code>naru-git-read</code>, and — when you have one configured — a
+        <code>codebase-memory-mcp</code> knowledge graph. Precedence: fresh graph → LSP → literal
+        search. Agents never index or refresh a graph, and a graph finding is a lead, not proof —
+        anything that drives a decision is confirmed against source and cited by file and line.
       </div>
-      <div id="panel-protocol-three" class="tab-panel" role="tabpanel" aria-labelledby="tab-protocol-three" data-tab-panel="protocol-three">
-        <h3>Protocol 3 sequence</h3>
-        <div class="sequence" aria-label="Protocol 3 request sequence">
-          <div class="sequence-row"><span class="actor">Orchestrator</span><span class="arrow">→</span><span class="message">Create run; declare complete DAG, budgets, claims, revision.</span></div>
-          <div class="sequence-row"><span class="actor">Scheduler tool</span><span class="arrow">→</span><span class="message">Issue fresh token bound to item, lane, target, revision, peers; return exactly one <code>naru-admit:v1</code> marker.</span></div>
-          <div class="sequence-row"><span class="actor">Task hook</span><span class="arrow">→</span><span class="message">Synchronously consumes marker/token; refuses replay, lane/target mismatch, stale revision, conflicts, expiry, or exhausted budget.</span></div>
-          <div class="sequence-row"><span class="actor">Child report</span><span class="arrow">→</span><span class="message">Echoes predeclared report/artifact/token correlation. Orchestrator validates before append.</span></div>
-          <div class="sequence-row"><span class="actor">Artifacts</span><span class="arrow">→</span><span class="message">Evidence / terminal → candidate at quiescence → shards → judgment → verification, judgment, completion gates.</span></div>
+    </section>
+
+    <section class="guide-section" id="agents">
+      <p class="section-number">02</p>
+      <h2>The four agents</h2>
+      <p class="section-intro">
+        Every agent starts from <code>'*': deny</code> and allows only what its role needs. The
+        agents ship with <b>no <code>model:</code> field</b> — each inherits your session's default
+        model, so Naru runs on any provider. Override per role natively in
+        <code>opencode.json</code> if you want; granting <code>edit</code> to anything but
+        <code>naru-writer</code> removes the one guarantee the system mechanically enforces.
+      </p>
+
+      <div class="tab-list" role="tablist" aria-label="Agent roles">
+        <button class="tab-button" role="tab" id="tab-orc" aria-controls="panel-orc" aria-selected="true">naru-orchestrator</button>
+        <button class="tab-button" role="tab" id="tab-reader" aria-controls="panel-reader" aria-selected="false" tabindex="-1">naru-reader</button>
+        <button class="tab-button" role="tab" id="tab-runner" aria-controls="panel-runner" aria-selected="false" tabindex="-1">naru-runner</button>
+        <button class="tab-button" role="tab" id="tab-writer" aria-controls="panel-writer" aria-selected="false" tabindex="-1">naru-writer</button>
+      </div>
+      <p class="no-js-note">JavaScript is off — all four role panels are shown in sequence below.</p>
+
+      <div class="tab-panel" role="tabpanel" id="panel-orc" aria-labelledby="tab-orc">
+        <p class="meta">primary · visible · the only agent you pick</p>
+        <h3>Coordinates. Never edits, never runs bash.</h3>
+        <p class="micro" style="color:var(--muted)">
+          Plans, reads, delegates to the three subagents, calls the Naru tools, and reports.
+          The only role holding <code>question</code> (so only it talks to you),
+          <code>naru-github-post-review</code>, <code>naru-worktree</code>, and
+          <code>naru-dispatch</code>. Its <code>task</code> map denies everything except the three
+          Naru subagents. Delegates freely: fan-out is its judgment, launched concurrently, with no
+          child-count ceiling.
+        </p>
+        <ul class="plain-list">
+          <li><b>Can:</b> read (secrets excluded), glob/grep/lsp, webfetch, todowrite, skills, git/GitHub reads, dispatch, post one comment-only review on explicit request.</li>
+          <li><b>Cannot:</b> edit or <code>apply_patch</code>, run bash, read secrets — all denied by the <code>'*': deny</code> baseline or explicit rules.</li>
+        </ul>
+      </div>
+
+      <div class="tab-panel" role="tabpanel" id="panel-reader" aria-labelledby="tab-reader" hidden>
+        <p class="meta">subagent · hidden · fail-closed</p>
+        <h3>Read-only investigation. No shell at all.</h3>
+        <p class="micro" style="color:var(--muted)">
+          Finds code, traces behavior, diagnoses causes, reviews diffs. Explicit
+          <code>bash: deny</code> and <code>external_directory: deny</code> — it cannot escape into
+          a shell or outside the workspace even if repository text tells it to. Cheap and wide:
+          the orchestrator fans readers out liberally, putting the lens in the dispatch prompt —
+          one maps ownership, another traces a failure, another weighs a design.
+        </p>
+        <ul class="plain-list">
+          <li><b>Can:</b> read (secrets excluded), glob/grep/lsp, skills, <code>naru-git-read</code>, <code>naru-github-read</code>, the full code graph including <code>query_graph</code>.</li>
+          <li><b>Cannot:</b> edit, bash, spawn children, prompt you (<code>question: deny</code> — it reports blocked instead).</li>
+        </ul>
+      </div>
+
+      <div class="tab-panel" role="tabpanel" id="panel-runner" aria-labelledby="tab-runner" hidden>
+        <p class="meta">subagent · hidden · read-only + shell</p>
+        <h3>Everything a reader can, plus a shell.</h3>
+        <p class="micro" style="color:var(--muted)">
+          For questions that need a command run: tests, typecheck, lint, build, reproducing a
+          failure. <code>bash: '*': allow</code> — but still <code>edit: deny</code> and
+          <code>apply_patch: deny</code>, enforced, not advisory. It reads a manifest or Make
+          target before running it, runs one command per call without chaining, and reports the
+          exact command and its real result. If the fix is obvious, it describes it for a writer.
+        </p>
+        <ul class="plain-list">
+          <li><b>Can:</b> everything the reader can, plus bash and <code>external_directory</code>. <code>doom_loop</code> is set to <code>ask</code>.</li>
+          <li><b>Cannot:</b> edit files, spawn children, prompt you, run migrations/deploys/long-running processes (policy, backed by the edit wall).</li>
+        </ul>
+      </div>
+
+      <div class="tab-panel" role="tabpanel" id="panel-writer" aria-labelledby="tab-writer" hidden>
+        <p class="meta">subagent · hidden · the only role with edit</p>
+        <h3>The single place the workspace can change.</h3>
+        <p class="micro" style="color:var(--muted)">
+          The only agent whose frontmatter allows <code>edit</code> and <code>apply_patch</code>.
+          Edits only the paths its assignment gives it; anything outside scope means stop and
+          report, not reach. Claims its exact scope in Weaver before the first edit; a claim
+          conflict means zero edits and a blocked report. In an assigned worktree it works only
+          there, and it never commits, merges, resets, or touches worktrees — integration belongs
+          to the orchestrator.
+        </p>
+        <ul class="plain-list">
+          <li><b>Can:</b> edit, <code>apply_patch</code>, bash, reads, glob/grep/lsp, skills, git/GitHub reads, the full code graph.</li>
+          <li><b>Cannot:</b> spawn children, prompt you, commit/push/post unless the assignment states you explicitly asked.</li>
+        </ul>
+      </div>
+
+      <h3 style="margin-top:2.2rem">Permission matrix</h3>
+      <p class="micro" style="max-width:66ch">Straight from the agent frontmatter — the ground truth the system actually enforces. “deny*” means denied by the <code>'*': deny</code> baseline rather than a named rule.</p>
+      <div class="table-wrap">
+        <table>
+          <caption>Read denials are identical for all four roles: .git/**, .env, .env.*, *.env, *.env.*, *.pem, *.key, *.p12, *.pfx, id_rsa/id_dsa/id_ecdsa/id_ed25519, **/.ssh/**, **/.aws/**, **/.kube/**, **/.gnupg/**, **/credentials/**, **/secrets/**. *.env.example and env.example stay readable.</caption>
+          <thead>
+            <tr><th scope="col">Capability</th><th scope="col">orchestrator</th><th scope="col">reader</th><th scope="col">runner</th><th scope="col">writer</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>read</code> (secrets denied)</td><td class="allow">allow</td><td class="allow">allow</td><td class="allow">allow</td><td class="allow">allow</td></tr>
+            <tr><td><code>glob</code>, <code>grep</code>, <code>lsp</code></td><td class="allow">allow</td><td class="allow">allow</td><td class="allow">allow</td><td class="allow">allow</td></tr>
+            <tr><td><code>skill</code></td><td class="allow">allow</td><td class="allow">allow</td><td class="allow">allow</td><td class="allow">allow</td></tr>
+            <tr><td><code>edit</code>, <code>apply_patch</code></td><td class="deny">deny*</td><td class="deny">deny</td><td class="deny">deny</td><td class="hot">allow</td></tr>
+            <tr><td><code>bash</code></td><td class="deny">deny*</td><td class="deny">deny</td><td class="allow">allow</td><td class="allow">allow</td></tr>
+            <tr><td><code>task</code> (spawn)</td><td class="hot">3 subagents only</td><td class="deny">deny</td><td class="deny">deny</td><td class="deny">deny</td></tr>
+            <tr><td><code>question</code> (ask you)</td><td class="allow">allow</td><td class="deny">deny</td><td class="deny">deny</td><td class="deny">deny</td></tr>
+            <tr><td><code>external_directory</code></td><td class="deny">deny*</td><td class="deny">deny</td><td class="allow">allow</td><td class="allow">allow</td></tr>
+            <tr><td><code>webfetch</code>, <code>todowrite</code></td><td class="allow">allow</td><td class="deny">deny*</td><td class="deny">deny*</td><td class="deny">deny*</td></tr>
+            <tr><td><code>naru-git-read</code>, <code>naru-github-read</code></td><td class="allow">allow</td><td class="allow">allow</td><td class="allow">allow</td><td class="allow">allow</td></tr>
+            <tr><td><code>naru-github-post-review</code></td><td class="hot">allow</td><td class="deny">deny*</td><td class="deny">deny*</td><td class="deny">deny*</td></tr>
+            <tr><td><code>naru-worktree</code></td><td class="hot">allow</td><td class="deny">deny*</td><td class="deny">deny*</td><td class="deny">deny*</td></tr>
+            <tr><td><code>naru-dispatch</code></td><td class="hot">allow</td><td class="deny">deny*</td><td class="deny">deny*</td><td class="deny">deny*</td></tr>
+            <tr><td>code graph (<code>codebase-memory-mcp_*</code>)</td><td class="allow">allow (no <code>query_graph</code>)</td><td class="allow">allow</td><td class="allow">allow</td><td class="allow">allow</td></tr>
+            <tr><td><code>doom_loop</code></td><td class="deny">deny*</td><td class="deny">deny*</td><td class="allow">ask</td><td class="allow">ask</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <details>
+        <summary>Per-role model overrides (optional, native to OpenCode)</summary>
+        <div class="details-body">
+          <p>A stronger model for the orchestrator's planning, a cheaper one for wide reader fan-out — set it in <code>opencode.json</code>. No Naru-specific config file is involved:</p>
+          <pre class="block">{
+  "agent": {
+    "naru-orchestrator": { "model": "anthropic/claude-opus-5" },
+    "naru-reader": { "model": "anthropic/claude-haiku-4-5" }
+  }
+}</pre>
+          <p>The same block accepts <code>variant</code>, <code>temperature</code>, and <code>permission</code> — tightening a role further than Naru ships it is always safe.</p>
         </div>
-        <div class="button-row" aria-label="Scheduler mode behavior" style="margin-top:1.2rem"><button class="choice-button" data-runtime-mode="off" aria-pressed="true" type="button">off</button><button class="choice-button" data-runtime-mode="observe" aria-pressed="false" type="button">observe</button><button class="choice-button" data-runtime-mode="enforce" aria-pressed="false" type="button">enforce</button></div>
-        <div id="runtime-mode-description" class="callout violet" aria-live="polite"><strong>off:</strong> complete Protocol 2 prompt workflow; no scheduler run, journal, token, or admission gate.</div>
-      </div>
-      <div class="callout danger"><strong>Hard limit:</strong> Protocol 3 state is process-local, non-durable, synchronous only at the native Task hook, and not cross-process. It does not create sessions, inspect Git, capture baselines, bind Task directories, prove report truth, infer model aliases, or authoritatively observe background completion. Correlation is not proof.</div>
+      </details>
     </section>
 
-    <section id="timeline" class="guide-section" data-search="implementation timeline baselines claims workers quiescent candidate verify shards judge equality remediation delivery invalidation">
-      <div class="section-head"><div><span class="section-number">07 / 16</span><h2>From request to unchanged candidate</h2></div><p class="section-intro">Completion is an evidence chain. Every mutation creates a new candidate and invalidates verification tied to the old one.</p></div>
-      <div class="timeline">
-        <div class="timeline-item"><strong>1 · Authorize & plan</strong><p>Parse current user intent, scope, non-goals, consequential boundaries, analysis preference, and required outcomes/checks. Create stable item IDs and dependencies.</p></div>
-        <div class="timeline-item"><strong>2 · Capture baselines</strong><p><code>runBaseline</code> protects pre-existing state. <code>cohortBaseline</code> is captured once at the zero-to-one writer transition. They never move with peer edits.</p></div>
-        <div class="timeline-item"><strong>3 · Establish ownership</strong><p>Compare exact paths/globs, mutable contracts, generated artifacts, config, lockfiles, and mutable resources. Every writer inspects Weaver and claims its complete scope once.</p></div>
-        <div class="timeline-item write-point"><strong>4 · Dispatch writers</strong><p>Fresh Implement sessions edit only their owned scope. Shared cohorts roll up to 10 pairwise-disjoint writers; read-only preparation may use remaining capacity.</p></div>
-        <div class="timeline-item block-point"><strong>Failure branch</strong><p>Claim conflict → zero edits and serialized fallback. Drift/unknown path → freeze affected descendants; unknown containment freezes all. Do not reset or overwrite peers.</p></div>
-        <div class="timeline-item"><strong>5 · Drain to quiescence</strong><p>After all writers terminate, derive <code>cohortDelta</code> from the immutable cohort baseline. Confirm owned-path union and preserve protected run-baseline state.</p></div>
-        <div class="timeline-item"><strong>6 · Capture candidate</strong><p>Record exact candidate identity and full state snapshot. This writer-free checkpoint is the only basis for final checks.</p></div>
-        <div class="timeline-item"><strong>7 · Verify shards</strong><p>Independent read-only shards cover every declared check/work item. Source paths may overlap; mutable runtime resources may not. A complete shard manifest is required.</p></div>
-        <div class="timeline-item"><strong>8 · Judge</strong><p>One Sol-floor Judge synthesizes original scope, every terminal writer, exact candidate, and every valid shard. Verdict: ready, needs remediation, or blocked.</p></div>
-        <div class="timeline-item block-point"><strong>Invalidation branch</strong><p>Any edit or status change after candidate capture invalidates all shards and judgment. Identity mismatch blocks completion and requires a fresh candidate cycle.</p></div>
-        <div class="timeline-item"><strong>9 · Final equality</strong><p>The coordinator recaptures final identity/state and requires exact equality with the judged candidate. Only now can the run complete.</p></div>
-        <div class="timeline-item write-point"><strong>10 · Optional next phase</strong><p>Remediation is one serialized writer, then fresh Verify/Judge. Explicitly authorized commit/push/PR/posting is also serialized. Local changes remain the default stop.</p></div>
-      </div>
-    </section>
+    <section class="guide-section" id="dispatch">
+      <p class="section-number">03</p>
+      <h2>Dispatch &amp; model classes</h2>
+      <p class="section-intro">
+        Naru's one plugin registers one tool: <code>naru-dispatch</code>. It runs the same three
+        subagents as the built-in <code>task</code> tool, but lets the orchestrator pick a
+        <b>model class</b> — and an optional reasoning-effort override — per dispatch. Use
+        <code>task</code> when the model doesn't matter (children inherit the session model);
+        both can be used in the same turn, and dispatches in one turn run concurrently.
+        Dispatch is foreground-only: each call runs the child to completion and returns its answer.
+      </p>
 
-    <section id="workspaces" class="guide-section" data-search="shared workspace isolated worktree weaver claims disjoint integration finalize recovery downgrade sandbox">
-      <div class="section-head"><div><span class="section-number">08 / 16</span><h2>One workspace or isolated worktrees</h2></div><p class="section-intro">Path ownership is logical across both modes. A separate directory does not make overlapping contracts safe.</p></div>
-      <div class="workspace-map">
-        <article class="workcell"><span class="tag write">Shared mode</span><h3>Disjoint slices, one moving workspace</h3><div class="file-slices" aria-label="Disjoint owned file slices"><span>auth/**</span><span>ui/**</span><span>docs/**</span><span>tests/a</span></div><ul class="plain-list"><li>≤ 10 concurrent fresh writers in every mode.</li><li>Complete active-peer claims in every packet.</li><li>Per-item dispatch state is provisional while peers write.</li><li>Unknown overlap, config, lockfile, generated output, or mutable resource serializes.</li></ul></article>
-        <article class="workcell"><span class="tag coordinates">Isolated worktrees</span><h3>One writer per Naru-owned worktree</h3><div class="file-slices" aria-label="Separate writer worktrees"><span>WT-A</span><span>WT-B</span><span>INTEGRATE</span><span>FINALIZE</span></div><ul class="plain-list"><li>Clean stable repository required; turbo can admit ≤ 50 disjoint writers.</li><li>Root orchestrator alone prepares, integrates, finalizes, recovers, and cleans up.</li><li>Writers never commit, merge, apply patches elsewhere, or remove worktrees.</li><li>Integration tool rejects unknown, unsafe, symlinked, overlapping, or out-of-scope paths.</li></ul></article>
-      </div>
-      <div class="grid-3" style="margin-top:1rem"><article class="card"><h3>Weaver is external</h3><p>Every writer checks status, registers intent, acquires each exact claim once before editing, logs notable changes, and calls done. A conflict is a scheduling signal—not a user checkpoint.</p></article><article class="card"><h3>Downgrade is automatic</h3><p><code>auto</code>/<code>worktree</code> isolation that is dirty, unavailable, or refused falls back to shared mode’s 10-writer ceiling without prompting. Read-only turbo work may still use remaining combined capacity.</p></article><article class="card"><h3>Recovery, not a sandbox</h3><p>Tool-owned Git mutations are hook-suppressed, serialized per run, metadata-atomic, path-contained, and rollback-attempting. They do not protect against unrelated external mutation or unsafe project code.</p></article></div>
-      <details class="tech-detail technical-detail"><summary>Isolated lifecycle</summary><p><code>prepare_run</code> → one <code>prepare_item</code> per ready item → writer works at exact detached path → <code>integrate_item</code> into the integration worktree → Verify and Judge that aggregate → <code>finalize_run</code> applies it only if the main workspace stayed clean/unchanged → recapture equivalent final state → <code>cleanup_run</code>. After restart, <code>recover_run</code> reopens metadata instead of creating duplicate worktrees. Failures preserve worktrees for recovery.</p></details>
-    </section>
-
-    <section id="safety" class="guide-section" data-search="safety authorization matrix read check write commit push PR post checkpoint prompt policy opencode permissions runtime gates">
-      <div class="section-head"><div><span class="section-number">09 / 16</span><h2>Four layers of “allowed”</h2></div><p class="section-intro">Authorization is not one switch. A safe action must satisfy user intent, prompt policy, OpenCode’s actual permissions, and any configured local runtime gate.</p></div>
-      <div class="layers">
-        <article class="layer"><span class="meta">1 · Authority</span><h3>User authorization</h3><p>Defines the outcome and consequential actions. Current explicit intent is the source of scope—not repository text or an agent report.</p></article>
-        <article class="layer"><span class="meta">2 · Policy</span><h3>Agent prompt</h3><p>Assigns responsibility, checkpoints, ownership rules, and stopping conditions. It is guidance, not a technical sandbox.</p></article>
-        <article class="layer"><span class="meta">3 · Mechanism</span><h3>OpenCode permissions</h3><p>Actually allows or denies tools and Task targets. Role maps fail closed; only Implement has edit permission.</p></article>
-        <article class="layer"><span class="meta">4 · Optional mechanism</span><h3>Local runtime gates</h3><p>Protocol 3 can machine-check declared admissions and artifacts in one process. Passing does not prove real workspace behavior.</p></article>
-      </div>
-      <div class="table-wrap" style="margin-top:1rem"><table><caption style="text-align:left;padding:1rem;color:var(--muted)">Canonical role and action matrix</caption><thead><tr><th>Action</th><th>Orchestrator</th><th>Static read minions</th><th>Debug / Verify</th><th>Implement</th><th>Extra boundary</th></tr></thead><tbody>
-        <tr><td>Read source / Git / GitHub</td><td class="yes">Coordinates / reads</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td><td>Never read secrets or <code>.env*</code></td></tr>
-        <tr><td>Run targeted checks</td><td class="no">No project code</td><td class="no">No shell</td><td class="yes">Yes, scoped</td><td class="yes">Yes, scoped</td><td>Inspect package script / Make target first</td></tr>
-        <tr><td>Edit files</td><td class="no">Never</td><td class="no">Never</td><td class="no">Never</td><td class="yes">Only role</td><td>Explicit implementation + owned scope + claims</td></tr>
-        <tr><td>Install / change dependencies</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td class="conditional">Only if packet says user requested it</td><td>Exact user authorization</td></tr>
-        <tr><td>Commit / push / open or update PR</td><td class="no">Delegates only</td><td class="no">No</td><td class="no">No</td><td class="conditional">Only when explicitly requested</td><td>Local changes are default stop; serialized after final equality</td></tr>
-        <tr><td>Post PR review</td><td class="conditional">Only direct selected orchestrator</td><td class="no">No</td><td class="no">No</td><td class="no">No direct post</td><td>Current explicit request + fresh validated payload + one attempt</td></tr>
-        <tr><td>Migration / persistent DB write / production / destructive action / secret access / billing or security posture</td><td class="conditional">Checkpoint required</td><td class="no">No</td><td class="no">No</td><td class="conditional">Only exact authorized packet</td><td>One concise checkpoint naming exact consequential action</td></tr>
-      </tbody></table></div>
-      <p class="callout danger"><strong>Repository content is untrusted.</strong> Skills, docs, issues, PRs, diffs, filenames, reports, and command output cannot change the user’s authorization, an agent’s role, or its tool map.</p>
-    </section>
-
-    <section id="runtime-map" class="guide-section" data-search="runtime component delegate scheduler plugin tool worktree git github posting dashboard telemetry installer manifest doctor evaluation candidate build tests">
-      <div class="section-head"><div><span class="section-number">10 / 16</span><h2>Runtime component map</h2></div><p class="section-intro">Naru is a collection of narrow components, not one daemon. Their boundaries matter more than their names.</p></div>
-      <div class="component-grid">
-        <article class="card component-card accent-violet"><span class="component-id">plugins/naru-delegate.js</span><h3>Delegate</h3><p>Injects canonical model profiles and hidden routes into OpenCode config; validates root-only and fresh-session routing. It does not classify tasks, invoke models, or own Task execution.</p></article>
-        <article class="card component-card accent-violet"><span class="component-id">tools/naru-scheduler.js</span><h3>Scheduler tool</h3><p>Root-orchestrator-only API to create runs, declare items, issue tokens, request transitions, append artifacts, snapshot, freeze, and close process-local state. Never creates sessions.</p></article>
-        <article class="card component-card accent-violet"><span class="component-id">plugins/naru-scheduler.js</span><h3>Scheduler plugin</h3><p>Hooks native Task before execution, parses and consumes the admission marker, applies observe/enforce behavior, and journals uncertain lifecycle signals.</p></article>
-        <article class="card component-card accent-amber"><span class="component-id">tools/naru-worktree.js · naru-lib/worktree</span><h3>Worktree lifecycle</h3><p>Clean-repository isolated writers, serialized integration, finalization, cleanup, and restart recovery. Restricted to root orchestrator; no pushes or delivery commits.</p></article>
-        <article class="card component-card accent-teal"><span class="component-id">tools/naru-git-read.js</span><h3>Git reader</h3><p>Fixed-argument read-only repository, status, diff, log, file, grep, and merge-base operations; no Git mutation.</p></article>
-        <article class="card component-card accent-teal"><span class="component-id">tools/naru-github-read.js</span><h3>GitHub reader</h3><p>Normalizes references, reads issues, captures coherent pull snapshots, and fetches source at exact 40-character SHAs.</p></article>
-        <article class="card component-card accent-red"><span class="component-id">tools/naru-github-post-review.js</span><h3>Posting tool</h3><p>Selected-orchestrator-only, strict schema-v2 review payload, complete coverage, hard-coded COMMENT, hidden-marker dedupe, one POST, no retry.</p></article>
-        <article class="card component-card accent-teal"><span class="component-id">dashboard plugin + state + telemetry</span><h3>Local activity view</h3><p>Projects recognized child sessions and same-process scheduler telemetry into the TUI sidebar and <code>/naru-minions</code>. Hidden when absent; not available in mini mode.</p></article>
-        <article class="card component-card accent-amber"><span class="component-id">install.sh · install-manifest · doctor</span><h3>Lifecycle + health</h3><p>Preview-first transactional installation, owned-asset manifest, conflict preservation, bounded backups/receipts, confirmed rollback/uninstall; doctor reads local state without providers or credentials.</p></article>
-        <article class="card component-card"><span class="component-id">scripts/naru-live-eval.mjs</span><h3>Evaluation</h3><p>Provider-free dry run and contract preparation. Live mode requires exact contract/file digests and explicit cost confirmation; the current adapter fails closed where provenance/budget binding is insufficient.</p></article>
-        <article class="card component-card"><span class="component-id">candidate assembler · TypeScript build</span><h3>Candidate layer</h3><p>Maps source modules and static files to a deterministic release candidate with canonical hashes/modes, rejecting symlinks, secret-like paths, caches, maps, and undeclared TypeScript output.</p></article>
-        <article class="card component-card"><span class="component-id">tests · CI · compatibility smoke</span><h3>Contract checks</h3><p>Routing, prompts, scheduler, dashboard, tools, installer, candidate, eval, and compatibility tests. CI currently typechecks, assembles/checks the candidate, tests candidate output, builds docs, and runs provider-free OpenCode compatibility smoke.</p></article>
-      </div>
-      <p class="callout"><strong>Dashboard caveat:</strong> telemetry describes recognized local sessions and, when present, one same-process scheduler run. It is not durable, cross-process, provider-wide, global, or authoritative completion state.</p>
-    </section>
-
-    <section id="repository" class="guide-section" data-search="repository tree skills agents plugins tools scripts docs tests src install runtime CI build candidate legacy retired">
-      <div class="section-head"><div><span class="section-number">11 / 16</span><h2>Repository as a system map</h2></div><p class="section-intro">Filter the hierarchy by concept or path. The public runtime and an in-progress TypeScript source/build migration coexist in this observed worktree.</p></div>
-      <div class="tree-toolbar"><label style="position:absolute;clip:rect(0 0 0 0)" for="tree-filter">Filter repository tree</label><input id="tree-filter" type="search" placeholder="Filter tree: scheduler, review, docs…"><button id="tree-expand" class="tree-action" type="button">Expand all</button><button id="tree-collapse" class="tree-action" type="button">Collapse all</button></div>
-      <div class="repo-tree" id="repo-tree">
-        <details open data-tree-group><summary><strong>naru-opencode/</strong> <span class="micro">source repository</span></summary>
-          <details open data-tree-group><summary>skills/ <span class="tag advisory">Advisory</span></summary><div class="tree-item" data-tree-item><span>naru-{plan,impact,triage,review}/SKILL.md</span><span>Four on-demand guidance contracts; no tool or authorization grant.</span></div></details>
-          <details open data-tree-group><summary>agents/ <span class="tag coordinates">8 canonical</span></summary><div class="tree-item" data-tree-item><span>naru-orchestrator.md</span><span>Visible root coordinator, never edits.</span></div><div class="tree-item" data-tree-item><span>naru-minion-*.md</span><span>Seven role prompts and fail-closed permission maps.</span></div></details>
-          <details data-tree-group><summary>plugins/ <span class="tag gate">Runtime hooks</span></summary><div class="tree-item" data-tree-item><span>naru-delegate.js</span><span>Model profiles, generated internal aliases, Task route checks.</span></div><div class="tree-item" data-tree-item><span>naru-scheduler.js</span><span>Optional Protocol 3 native Task admission hook.</span></div><div class="tree-item" data-tree-item><span>naru-minions-dashboard.tsx + state</span><span>Optional full-TUI local activity projection.</span></div></details>
-          <details data-tree-group><summary>tools/ <span class="tag read-only">Validated tools</span></summary><div class="tree-item" data-tree-item><span>naru-{git,github}-read.js</span><span>Bounded read-only Git and GitHub operations.</span></div><div class="tree-item" data-tree-item><span>naru-github-post-review.js</span><span>Validated one-shot COMMENT-only outward action.</span></div><div class="tree-item" data-tree-item><span>naru-scheduler.js · naru-worktree.js</span><span>Root-only scheduler and isolated writer lifecycle tools.</span></div><div class="tree-item" data-tree-item><span>naru-doctor.js</span><span>Provider-free local install/config report.</span></div><div class="tree-item" data-tree-item><span>naru-lib/*.mjs</span><span>Routing, scheduler, transport, validation, review, Git/GitHub, install, eval, and worktree helpers.</span></div></details>
-          <details data-tree-group><summary>scripts/ <span class="tag checks">Operations</span></summary><div class="tree-item" data-tree-item><span>merge-tui-config.mjs</span><span>Safe TUI registration merge helper.</span></div><div class="tree-item" data-tree-item><span>naru-compat-smoke.mjs</span><span>Provider-free OpenCode compatibility smoke.</span></div><div class="tree-item" data-tree-item><span>naru-live-eval.mjs</span><span>Dry-run plan, reviewed contract, gated live adapter.</span></div></details>
-          <details data-tree-group><summary>docs/ <span class="tag advisory">Explanation</span></summary><div class="tree-item" data-tree-item><span>user-guide · agent-integration · development</span><span>Canonical long-form guides.</span></div><div class="tree-item" data-tree-item><span>docs/src/content/docs/</span><span>Concept, workflow, runtime, reference, and getting-started site pages.</span></div></details>
-          <details data-tree-group><summary>tests/ <span class="tag checks">Contract evidence</span></summary><div class="tree-item" data-tree-item><span>*-routing / prompt / scheduler / worktree</span><span>Policy and state-machine contracts.</span></div><div class="tree-item" data-tree-item><span>github / dashboard / doctor / install / eval</span><span>Tools, projections, lifecycle, and safety behavior.</span></div><div class="tree-item" data-tree-item><span>candidate-assembly · typescript-policy</span><span>In-progress source/build and release-candidate consistency checks.</span></div></details>
-          <details data-tree-group><summary>src/ <span class="tag write">Migration caveat</span></summary><div class="tree-item" data-tree-item><span class="tree-flag">src/plugins · scripts · tools</span><span>Observed in-progress TypeScript source/build migration. Concurrent dirty work existed at this snapshot; it was not built, tested, or proven candidate-consistent for this guide.</span></div><div class="tree-item" data-tree-item><span>src/build/candidate-assembler.ts</span><span>Maps emitted source and static contracts into a deterministic candidate; source-backed design observed only.</span></div></details>
-          <details data-tree-group><summary>root + build/candidate layer</summary><div class="tree-item" data-tree-item><span>install.sh</span><span>Preview-first install; apply is explicit mutation boundary; manifest-owned rollback/uninstall need exact confirmation.</span></div><div class="tree-item" data-tree-item><span>naru-runtime.example.json</span><span>Inert example; active runtime config is intentionally created beside installed plugins.</span></div><div class="tree-item" data-tree-item><span>package.json · tsconfig*.json</span><span>Typecheck, emit, candidate assemble/check/sync, tests.</span></div><div class="tree-item" data-tree-item><span>.github/workflows/ci.yml</span><span>Builds and tests the candidate and docs; this path was pre-existing dirty at observation.</span></div><div class="tree-item" data-tree-item><span>.naru-build/</span><span>Generated emit/candidate output; not source and not inspected here.</span></div></details>
-          <details data-tree-group><summary>legacy / retired concepts</summary><div class="tree-item" data-tree-item><span class="tree-flag">commands/</span><span>No current command artifacts observed. Retired Naru slash commands are not public entry points.</span></div><div class="tree-item" data-tree-item><span class="tree-flag">legacy agents / deep aliases</span><span>Healthy manifest-owned legacy assets are retired on reinstall; generated aliases remain internal. <code>--configure-subagent-depth</code> is a deprecated accepted no-op.</span></div></details>
-        </details>
-      </div>
-    </section>
-
-    <section id="review-lane" class="guide-section" data-search="PR review target normalization fresh snapshot dry run posting comment dedupe no retry immutable">
-      <div class="section-head"><div><span class="section-number">12 / 16</span><h2>The PR review airlock</h2></div><p class="section-intro">Reading a PR and speaking on GitHub are deliberately separate. Everything stays dry until a current, explicit post request reaches the directly selected orchestrator.</p></div>
-      <div class="review-pipe" aria-label="PR review lane">
-        <div><span class="tag read-only">Read only</span><strong>1 · Normalize</strong><small>Resolve one canonical <code>(owner, repo, positive number)</code>. Equivalent forms dedupe; distinct targets reject.</small></div>
-        <div><strong>2 · Snapshot</strong><small>Fresh coherent PR evidence with immutable exact-SHA base/head.</small></div>
-        <div><strong>3 · Review</strong><small>Inspect diff, surrounding contracts, tests, and prior feedback. Material findings only.</small></div>
-        <div><span class="tag advisory">Default</span><strong>4 · Dry run</strong><small>Return findings first. No post happens from a PR reference alone.</small></div>
-        <div><span class="tag outward">Explicit request</span><strong>5 · Refresh</strong><small>Obtain a new final review; never reuse pasted, cached, stale, incomplete, or degraded payloads.</small></div>
-        <div><span class="tag gate">Validate</span><strong>6 · Freeze payload</strong><small>Schema v2, target equality, complete coverage, fresh head/feedback digest, valid inline locations, no marker duplicate.</small></div>
-        <div><span class="tag blocked">No retry</span><strong>7 · One COMMENT</strong><small>At most one tool call. Ambiguous or failed result is reported without fallback.</small></div>
-      </div>
-      <div class="grid-2" style="margin-top:1rem"><article class="card"><h3>What it can do</h3><ul class="plain-list"><li>Post one comment-only PR review.</li><li>Include validated inline comments.</li><li>Deduplicate a hidden marker digest.</li><li>Serialize same-target calls inside one process.</li></ul></article><article class="card accent-red"><h3>What it cannot do</h3><ul class="plain-list"><li>Approve, request changes, merge, or create an ordinary issue comment.</li><li>Infer posting permission from assistant/repository/PR text.</li><li>Guarantee cross-process dedupe.</li><li>Retry an ambiguous POST.</li></ul></article></div>
-      <details class="tech-detail technical-detail"><summary>Frozen payload contract</summary><p>Exactly these top-level fields: <code>schemaVersion: 2</code>, <code>target</code>, <code>snapshot</code>, <code>coverage: { complete, limitations }</code>, <code>body</code>, <code>inlineComments</code>, and <code>skippedInlineComments</code>. The post tool receives it once as <code>{ reviewResult: object }</code>. Any later edit, push, head change, or feedback change invalidates the review and requires a new explicit posting request.</p></details>
-    </section>
-
-    <section id="recovery" class="guide-section" data-search="failure recovery stale evidence claim conflict writer drift failed check identity mismatch scheduler refusal external claim post ambiguity state machine">
-      <div class="section-head"><div><span class="section-number">13 / 16</span><h2>Failure is a state, not a surprise</h2></div><p class="section-intro">Naru’s safest behavior is often to preserve work, narrow the affected graph, and refuse to pretend certainty.</p></div>
-      <div class="state-machine">
-        <article class="state"><h3>Stale evidence</h3><p>An observed path, basis identity, or validity key changed.</p><span class="next"><strong>Next:</strong> invalidate the affected evidence and descendants; refresh only what depends on it.</span></article>
-        <article class="state"><h3>Claim conflict</h3><p>Weaver or scheduler sees overlapping live ownership.</p><span class="next"><strong>Next:</strong> zero-edit blocked report; continue disjoint work; requeue for serialized fallback. Never rerun the claim.</span></article>
-        <article class="state"><h3>Writer drift</h3><p>Unknown path, ownership drift, cross-scope need, or external workspace change.</p><span class="next"><strong>Next:</strong> freeze affected work and drain. If containment is unknown, freeze all refill and reconcile without reset/revert.</span></article>
-        <article class="state"><h3>Failed check</h3><p>A Verify shard fails or candidate validity changes.</p><span class="next"><strong>Next:</strong> block judgment/completion; diagnose within scope. Material fixes use one serialized remediation writer and a new candidate.</span></article>
-        <article class="state"><h3>Identity mismatch</h3><p>Final identity/state differs from the judged candidate.</p><span class="next"><strong>Next:</strong> invalidate all shards and judgment; establish, verify, and judge a fresh candidate.</span></article>
-        <article class="state"><h3>Scheduler refusal</h3><p>Bad/replayed token, stale revision, lane/target mismatch, conflict, expiry, budget, or capability issue.</p><span class="next"><strong>Next:</strong> <code>observe</code> records incident and fails open; <code>enforce</code> fails closed and Task does not run.</span></article>
-        <article class="state"><h3>External claim</h3><p>A necessary scope is held by an unrelated live session.</p><span class="next"><strong>Next:</strong> exhaust independent work, preserve completed work, report blocked. Weaver alone does not trigger a user question.</span></article>
-        <article class="state"><h3>Post ambiguity</h3><p>The one GitHub POST does not have a clear outcome.</p><span class="next"><strong>Next:</strong> never retry or fall back. Report ambiguity; another attempt needs a new explicit request and fresh review.</span></article>
-      </div>
-    </section>
-
-    <section id="boundaries" class="guide-section" data-search="policy mechanism limitations non-goals sandbox proof system process local dashboard skills weaver worktrees">
-      <div class="section-head"><div><span class="section-number">14 / 16</span><h2>Policy is not mechanism</h2></div><p class="section-intro">The strongest way to understand Naru is to ask: “Who merely advises, and what actually enforces?”</p></div>
-      <div class="compare">
-        <article><span class="tag advisory">Policy / advice</span><h3>Shapes decisions</h3><ul class="plain-list"><li>Four native skill texts</li><li>Agent prompts and adaptive loop</li><li>Packets, ownership contracts, baseline rules</li><li>Evidence interpretation, stop/refill policy</li><li>Weaver coordination conventions</li></ul><p>These are essential workflow discipline, but cannot technically prove compliance on their own.</p></article>
-        <article><span class="tag gate">Mechanism</span><h3>Actually gates a surface</h3><ul class="plain-list"><li>OpenCode tool and Task permission maps</li><li>Native child-session and cancellation behavior</li><li>Protocol 3 Task-hook admission in one process</li><li>Validated custom tool input schemas</li><li>Worktree tool path/lifecycle checks</li></ul><p>Each mechanism is narrow. A passing gate says only that its declared conditions passed.</p></article>
-      </div>
-      <h3 style="margin-top:2rem">Explicit limitations & non-goals</h3>
-      <div class="grid-3"><article class="card"><h3>Not a sandbox</h3><p>No sandboxing of repository code, package scripts, shell commands, tools, providers, installed plugins, or unrelated external workspace mutation.</p></article><article class="card"><h3>Not a proof system</h3><p>Tokens, report IDs, artifact digests, and model aliases correlate records; they do not prove reports are truthful, source is unchanged, or work stayed in scope.</p></article><article class="card"><h3>Not a durable engine</h3><p>The adaptive plan is prompt-local. Scheduler state is non-durable and process-local; no cross-process coordination or authoritative background completion.</p></article><article class="card"><h3>Not a global capacity meter</h3><p>Concurrency numbers are local ceilings, not provider/global hard caps, guaranteed throughput, or a command to use every slot.</p></article><article class="card"><h3>Not automatic authorization</h3><p>No implied permission for edits, dependency changes, Git mutation, migrations, database writes, posting, deployment, secrets, or destructive actions.</p></article><article class="card"><h3>Not nested autonomy</h3><p>Current topology is one selected root orchestrator → seven leaf minions at depth 1. Children cannot spawn grandchildren or call the scheduler.</p></article></div>
-      <p class="callout violet"><strong>Division of responsibility:</strong> OpenCode owns task/session/tool/worktree execution and permission evaluation. Naru owns planning, evidence interpretation, adaptive refill/stop, verification coverage, and judgment. Weaver remains external coordination infrastructure.</p>
-    </section>
-
-    <section id="glossary" class="guide-section" data-search="glossary PM translation misconception terms">
-      <div class="section-head"><div><span class="section-number">15 / 16</span><h2>Translate the machinery</h2></div><p class="section-intro">Search a technical term. Open each item for the PM translation and the misconception it prevents.</p></div>
-      <div class="glossary-controls"><label for="glossary-search" class="micro">Filter glossary</label><input id="glossary-search" type="search" placeholder="Try candidate, claim, quiescent, artifact…"></div>
-      <div class="glossary" id="glossary-list">
-        <details data-glossary><summary>Admission token <span>one-use boarding pass</span></summary><p>A bounded Protocol 3 permit tied to one item, lane, target, revision, and peer set. <strong>Misconception:</strong> it correlates admission; it does not prove the child behaved correctly.</p></details>
-        <details data-glossary><summary>Artifact <span>typed workflow receipt</span></summary><p>A schema-validated declaration for evidence, terminal work, candidate, shard, judgment, transition, or gate. It is correlation data, not truth by itself.</p></details>
-        <details data-glossary><summary>Baseline <span>sealed “before” photograph</span></summary><p>An immutable identity/status/diff snapshot used to distinguish pre-existing work from cohort changes. It must not move as peers edit.</p></details>
-        <details data-glossary><summary>Candidate <span>the exact version under examination</span></summary><p>A writer-free identity and full state snapshot. Any later status or content change makes it a different candidate.</p></details>
-        <details data-glossary><summary>Claim <span>exclusive ownership reservation</span></summary><p>An exact path, contract, artifact, config, or runtime resource a writer owns. Separate worktrees do not make overlapping logical claims safe.</p></details>
-        <details data-glossary><summary>Cohort <span>overlapping safe work wave</span></summary><p>Independent writers sharing one immutable cohort baseline. It rolls as slots free; it is not a fixed batch.</p></details>
-        <details data-glossary><summary>Containment <span>did changes stay inside the fence?</span></summary><p>The changed-path delta must fit the union of approved ownership. Unknown paths or drift block the candidate.</p></details>
-        <details data-glossary><summary>DAG <span>dependency map</span></summary><p>A directed acyclic graph saying what can start now and what waits. It prevents dependent work from pretending to be parallel.</p></details>
-        <details data-glossary><summary>Dry run <span>report without outward mutation</span></summary><p>For review, findings are returned locally and nothing is posted. A PR link alone never authorizes posting.</p></details>
-        <details data-glossary><summary>Final equality <span>tamper-evident last look</span></summary><p>After Judge, identity and state are recaptured and must exactly match the judged candidate before completion or delivery.</p></details>
-        <details data-glossary><summary>Floor <span>minimum model capability</span></summary><p>Architect and Judge cannot be routed below Sol. A floor is not a claim that Sol is always chosen for every other role.</p></details>
-        <details data-glossary><summary>Generated alias <span>internal model-specific doorway</span></summary><p>A hidden route that keeps a canonical role’s prompt/permissions but selects another model profile. Not a stable public integration target.</p></details>
-        <details data-glossary><summary>Lane <span>read-only or writer track</span></summary><p>Protocol 3 tokens bind to a lane. Implement alone uses writer; every other minion uses read-only even when Debug/Verify run checks.</p></details>
-        <details data-glossary><summary>Plan revision <span>version of the current decision map</span></summary><p>Increases only on material evidence change. It never recaptures or redefines immutable baselines.</p></details>
-        <details data-glossary><summary>Quiescence <span>all pens down</span></summary><p>No writer is active. Only then may Naru capture the final candidate, run final Verify shards, or dispatch Judge.</p></details>
-        <details data-glossary><summary>Shard <span>one bounded verification assignment</span></summary><p>A read-only check slice tied to the exact candidate. All declared checks and work items need a complete manifest of valid shards.</p></details>
-        <details data-glossary><summary>Terminal report <span>worker has stopped, not project is done</span></summary><p>A child disposition: terminal, blocked, failed, cancelled, etc. A contained terminal writer can unlock provisional dependencies but does not complete the run.</p></details>
-        <details data-glossary><summary>Turbo <span>useful capacity ceiling</span></summary><p>Up to 50 combined active children when independent work has concrete value. It is not forced fan-out, a speed SLA, or permission expansion.</p></details>
-        <details data-glossary><summary>Weaver <span>external ownership noticeboard</span></summary><p>Live cross-agent task/claim coordination used by writers. It is outside Naru’s scheduler and its conflict is a serialization signal, not user authorization.</p></details>
-        <details data-glossary><summary>Worktree <span>isolated Git working directory</span></summary><p>A Naru-owned detached workspace for one writer, with controlled integration/recovery. It is not a general security sandbox.</p></details>
-      </div>
-      <div class="callout warning" style="margin-top:1.2rem"><strong>Common misconception bundle:</strong> skills do not grant tools; generated aliases are not extra agents to integrate against; dashboard counts are not global; scheduler correlation is not proof; worktrees are not sandboxes; turbo does not demand fifty children; and a terminal writer is not completion.</div>
-    </section>
-
-    <section id="sources" class="guide-section" data-search="source trail snapshot HEAD files observed dirty migration unverified">
-      <div class="section-head"><div><span class="section-number">16 / 16</span><h2>Source trail & snapshot</h2></div><p class="section-intro">This guide was synthesized from repository source, with runtime claims cross-checked against implementation and canonical docs rather than inferred from names.</p></div>
       <div class="grid-2">
-        <article class="card accent-violet"><span class="meta">Observed committed identity</span><h3>HEAD</h3><p><code>14746d45c28ec5dd38fa3be3eff1de200778a8c0</code></p><p class="micro">Branch <code>main</code>. This identifies committed source only; it does not include uncommitted worktree state.</p></article>
-        <article class="card accent-amber"><span class="meta">Observation caveat</span><h3>Concurrent dirty migration</h3><p>The worktree already contained modified/untracked TypeScript migration, CI, package, config, source, and test paths. This guide treated <code>src/</code> as an in-progress source/build migration only where source-backed.</p><p class="micro"><strong>No build, candidate assembly, typecheck, or project test was run.</strong> Candidate consistency or migration completeness is not claimed.</p></article>
+        <div>
+          <span class="block-title">naru-runtime.json · "models" block</span>
+          <pre class="block">{
+  "models": {
+    <span class="a">"light"</span>: {
+      "chain": ["opencode/glm-5-free",
+                "opencode/minimax-m3-free"],
+      "use": "wide fan-out, mechanical lookups,
+              simple reads"
+    },
+    <span class="a">"standard"</span>: {
+      "chain": ["openai/gpt-5.6-terra@medium"],
+      "use": "ordinary investigation, edits, checks"
+    },
+    <span class="a">"deep"</span>: {
+      "chain": ["openai/gpt-5.6-sol@high"],
+      "use": "architecture, security, data models,
+              final review, tricky edits"
+    }
+  }
+}</pre>
+        </div>
+        <div class="card">
+          <p class="meta">How a dispatch resolves</p>
+          <ul class="plain-list">
+            <li><b>Class → chain.</b> Each class maps to an ordered chain of up to 4 models, written <code>provider/model@effort</code>. Up to 16 classes; names and uses are yours.</li>
+            <li><b>Fall-through.</b> Providers you aren't authenticated with are skipped; a failed attempt falls to the next chain entry; if every model fails, the dispatch <b>inherits the session model</b> rather than hard-failing.</li>
+            <li><b>Effort override.</b> <code>effort</code> (e.g. <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>) overrides the chain default for that one dispatch. Escalate for consequence, not by default.</li>
+            <li><b>Permissions travel by name.</b> The child agent is bound <i>by name</i>, so OpenCode applies its frontmatter itself. Session permissions passed at create are <b>deny-only</b> (task, naru-dispatch, todowrite, question) — a dispatch can tighten a child, never loosen it.</li>
+            <li><b>Orchestrator-only.</b> The tool refuses any caller other than the <code>naru-orchestrator</code> identity, and only dispatches <code>naru-reader</code>, <code>naru-runner</code>, <code>naru-writer</code>.</li>
+            <li><b>Fails soft.</b> A missing or malformed <code>naru-runtime.json</code> never takes the tool down — dispatches simply inherit until it's fixed.</li>
+          </ul>
+        </div>
       </div>
-      <h3 style="margin-top:2rem">Canonical files and categories consulted</h3>
-      <ul class="source-list">
-        <li><code>README.md</code> — public entry points, defaults, safety, routing, scheduler, dashboard, layout.</li>
-        <li><code>agents/naru-orchestrator.md</code> — authorization, adaptive loop, Protocols 2/3, worktrees, review lane.</li>
-        <li><code>agents/naru-minion-{scout,investigate,architect,implement,debug,verify,judge}.md</code> — exact roles, tools, reports.</li>
-        <li><code>skills/naru-{plan,impact,triage,review}/SKILL.md</code> — advisory contracts and stopping points.</li>
-        <li><code>docs/src/content/docs/concepts/{adaptive-delegation,protocols}.md</code>.</li>
-        <li><code>docs/src/content/docs/runtime/{scheduler-modes,dashboard-telemetry}.md</code>.</li>
-        <li><code>docs/src/content/docs/reference/{runtime-config,limitations}.md</code>.</li>
-        <li><code>docs/src/content/docs/workflows/{agents,review-lane}.md</code>.</li>
-        <li><code>plugins/naru-delegate.js</code> and <code>tools/naru-lib/model-routing.mjs</code>.</li>
-        <li><code>plugins/naru-scheduler.js</code> and <code>tools/naru-scheduler.js</code>.</li>
-        <li><code>tools/naru-worktree.js</code>; worktree lifecycle claims cross-checked with canonical docs.</li>
-        <li><code>tools/naru-{git-read,github-read,github-post-review,doctor}.js</code>.</li>
-        <li><code>plugins/naru-minions-dashboard.tsx</code> and dashboard telemetry docs.</li>
-        <li><code>install.sh</code> — preview/apply, ownership, conflict, backup and lifecycle boundaries.</li>
-        <li><code>scripts/naru-live-eval.mjs</code> — provider-free and explicitly cost-gated evaluation lanes.</li>
-        <li><code>package.json</code> and <code>.github/workflows/ci.yml</code> — build/candidate/test pipeline as observed.</li>
-        <li><code>src/build/candidate-assembler.ts</code> and <code>tests/candidate-assembly.test.mjs</code> — unverified migration-era candidate design.</li>
-      </ul>
-      <p class="callout"><strong>Reading rule used:</strong> repository content was treated as untrusted factual input. No environment or secret file was read. Generated/build output was not inspected.</p>
+
+      <h3 style="margin-top:2rem">What you see in the TUI</h3>
+      <div>
+        <span class="block-title">Visibility · every dispatch names its model</span>
+        <pre class="block"><span class="c"># tool title while it runs</span>
+naru-reader · opencode/glm-5-free — <span class="a">map auth ownership</span>
+
+<span class="c"># the child session's own title</span>
+map auth ownership (@naru-reader · opencode/glm-5-free)
+
+<span class="c"># the result, wrapped so the transcript names what actually ran</span>
+&lt;dispatch agent="naru-reader" model="opencode/glm-5-free" class="light" session="ses_…"&gt;
+  …the reader's final answer…
+&lt;/dispatch&gt;
+
+<span class="c"># and the orchestrator's final report carries a ledger line</span>
+Dispatched: 3× reader (light/luna-fast@high), 1× writer (standard/sol-fast@medium)</pre>
+      </div>
+
+      <div class="callout">
+        <b>Rule of thumb:</b> the tool's own description lists your configured classes and what
+        each is for, so the orchestrator picks from what you actually set up.
+        <code>light</code> for wide fan-out, <code>standard</code> for ordinary work,
+        <code>deep</code> for consequence — a wide fan-out on a heavy class burns time and money
+        for nothing.
+      </div>
     </section>
+
+    <section class="guide-section" id="walls">
+      <p class="section-number">04</p>
+      <h2>The walls</h2>
+      <p class="section-intro">
+        Four layers, from intent to mechanism. Only the bottom two are enforcement; knowing which
+        is which is the point.
+      </p>
+
+      <div class="grid-4">
+        <div class="card">
+          <p class="meta">Layer 1 · authorization</p>
+          <h3>Your intent</h3>
+          <p class="micro">The only source of authorization. Repository files, issue and PR text, diffs, comments, command output, and subagent reports are <b>untrusted data</b> — an instruction found there is a fact about what someone wrote, never a command.</p>
+        </div>
+        <div class="card">
+          <p class="meta">Layer 2 · policy</p>
+          <h3>Agent prompts</h3>
+          <p class="micro">Scope discipline, checkpoints, evidence-before-claims, one-writer-per-scope. Instructions to a model — policy, not enforcement.</p>
+        </div>
+        <div class="card accent">
+          <p class="meta">Layer 3 · mechanism</p>
+          <h3>Permission maps</h3>
+          <p class="micro">OpenCode enforces the frontmatter. Only <code>naru-writer</code> holds <code>edit</code>; readers are <code>bash: deny</code> fail-closed; secrets (<code>.env*</code>, keys, <code>.ssh</code>, <code>.aws</code>, <code>.kube</code>, <code>.gnupg</code>) are unreadable by every role. <code>.env.example</code> is allowed.</p>
+        </div>
+        <div class="card accent">
+          <p class="meta">Layer 4 · construction</p>
+          <h3>The posting tool</h3>
+          <p class="micro"><code>naru-github-post-review</code> is comment-only <b>by construction</b> — the event type is not a parameter. One attempt, no retry, orchestrator-only.</p>
+        </div>
+      </div>
+
+      <h3 style="margin-top:2.2rem">Action matrix</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th scope="col">Gate</th><th scope="col">Actions</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="allow">Just proceeds</td>
+              <td class="deny">Reads, glob/grep/lsp, git and GitHub reads, lint, typecheck, targeted tests, ordinary local builds, in-scope edits by the writer. Routine, in-scope work needs no checkpoint.</td>
+            </tr>
+            <tr>
+              <td class="hot">Explicit current request</td>
+              <td class="deny">Commit, push, PR create or update, posting a review. Your ask <i>is</i> the authorization — neither reconfirmed nor assumed. A PR link is never posting authorization; review is dry-run by default.</td>
+            </tr>
+            <tr>
+              <td class="hot">One named checkpoint</td>
+              <td class="deny">Destructive or irreversible operations, history rewrite or force push, hook bypass, production deploys, migrations or persistent database writes, secret access, billing or security-posture changes, unrequested dependency changes, material scope expansion. Stops once, naming the exact action.</td>
+            </tr>
+            <tr>
+              <td class="deny" style="color:var(--text);font-weight:700">Mechanically impossible</td>
+              <td class="deny">Edits by any role but the writer. A shell for readers. Reading secret paths. Approving, requesting changes on, or merging a PR through Naru. Subagents spawning children.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid-2" style="margin-top:1.6rem">
+        <div class="card">
+          <p class="meta">Concurrency wall</p>
+          <h3>One writer per logical scope</h3>
+          <p class="micro">Two writers must never be able to touch the same file, contract, config, lockfile, or generated artifact — overlap serializes, always. Where Weaver is available, writers claim their exact paths before the first edit and call <code>weaver done</code> after. A claim conflict is a <b>scheduling signal</b>: the orchestrator requeues and keeps other work moving. It never prompts you about it, and never edits over a live peer.</p>
+        </div>
+        <div class="card">
+          <p class="meta">Review wall</p>
+          <h3>Dry-run by default</h3>
+          <p class="micro">A review returns findings and posts nothing. Posting takes an explicit ask in the current message, a fresh review against the current head, and exactly one comment-only attempt. An ambiguous POST is reported as ambiguous — never retried, never worked around with another mechanism.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="guide-section" id="tools">
+      <p class="section-number">05</p>
+      <h2>Five tools</h2>
+      <p class="section-intro">
+        Custom OpenCode tools, each bounded on purpose. GitHub access needs an authenticated
+        <code>gh</code>; everything else is local.
+      </p>
+
+      <div class="grid-3">
+        <div class="card">
+          <p class="meta">read-only · all roles</p>
+          <h3>naru-git-read</h3>
+          <p class="micro">Bounded read-only git with secret-path filtering: <code>repository</code>, <code>status</code>, <code>diff</code>, <code>log</code>, <code>file</code>, <code>grep</code>, <code>merge-base</code>. Runners prefer it over raw git so the filtering stays in force.</p>
+        </div>
+        <div class="card">
+          <p class="meta">read-only · all roles</p>
+          <h3>naru-github-read</h3>
+          <p class="micro">Read-only GitHub: <code>resolve</code>, <code>issue</code>, <code>pull</code>, <code>source</code>. Pull snapshots are pinned to exact 40-hex SHAs, so a review is of a specific state, not a moving head.</p>
+        </div>
+        <div class="card accent">
+          <p class="meta">orchestrator only</p>
+          <h3>naru-github-post-review</h3>
+          <p class="micro">Hard-coded <code>COMMENT</code> event — cannot approve, request changes, or merge. One attempt, no retry, dedupe marker. Custom agents and subagents cannot post through Naru at all.</p>
+        </div>
+        <div class="card accent">
+          <p class="meta">orchestrator only</p>
+          <h3>naru-worktree</h3>
+          <p class="micro">Isolated writer worktrees with path-contained integration: <code>prepare_run</code>, <code>recover_run</code>, <code>prepare_item</code>, <code>integrate_item</code>, <code>snapshot</code>, <code>finalize_run</code>, <code>cleanup_run</code>. Requires a clean repository; if the workspace is dirty or isolation is unavailable, writers silently fall back to shared mode. Writers never commit, merge, or remove worktrees — the orchestrator owns integration.</p>
+        </div>
+        <div class="card">
+          <p class="meta">local · provider-free</p>
+          <h3>naru-doctor</h3>
+          <p class="micro">Read-only local install and configuration health report. Contacts nothing. <code>node tools/naru-doctor.js --json</code>, or <code>naru doctor</code> from the CLI.</p>
+        </div>
+        <div class="card">
+          <p class="meta">plugin tool · orchestrator only</p>
+          <h3>naru-dispatch</h3>
+          <p class="micro">Per-dispatch model classes — the plugin's one tool, covered in <a href="#dispatch">section 03</a>. Deny-only child permissions, depth-1 topology preserved.</p>
+        </div>
+      </div>
+
+      <details>
+        <summary>Runtime configuration — the whole surface</summary>
+        <div class="details-body">
+          <p><code>naru-runtime.json</code> is optional; defaults match the shipped example exactly. Two blocks: <code>implementation</code> (how writers use the workspace) and <code>models</code> (dispatch classes, section 03).</p>
+          <pre class="block">{
+  "schemaVersion": 1,
+  "implementation": {
+    "cleanWorkspaceRequired": true,   <span class="c">// must be true — isolation needs a clean repo</span>
+    "maxConcurrentWriters": 50,       <span class="c">// 1–50; a runaway brake, not a target</span>
+    "workspaceMode": "auto"           <span class="c">// auto | shared | worktree</span>
+  },
+  "models": { … }                     <span class="c">// see section 03</span>
+}</pre>
+          <p>The file must be a regular file (not a symlink), at most 64 KiB, valid JSON with <code>schemaVersion: 1</code>. Unknown implementation fields are rejected, not ignored, and an invalid file is an error — <code>naru-doctor</code> reports it as <code>invalid-runtime-config</code>.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Skills — what each returns</summary>
+        <div class="details-body">
+          <ul class="plain-list">
+            <li><b><code>naru-plan</code></b> — an advisory plan or implementation approach.</li>
+            <li><b><code>naru-impact</code></b> — an advisory blast-radius / compatibility assessment.</li>
+            <li><b><code>naru-triage</code></b> — an advisory bug or failure diagnosis.</li>
+            <li><b><code>naru-review</code></b> — a dry-run review of a PR, branch, diff, or file. Never posted.</li>
+          </ul>
+          <p style="margin-top:.7rem">Ask naturally, or name one directly. They are not slash commands, run no fixed workflow, and grant nothing — an agent's permission map is the only thing that constrains what it does with the guidance.</p>
+        </div>
+      </details>
+    </section>
+
+    <section class="guide-section" id="install">
+      <p class="section-number">06</p>
+      <h2>Install</h2>
+      <p class="section-intro">
+        Requirements: OpenCode ≥ 1.18.4 and Node 24. Preview-before-mutation is the product's
+        identity: every action that changes your machine shows exactly what it will do first.
+      </p>
+
+      <div class="grid-2">
+        <div>
+          <span class="block-title">Primary path · curl bootstrap</span>
+          <pre class="block">curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstrap.sh | sh
+naru install</pre>
+          <p class="micro" style="margin-top:.8rem">
+            The bootstrap downloads a <b>checksum-verified release</b> into <code>~/.naru</code>
+            and installs exactly one file — the <code>naru</code> command. It does not touch your
+            OpenCode configuration; <code>naru install</code> does, and it previews every change
+            and asks before applying anything. Restart OpenCode afterwards and pick
+            <code>naru-orchestrator</code> in the agent picker (or <code>opencode --agent
+            naru-orchestrator</code>).
+          </p>
+        </div>
+        <div class="card">
+          <p class="meta">The naru CLI</p>
+          <ul class="plain-list">
+            <li><code>naru install</code> — install into OpenCode; previews, then asks</li>
+            <li><code>naru upgrade</code> — fetch the latest release, then install it</li>
+            <li><code>naru doctor</code> — local install and configuration health</li>
+            <li><code>naru uninstall</code> — preview removal, print the exact confirm command</li>
+            <li><code>naru rollback ID</code> — restore a previous install transaction</li>
+            <li><code>naru version</code> — installed vs. latest available</li>
+          </ul>
+        </div>
+      </div>
+
+      <details>
+        <summary>Alternative: clone + install.sh (what contributors use)</summary>
+        <div class="details-body">
+          <pre class="block">git clone https://github.com/sean35mm/naru-opencode.git
+cd naru-opencode
+sh install.sh --preview   <span class="c"># the default; mutates nothing</span>
+sh install.sh --apply     <span class="c"># the only mutation boundary</span></pre>
+          <p>Default target <code>~/.config/opencode</code>; <code>--project</code> installs into <code>.opencode</code>, <code>--dir PATH</code> anywhere else. Markdown is symlinked so <code>git pull</code> keeps it current (<code>--copy</code> pins a snapshot — what release installs do). Installs write a <code>.naru-install.json</code> ownership manifest, skip unchanged assets, and back up only what they replace; <code>--uninstall</code> and <code>--rollback ID</code> also preview by default and require <code>--apply</code> plus a printed confirmation token.</p>
+        </div>
+      </details>
+
+      <div class="callout">
+        <b>Health check any time:</b> <code>naru doctor</code> or
+        <code>node tools/naru-doctor.js --json</code> — read-only, provider-free, contacts nothing.
+      </div>
+    </section>
+
+    <section class="guide-section" id="limits">
+      <p class="section-number">07</p>
+      <h2>Honest limits</h2>
+      <p class="section-intro">
+        Naru constrains Naru's own agents; it does not constrain the machine. Knowing where the
+        walls end is part of trusting them.
+      </p>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Not a sandbox</h3>
+          <p class="micro">It does not contain repository code, package scripts, or shell commands. A runner or writer executing your test suite runs whatever that suite runs.</p>
+        </div>
+        <div class="card">
+          <h3>Not a proof system</h3>
+          <p class="micro">No formal guarantees. It is a permission map, a comment-only tool, and careful defaults — not verification. Not durable across processes, and not a global capacity meter.</p>
+        </div>
+        <div class="card">
+          <h3>Prompt policy is not enforcement</h3>
+          <p class="micro">Checkpoints, scope discipline, and evidence requirements are instructions to a model. Only the permission maps, the comment-only posting tool, and worktree path containment are mechanical.</p>
+        </div>
+        <div class="card">
+          <h3>Model availability is attempt-based</h3>
+          <p class="micro">Dispatch skips providers you aren't authenticated with and falls through its chain on failure, ending at inherit. It attempts; it does not guarantee a specific model ran — which is why every result names the model that actually did.</p>
+        </div>
+        <div class="card">
+          <h3>Foreground-only dispatch</h3>
+          <p class="micro">A dispatch runs its child to completion inside the tool call. Concurrency comes from issuing several dispatches in one turn, not from a background scheduler — there isn't one.</p>
+        </div>
+        <div class="card">
+          <h3>Isolation is containment, not protection</h3>
+          <p class="micro">Isolated worktrees keep writers out of each other's way and require a clean repository. They do not protect against unrelated external mutation of the workspace.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="guide-section" id="glossary">
+      <p class="section-number">08</p>
+      <h2>Small glossary</h2>
+      <dl class="glossary">
+        <dt>orchestrator</dt>
+        <dd>The one visible, primary agent. Plans and delegates; cannot edit or run bash.</dd>
+        <dt>depth-1 topology</dt>
+        <dd>One root, leaf subagents. Every subagent has <code>task: deny</code>; grandchildren cannot exist. Breadth is unlimited.</dd>
+        <dt>dispatch</dt>
+        <dd>One subagent run via the <code>naru-dispatch</code> tool, on a chosen model class, foreground, concurrent within a turn.</dd>
+        <dt>model class</dt>
+        <dd>A named entry in <code>naru-runtime.json</code>'s <code>models</code> block: a short <code>use</code> plus an ordered <code>chain</code> of up to four <code>provider/model@effort</code> entries.</dd>
+        <dt>effort</dt>
+        <dd>A reasoning-effort token (<code>low</code> … <code>max</code>) attached to a chain entry or overridden per dispatch.</dd>
+        <dt>the edit wall</dt>
+        <dd>Only <code>naru-writer</code>'s frontmatter allows <code>edit</code>/<code>apply_patch</code>. OpenCode enforces it; no prose can change it.</dd>
+        <dt>scope / claim</dt>
+        <dd>The exact paths a writer is assigned. Claimed in Weaver before the first edit; conflicts requeue rather than prompt.</dd>
+        <dt>run / item</dt>
+        <dd>The units of <code>naru-worktree</code>: one run holds isolated per-writer items that the orchestrator integrates back.</dd>
+        <dt>dry-run review</dt>
+        <dd>The default review outcome: findings returned, nothing posted. Posting is a separate, explicitly requested act.</dd>
+        <dt>checkpoint</dt>
+        <dd>One stop naming the exact action, before anything destructive, irreversible, or scope-expanding.</dd>
+        <dt>lead, not proof</dt>
+        <dd>The trust level of the code graph. It says where to look; source code says what is true.</dd>
+        <dt>fail-closed</dt>
+        <dd>Readers with <code>bash: deny</code> and <code>external_directory: deny</code> — when in doubt, the answer is already no.</dd>
+      </dl>
+    </section>
+
   </main>
 
-  <footer>
-    <span>Generated from repository source, not a runtime status dashboard.</span>
-    <span>Standalone offline artifact · no network, external assets, or sibling-file dependencies.</span>
+  <footer class="site-footer">
+    <p>Generated from repository source — agent frontmatter, tool code, and docs are the ground truth this page mirrors.</p>
+    <p>Standalone offline artifact: one file, inline CSS and JS, no external assets. Naru is built by Naru Labs · MIT.</p>
   </footer>
 
   <script>
-    (() => {
-      'use strict'
+    (function () {
+      'use strict';
 
-      const body = document.body
-      const safeStorage = {
-        get(key) { try { return localStorage.getItem(key) } catch { return null } },
-        set(key, value) { try { localStorage.setItem(key, value) } catch {} },
+      /* Agent tabs — roving tabindex, arrow keys, Home/End. */
+      var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab-button'));
+      var panels = tabs.map(function (t) { return document.getElementById(t.getAttribute('aria-controls')); });
+
+      function selectTab(index) {
+        tabs.forEach(function (tab, i) {
+          var selected = i === index;
+          tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+          tab.tabIndex = selected ? 0 : -1;
+          panels[i].hidden = !selected;
+        });
       }
 
-      const detailRadios = [...document.querySelectorAll('input[name="detail"]')]
-      const setDetail = (value) => {
-        body.classList.remove('detail-pm', 'detail-technical', 'detail-both')
-        body.classList.add(`detail-${value}`)
-        detailRadios.forEach((radio) => { radio.checked = radio.value === value })
-        safeStorage.set('naru-guide-detail', value)
+      tabs.forEach(function (tab, i) {
+        tab.addEventListener('click', function () { selectTab(i); });
+        tab.addEventListener('keydown', function (e) {
+          var next = null;
+          if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (i + 1) % tabs.length;
+          else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (i - 1 + tabs.length) % tabs.length;
+          else if (e.key === 'Home') next = 0;
+          else if (e.key === 'End') next = tabs.length - 1;
+          if (next !== null) {
+            e.preventDefault();
+            selectTab(next);
+            tabs[next].focus();
+          }
+        });
+      });
+      if (tabs.length) selectTab(0);
+
+      /* Search — hides sections without a match, reports the count. */
+      var input = document.getElementById('guide-search');
+      var count = document.getElementById('search-count');
+      var sections = Array.prototype.slice.call(document.querySelectorAll('section.guide-section'));
+      var haystacks = sections.map(function (s) { return s.textContent.toLowerCase(); });
+
+      function applySearch() {
+        var q = input.value.trim().toLowerCase();
+        if (!q) {
+          sections.forEach(function (s) { s.classList.remove('search-hidden'); });
+          count.textContent = '';
+          return;
+        }
+        var hits = 0;
+        sections.forEach(function (s, i) {
+          var hit = haystacks[i].indexOf(q) !== -1;
+          s.classList.toggle('search-hidden', !hit);
+          if (hit) hits += 1;
+        });
+        count.textContent = hits + '/' + sections.length;
       }
-      const storedDetail = safeStorage.get('naru-guide-detail')
-      if (['pm', 'technical', 'both'].includes(storedDetail)) setDetail(storedDetail)
-      detailRadios.forEach((radio) => radio.addEventListener('change', () => setDetail(radio.value)))
 
-      const journeyButtons = [...document.querySelectorAll('[data-journey-button]')]
-      const journeyPanels = [...document.querySelectorAll('[data-journey-panel]')]
-      const chooseJourney = (name) => {
-        journeyButtons.forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.journeyButton === name)))
-        journeyPanels.forEach((panel) => panel.classList.toggle('active', panel.dataset.journeyPanel === name))
-      }
-      journeyButtons.forEach((button) => button.addEventListener('click', () => chooseJourney(button.dataset.journeyButton)))
+      input.addEventListener('input', applySearch);
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { input.value = ''; applySearch(); }
+      });
 
-      const modeButtons = [...document.querySelectorAll('[data-mode]')]
-      modeButtons.forEach((button) => button.addEventListener('click', () => {
-        const selected = button.dataset.mode
-        modeButtons.forEach((candidate) => candidate.setAttribute('aria-pressed', String(candidate === button)))
-        document.querySelectorAll('[data-mode-card]').forEach((card) => card.classList.toggle('is-mode-active', card.dataset.modeCard === selected))
-      }))
-
-      const tabButtons = [...document.querySelectorAll('[data-tab]')]
-      const tabPanels = [...document.querySelectorAll('[data-tab-panel]')]
-      const selectTab = (name, focus = false) => {
-        tabButtons.forEach((button) => {
-          const selected = button.dataset.tab === name
-          button.setAttribute('aria-selected', String(selected))
-          button.tabIndex = selected ? 0 : -1
-          if (selected && focus) button.focus()
-        })
-        tabPanels.forEach((panel) => { panel.hidden = panel.dataset.tabPanel !== name })
-      }
-      tabButtons.forEach((button, index) => {
-        button.addEventListener('click', () => selectTab(button.dataset.tab))
-        button.addEventListener('keydown', (event) => {
-          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-          event.preventDefault()
-          let next = index
-          if (event.key === 'ArrowRight') next = (index + 1) % tabButtons.length
-          if (event.key === 'ArrowLeft') next = (index - 1 + tabButtons.length) % tabButtons.length
-          if (event.key === 'Home') next = 0
-          if (event.key === 'End') next = tabButtons.length - 1
-          selectTab(tabButtons[next].dataset.tab, true)
-        })
-      })
-      selectTab('protocol-compare')
-
-      const runtimeText = {
-        off: '<strong>off:</strong> complete Protocol 2 prompt workflow; no scheduler run, journal, token, or admission gate.',
-        observe: '<strong>observe:</strong> Protocol 3 state and checks record typed incidents, then fail open so an otherwise authorized Task may continue. This is observation—not enforcement.',
-        enforce: '<strong>enforce:</strong> Protocol 3 checks fail closed. Invalid capability, marker, token, revision, claim, lane, target, expiry, or budget refuses the Task; Protocol 2 is rejected.',
-      }
-      const runtimeButtons = [...document.querySelectorAll('[data-runtime-mode]')]
-      const runtimeDescription = document.getElementById('runtime-mode-description')
-      runtimeButtons.forEach((button) => button.addEventListener('click', () => {
-        runtimeButtons.forEach((candidate) => candidate.setAttribute('aria-pressed', String(candidate === button)))
-        runtimeDescription.innerHTML = runtimeText[button.dataset.runtimeMode]
-      }))
-
-      const normalize = (value) => value.toLocaleLowerCase().trim()
-      const guideSearch = document.getElementById('guide-search')
-      const sections = [...document.querySelectorAll('.guide-section')]
-      const noResults = document.getElementById('guide-no-results')
-      guideSearch.addEventListener('input', () => {
-        const query = normalize(guideSearch.value)
-        let matches = 0
-        sections.forEach((section) => {
-          const match = !query || normalize(`${section.dataset.search || ''} ${section.textContent}`).includes(query)
-          section.classList.toggle('is-search-match', Boolean(query && match))
-          section.classList.toggle('is-search-dim', Boolean(query && !match))
-          if (match) matches += 1
-        })
-        noResults.classList.toggle('visible', Boolean(query && matches === 0))
-      })
-
-      const tree = document.getElementById('repo-tree')
-      const treeFilter = document.getElementById('tree-filter')
-      const treeGroups = [...tree.querySelectorAll('[data-tree-group]')]
-      const treeItems = [...tree.querySelectorAll('[data-tree-item]')]
-      document.getElementById('tree-expand').addEventListener('click', () => treeGroups.forEach((group) => { group.open = true }))
-      document.getElementById('tree-collapse').addEventListener('click', () => treeGroups.forEach((group, index) => { group.open = index === 0 }))
-      treeFilter.addEventListener('input', () => {
-        const query = normalize(treeFilter.value)
-        treeItems.forEach((item) => { item.hidden = Boolean(query && !normalize(item.textContent).includes(query)) })
-        treeGroups.slice().reverse().forEach((group) => {
-          const visible = [...group.querySelectorAll('[data-tree-item]')].some((item) => !item.hidden)
-          group.classList.toggle('tree-empty', Boolean(query && !visible))
-          if (query && visible) group.open = true
-        })
-      })
-
-      const glossarySearch = document.getElementById('glossary-search')
-      const glossaryItems = [...document.querySelectorAll('[data-glossary]')]
-      glossarySearch.addEventListener('input', () => {
-        const query = normalize(glossarySearch.value)
-        glossaryItems.forEach((item) => {
-          const match = !query || normalize(item.textContent).includes(query)
-          item.hidden = !match
-          if (query && match) item.open = true
-        })
-      })
-    })()
+      /* Section-nav clicks clear an active filter so the target is visible. */
+      document.querySelectorAll('.section-nav a').forEach(function (link) {
+        link.addEventListener('click', function () {
+          if (input.value) { input.value = ''; applySearch(); }
+        });
+      });
+    })();
   </script>
 </body>
 </html>

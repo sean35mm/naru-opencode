@@ -51,7 +51,7 @@ The dotted edge is the important one. Everything in the left group is advisory: 
 - **Not durable.** There is no cross-process coordination, no durable run state, and no authoritative background completion. Planning is prompt-local and disappears with the session.
 - **Not a global capacity meter.** `implementation.maxConcurrentWriters` is a local runaway brake, not a provider, account, or machine-wide cap. Other processes on the same repository are invisible to it.
 - **Not automatic authorization.** Nothing in Naru authorizes edits, dependency changes, Git mutation, migrations, database writes, posting, or deployment. Local changes are the default stop; commit, push, PR, and post happen only on an explicit current request, and irreversible actions get one checkpoint that names the exact action.
-- **Not nested autonomy.** The topology is one root orchestrator with leaf subagents at depth 1. All three subagents are `hidden` and hold `task: deny`, so they cannot spawn children of their own. OpenCode's default `subagent_depth` of `1` is sufficient; Naru never asks for more.
+- **Not nested autonomy.** The topology is one root orchestrator with leaf subagents at depth 1. All three subagents are `hidden` and hold `task: deny`, so they cannot spawn children of their own. `naru-dispatch` does not change this: only the orchestrator may call it, and every child session it creates carries a deny for the tool. OpenCode's default `subagent_depth` of `1` is sufficient; Naru never asks for more.
 
 ## What is actually enforced
 
@@ -71,5 +71,7 @@ Skills grant nothing. `naru-plan`, `naru-impact`, `naru-triage`, and `naru-revie
 **Scope serialization.** One writer per logical scope, and overlapping scopes serialize. Weaver claims are taken before the first edit, and a claim conflict is a scheduling signal rather than a prompt to the user. This orders work; it does not prove that no other process touched the same files.
 
 **Health checks.** `naru-doctor` reports local install and configuration health only. It is provider-free: it does not run a model command, inspect provider authentication, or call a provider.
+
+**Per-dispatch models.** `naru-dispatch` is foreground-only; there is no background mode, and a dispatch occupies its call until the child finishes. Model availability is attempt-based, not verified: a chain entry is skipped only on a definite local auth miss, and everything else is discovered by trying — a misconfigured or unavailable model surfaces as a fallback to the next entry or, when the whole chain fails, as a silent inherit of the parent session model. A dispatch that ran on the parent model is reported, not prevented. The tool exists only where OpenCode loads plugins; with plugin loading disabled, `naru-dispatch` is simply absent, the built-in `task` tool still works, and every subagent inherits the session model.
 
 See [agents](/naru-opencode/workflows/agents/) for the permission map that is enforced, [review lane](/naru-opencode/workflows/review-lane/) for the posting contract, and [runtime configuration](/naru-opencode/reference/runtime-config/) for the small set of knobs that exist.

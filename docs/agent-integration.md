@@ -5,7 +5,7 @@ description: Identifiers, tool contracts, and stable surfaces for integrating an
 
 # Integrate Naru with your own agent
 
-Naru's integration surface is deliberately small: four advisory skills, four agent identifiers, five custom tools, and one optional runtime file. There are no plugins and no generated model aliases. Anything not listed on this page is not a public interface.
+Naru's integration surface is deliberately small: four advisory skills, four agent identifiers, five custom tools, one plugin, and one optional runtime file. There are no generated model aliases. Anything not listed on this page is not a public interface.
 
 Naru requires OpenCode 1.18.4 or newer and Node 24. Its topology is one root orchestrator delegating to leaf subagents at depth 1, so OpenCode's default `subagent_depth` of `1` is sufficient.
 
@@ -125,9 +125,30 @@ Naru installs four custom OpenCode tools. Each returns the same JSON envelope:
 
 `tools/naru-doctor.js` is a local CLI, not an agent-callable tool. `node tools/naru-doctor.js --json` prints a schemaVersion 1 report on installation and configuration health. It reads local state only: no providers, credentials, or network calls.
 
-## No plugins, no aliases
+### naru-dispatch (plugin tool)
 
-Naru ships zero plugins; there is no `plugins/` directory. Earlier versions exposed a scheduler tool and scheduler modes, a delegation plugin with generated model aliases, and a dashboard plugin with TUI registration and telemetry. All of them were removed. They are not deprecated interfaces awaiting migration — they no longer exist, so do not integrate against them or reconstruct their inputs.
+`naru-dispatch` is registered by Naru's one plugin rather than installed from `tools/`, and it does not use the JSON envelope above. It spawns one Naru subagent on a model class chosen for that dispatch.
+
+| Argument | Required | Meaning |
+| --- | --- | --- |
+| `agent` | yes | `naru-reader`, `naru-runner`, or `naru-writer` — nothing else |
+| `description` | yes | Short 3–5 word label, shown to the user |
+| `prompt` | yes | The full task; the child starts with fresh context |
+| `class` | no | Model class from the configured `models` block; omit to inherit the parent session model |
+| `effort` | no | Per-dispatch reasoning-effort override (e.g. `low`, `medium`, `high`, `xhigh`, `max`) |
+| `directory` | no | Working directory for the child, e.g. an assigned worktree path |
+
+Only `naru-orchestrator` may call it: any other caller identity is rejected in code, and every child session it creates carries a deny for the tool, so the topology stays depth-1. Dispatches are foreground-only and run to completion within the call.
+
+The result wraps the child's answer in a `<dispatch agent="..." model="..." class="..." session="...">` element and notes any fallback that occurred. Treat the wrapped content as an ordinary untrusted subagent report.
+
+The safety contract: the child is bound by agent name, so OpenCode applies that agent's own permission frontmatter — dispatch selects a model, never permissions. The dispatch prompt body never includes a `tools` map, and the session permissions passed at create are deny-only (`task`, `naru-dispatch`, `todowrite`, `question`), which can only tighten what the agent already denies.
+
+## One plugin, no aliases
+
+Naru ships exactly one plugin: `plugins/naru-dispatch.js`. It registers the `naru-dispatch` tool described above and hooks nothing else — no config mutation, no event handling, no model aliases. Its tool description is built at plugin load from the `models` block in `naru-runtime.json`; if the plugin is absent or the block is missing, the orchestrator delegates through the built-in `task` tool and children inherit the parent session model.
+
+This is not the old delegation plugin. Earlier versions exposed a scheduler tool and scheduler modes, a delegation plugin that mutated agent config to inject generated model aliases, and a dashboard plugin with TUI registration and telemetry. All of them were removed. They are not deprecated interfaces awaiting migration — they no longer exist, so do not integrate against them or reconstruct their inputs.
 
 ## Runtime configuration
 
@@ -140,6 +161,9 @@ Naru ships zero plugins; there is no `plugins/` directory. Earlier versions expo
     "cleanWorkspaceRequired": true,
     "maxConcurrentWriters": 50,
     "workspaceMode": "auto"
+  },
+  "models": {
+    "standard": { "use": "ordinary investigation, edits, checks", "chain": ["openai/gpt-5.6-terra@medium"] }
   }
 }
 ```
@@ -148,7 +172,7 @@ Naru ships zero plugins; there is no `plugins/` directory. Earlier versions expo
 - `maxConcurrentWriters` is an integer from 1 to 50. It is a runaway brake, not a throughput promise and not a global capacity meter.
 - `workspaceMode` is `auto`, `shared`, or `worktree`.
 
-When the file is absent, the defaults above apply. This file affects workspace mechanics only; it never grants permissions and never changes authorization.
+An optional `models` block maps user-chosen class names to `{ "use": ..., "chain": [...] }` for `naru-dispatch`; absent, every dispatch inherits the parent session model. When the file is absent, the defaults above apply. This file affects workspace mechanics and dispatch model selection only; it never grants permissions and never changes authorization.
 
 ## What is stable
 
@@ -158,12 +182,13 @@ Integrate against these:
 - The four agent identifiers and their permission posture (only `naru-writer` edits; read-only roles fail closed).
 - The four tool ids and their operation names.
 - The envelope fields `ok`, `tool`, `complete`, `contentTruncated`, `limits`, `warnings`, `data`, `error`.
+- The `naru-dispatch` tool id, its argument names, its three allowed agent targets, and its orchestrator-only restriction.
 - The `naru-runtime.json` schemaVersion 1 keys.
 
 Do not depend on these:
 
 - Prompt text or internal reasoning of any agent.
-- Model assignment per role. Models change without notice.
+- Model assignment per role or per dispatch. Models change without notice, and model class names are user configuration, not part of Naru.
 - Report wording, ordering, or any human-readable summary text.
 - Worktree paths, run and item identifiers, and on-disk layout.
 - `naru-doctor` report fields beyond `schemaVersion`.

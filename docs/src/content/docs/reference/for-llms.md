@@ -3,7 +3,7 @@ title: Naru for LLMs
 description: A compact reference to Naru's agents, tools, permissions, and operating rules.
 ---
 
-Naru is an extension layer for the OpenCode CLI agent: four agents, five tools, four skills, zero plugins. The design is hard mechanical walls at irreversible edges and near-total freedom inside them. The orchestrator plans and fans out on its own judgment; permissions, not prose, decide what each role may do.
+Naru is an extension layer for the OpenCode CLI agent: four agents, five tools, four skills, and one plugin — `naru-dispatch`, which registers a tool of the same name. The design is hard mechanical walls at irreversible edges and near-total freedom inside them. The orchestrator plans and fans out on its own judgment; permissions, not prose, decide what each role may do.
 
 ## Topology
 
@@ -37,6 +37,9 @@ Naru implements none. It grants `lsp`, `glob`, `grep`, `naru-git-read`, and opti
 | `naru-github-post-review` | orchestrator-only; hard-coded `COMMENT` event, one attempt, no retry, dedupe marker. Cannot approve, request changes, or merge |
 | `naru-worktree` | isolated writer worktrees: `prepare_run`, `recover_run`, `prepare_item`, `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run` |
 | `naru-doctor` | provider-free local install and config health report |
+| `naru-dispatch` | orchestrator-only, registered by the plugin: spawn `naru-reader`, `naru-runner`, or `naru-writer` on a model class chosen per dispatch. Args: `agent`, `description`, `prompt`, optional `class`, `effort`, `directory` |
+
+`naru-dispatch` safety invariants: only `naru-orchestrator` may call it (checked in code, and child sessions get it denied, so depth stays 1). The child is bound by agent name, so its own permission frontmatter applies — dispatch selects a model, never permissions. The dispatch prompt never carries a `tools` map, and session permissions passed at create are deny-only (`task`, `naru-dispatch`, `todowrite`, `question`). Model classes come from the optional `models` block in `naru-runtime.json`; each class is an ordered fallback chain of `provider/model@effort`, and if the whole chain fails the dispatch inherits the parent session model — model resolution never hard-fails. No `models` block, or no plugin at all, means the built-in `task` behavior: children inherit the parent model. The plugin registers this one tool and hooks nothing else.
 
 ## Skills
 
@@ -60,6 +63,7 @@ Naru implements none. It grants `lsp`, `glob`, `grep`, `naru-git-read`, and opti
 - `cleanWorkspaceRequired` must be `true`.
 - `maxConcurrentWriters` is an integer from 1 to 50 and is a runaway brake, not a target.
 - `workspaceMode` is `auto`, `shared`, or `worktree`.
+- An optional `models` block maps user-chosen class names to `{ "use": "<when to pick it>", "chain": ["provider/model@effort", ...] }` for `naru-dispatch`. Absent means every dispatch inherits the parent session model.
 
 ## Rules that always hold
 

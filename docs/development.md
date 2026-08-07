@@ -42,7 +42,6 @@ flowchart LR
   TOOLS["naru-git-read · naru-github-read<br/>naru-github-post-review · naru-worktree"]
 
   ORC --> RD
-  ORC --> RDD
   ORC --> RUN
   ORC --> WR
   ORC -.-> TOOLS
@@ -274,8 +273,8 @@ any of them only with a migration and a targeted test.
 
 ## Release checklist
 
-1. Confirm the inventories are intentional: four skills, four agents, five tools, no plugins, and an
-   orchestrator `task` map that allows exactly the three subagents.
+1. Confirm the inventories are intentional: four skills, four agents, five tools, one plugin
+   (`naru-dispatch`), and an orchestrator `task` map that allows exactly the three subagents.
 2. Review permission blocks for the `'*': deny` start, the writer-only edit boundary, the runner-only
    bash boundary, read-only `bash`/`external_directory` denials, and the secret path denials.
 3. Confirm the posting path is still orchestrator-only, `COMMENT`-only, single-attempt, and

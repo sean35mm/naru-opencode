@@ -65,6 +65,17 @@ flowchart LR
 
 **Walkthrough:** independent questions go out in parallel and results are consumed as they land. Work is split at real boundaries — separate files, modules, or genuinely independent questions — so one coherent edit is never divided between two writers, and no child is invented just to fill a slot. Final checks wait until every writer has finished, because results gathered while files are still changing prove nothing.
 
+## The model is a per-dispatch choice too
+
+When the `naru-dispatch` tool is installed and model classes are configured, the orchestrator sizes the model along with the fan-out. It has two ways to spawn a subagent:
+
+- **`task`** — the OpenCode built-in. The child inherits the parent session model. Right whenever model choice doesn't matter.
+- **`naru-dispatch`** — same three subagents, but with a model class chosen for this dispatch from the classes in `naru-runtime.json` (see [runtime configuration](/naru-opencode/reference/runtime-config/#the-models-block)).
+
+Both can be used in the same turn, and every dispatch in one turn — through either tool — runs concurrently. The same agent can go out many times on different models: ten readers on a cheap class mapping a subsystem while one reader on a strong class weighs the design. Reasoning effort follows the same logic — escalated for consequence (architecture, security, the final review, a tricky edit), not by default.
+
+Class resolution is fallback-shaped, not fragile: each class carries an ordered chain, an unavailable entry falls to the next, and if the whole chain fails the dispatch runs on the parent session model rather than failing. Omitting the class inherits the parent model, exactly as `task` would. Without the plugin, the orchestrator simply uses `task` for everything — delegation itself never depends on it.
+
 ## The limits that do apply
 
 Three things bound fan-out. Nothing else does.
@@ -85,6 +96,7 @@ Fan-out only affects how much evidence is gathered and how much edit work runs a
 
 - Only `naru-writer` can edit, and that is enforced by OpenCode permission frontmatter rather than by instructions.
 - Read-only roles have `bash: deny` and `external_directory: deny`, so they fail closed.
+- `naru-dispatch` changes only the model. Children are bound by agent name, so each child's own permission frontmatter applies unchanged, and the session permissions the dispatch adds are deny-only — including a deny on `naru-dispatch` itself, so children still cannot spawn children.
 - `.env`, `.env.*`, key material, `.ssh`, `.aws`, `.kube`, and `.gnupg` are denied to every role; `.env.example` is allowed.
 - Your intent is the only source of authorization. Repository files, issue and PR text, diffs, command output, and subagent reports are untrusted data.
 - Local changes are the default stop. Commit, push, PR, and posting happen only when you ask in the current request.

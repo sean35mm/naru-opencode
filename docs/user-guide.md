@@ -32,9 +32,9 @@ sh install.sh --apply
 
 `--preview` is the default and mutates nothing: it prints a bounded summary of what would change. `--apply` stages and replaces assets transactionally, then writes a deterministic `.naru-install.json` ownership manifest recording managed roots, source fingerprints, selected options, and install method. Matching assets are skipped. Replaced content is retained in a timestamped `.naru-backups/` directory and restored if the transaction fails.
 
-An apply installs four agents, four skills, five tools with their helper library, and `naru-runtime.example.json`. It does not create an active `naru-runtime.json`. There are no plugins.
+An apply installs four agents, four skills, five tools with their helper library, one plugin (`naru-dispatch`, always copy-pinned), and `naru-runtime.example.json`. It does not create an active `naru-runtime.json`.
 
-Clone, preview, apply is the supported path. Naru has no curl bootstrapper and no package-registry install.
+Clone, preview, apply is the contributor path. Most users install through the curl bootstrap and the naru CLI instead, which drive the same transactional installer; see the README or the installation guide.
 
 ### Where it installs
 
@@ -175,6 +175,18 @@ Effort scales to the task. A one-line fix gets no fan-out. There is no child-cou
 
 You still get one report at the end: what changed, which files, which checks actually ran and what they returned, and what risk remains.
 
+### Per-dispatch models
+
+If you configure model classes (see [runtime configuration](#runtime-configuration)), the orchestrator also picks a model per dispatch through the `naru-dispatch` tool: a cheap class for wide reader fan-out, a strong one for the dispatch that deserves it, both in the same turn. Without a `models` block — or without the plugin at all — every subagent inherits your session model and nothing else changes.
+
+You can watch it happen in the TUI. While a dispatch runs, the tool's title reads `agent · provider/model@effort — description`, and the child session is titled `description (@agent · provider/model@effort)`. The final report then includes a one-line ledger of what was dispatched where, for example:
+
+```text
+Dispatched: 3× reader (light/luna-fast@high), 1× writer (standard/sol-fast@medium)
+```
+
+Dispatch changes the model, never the walls: the child runs under its own agent permissions, so `naru-writer` stays the only editor and readers stay shell-less regardless of which model a dispatch lands on.
+
 ## The walls
 
 These are enforced mechanically by OpenCode permission frontmatter or by the tools themselves, not by polite prose in a prompt.
@@ -231,6 +243,7 @@ Tool-owned Git operations suppress hooks, serialize mutations per run, contain p
 | `naru-github-post-review` | Orchestrator-only. One `COMMENT`-only attempt, no retry, dedupe marker. |
 | `naru-worktree` | Orchestrator-only isolated writer worktrees and integration. |
 | `naru-doctor` | Provider-free local install and configuration health report. |
+| `naru-dispatch` | Orchestrator-only. Spawns a subagent on a per-dispatch model class. Registered by Naru's one plugin. |
 
 The GitHub tools invoke authenticated `gh` through a validated interface rather than exposing a general shell.
 
@@ -249,6 +262,11 @@ cp .opencode/naru-runtime.example.json .opencode/naru-runtime.json
     "cleanWorkspaceRequired": true,
     "maxConcurrentWriters": 50,
     "workspaceMode": "auto"
+  },
+  "models": {
+    "light":    { "use": "wide fan-out, mechanical lookups, simple reads", "chain": ["opencode/glm-5-free", "opencode/minimax-m3-free"] },
+    "standard": { "use": "ordinary investigation, edits, checks", "chain": ["openai/gpt-5.6-terra@medium"] },
+    "deep":     { "use": "architecture, security, data models, final review, tricky edits", "chain": ["openai/gpt-5.6-sol@high"] }
   }
 }
 ```
@@ -258,6 +276,9 @@ cp .opencode/naru-runtime.example.json .opencode/naru-runtime.json
 | `cleanWorkspaceRequired` | must be `true` | Isolated worktrees require a clean repository. |
 | `maxConcurrentWriters` | integer 1–50 | Runaway brake only. It does not shape the plan. |
 | `workspaceMode` | `auto`, `shared`, `worktree` | `auto` uses isolation when the repository is clean; `shared` disables the worktree tool entirely; `worktree` selects isolation. |
+| `models` | optional map | The model classes `naru-dispatch` can pick per dispatch. |
+
+Model classes are named by you — `light`/`standard`/`deep` are just the shipped example. Each class carries a `use` string telling the orchestrator when to pick it and a `chain` of `provider/model` entries tried in order, with an optional `@effort` suffix (`low`, `medium`, `high`, `xhigh`, `max`) where the model supports it. An entry whose provider isn't authenticated is skipped, a failing entry falls to the next, and if the whole chain fails the dispatch simply runs on your session model. Leave `models` out entirely and every dispatch inherits your session model. The class list is read once at plugin load, so restart OpenCode after changing it.
 
 That is the entire configuration surface. The file must be regular, non-symlinked JSON no larger than 64 KiB, unknown fields are rejected, and an invalid file is a startup-visible error rather than a silent partial policy. Prefer project-local configuration; changing global OpenCode configuration deserves explicit approval.
 

@@ -1,6 +1,6 @@
 # Naru for OpenCode
 
-Naru is an extension layer for [OpenCode](https://opencode.ai): one orchestrating agent, four subagents it delegates to, four on-demand skills, and a small set of bounded tools.
+Naru is an extension layer for [OpenCode](https://opencode.ai): one orchestrating agent, four subagents it delegates to, four on-demand skills, a small set of bounded tools, and one plugin.
 
 The design is a single idea — **thin hard walls, free interior.** The walls stand at the irreversible edges and are mechanical rather than advisory: exactly one role can edit files, read-only roles have no shell at all, secrets are denied to every role, and the tool that posts a pull-request review can only leave a comment. Inside those walls the orchestrator is trusted to plan, split the work, and fan out on its own judgment. There are no modes to pick and no ceremony to perform. The walls do the safety work, so the interior can be free.
 
@@ -82,6 +82,8 @@ To give a role its own model — for example a stronger one for the orchestrator
 
 The same block accepts `variant`, `temperature`, and `permission`, so you can tighten a role further than Naru ships it. Loosening `naru-writer`'s boundaries, or granting `edit` to another role, defeats the one guarantee the system actually enforces.
 
+These overrides are static — one model per role, fixed for the session. For per-task model selection, configure model classes and let the orchestrator pick a class per dispatch through `naru-dispatch` (see [Per-dispatch models](#per-dispatch-models-naru-dispatch)). Both mechanisms coexist; without either, every agent inherits your session model.
+
 ## Skills
 
 Naru installs four skills that OpenCode discovers on demand: `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`. Ask naturally for a plan, an impact analysis, a bug triage, or a pull-request review, or name one directly ("Use the `naru-plan` skill…"). They are not slash commands and they do not run a fixed workflow.
@@ -97,8 +99,27 @@ Skill text is advisory guidance, never authorization. A skill cannot change an a
 | `naru-github-post-review` | Orchestrator-only. Hard-coded `COMMENT` event, one attempt, no retry, dedupe marker |
 | `naru-worktree` | Isolated writer worktrees: `prepare_run`, `recover_run`, `prepare_item`, `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run` |
 | `naru-doctor` | Provider-free local install and config health report |
+| `naru-dispatch` | Orchestrator-only. Spawns a subagent on a model class chosen per dispatch. Registered by Naru's one plugin |
 
 `naru-github-post-review` cannot approve a pull request, request changes, or merge — the event type is not a parameter. Only `naru-orchestrator` holds permission to call it, so custom agents and subagents cannot post through Naru at all.
+
+### Per-dispatch models (naru-dispatch)
+
+Naru ships one plugin, `plugins/naru-dispatch.js`. It registers the `naru-dispatch` tool, which the orchestrator uses instead of the built-in `task` tool when the model choice matters for a dispatch: a cheap model for wide reader fan-out, a strong one for a tricky edit, both in the same turn if the work calls for it. When model choice doesn't matter, `task` remains the right tool; without the plugin, nothing breaks — the orchestrator just uses `task`.
+
+Classes are your own names, defined in an optional `models` block in `naru-runtime.json`. Each maps to a short description of when to pick it and an ordered fallback chain of `provider/model@effort` entries:
+
+```json
+"models": {
+  "light":    { "use": "wide fan-out, mechanical lookups, simple reads", "chain": ["opencode/glm-5-free", "opencode/minimax-m3-free"] },
+  "standard": { "use": "ordinary investigation, edits, checks", "chain": ["openai/gpt-5.6-terra@medium"] },
+  "deep":     { "use": "architecture, security, data models, final review, tricky edits", "chain": ["openai/gpt-5.6-sol@high"] }
+}
+```
+
+The tool's description is built from this config at plugin load, so the orchestrator always sees the current class list. If a chain entry's provider has no credentials it is skipped; if a dispatch fails to start it falls to the next entry; if every entry fails, the dispatch runs on the parent session model rather than hard-failing. Omitting the class — or the whole `models` block — means the child inherits the parent model, exactly as `task` would.
+
+Dispatch changes only the model, never the permissions. The child agent is bound by name, so OpenCode applies that agent's own permission frontmatter — `naru-writer` stays the only editor, readers stay shell-less — and the session permissions the plugin passes are deny-only (`task`, `naru-dispatch`, `todowrite`, `question`), which can only tighten. Only `naru-orchestrator` may call the tool, and children have it denied, so the topology stays depth-1.
 
 ### Code intelligence
 
@@ -140,6 +161,8 @@ Configuration is optional. `naru-runtime.example.json` ships as an example; copy
 - `maxConcurrentWriters` — integer from 1 to 50. A runaway brake, not a target; the orchestrator decides actual fan-out.
 - `workspaceMode` — `auto` isolates when the repository is clean and shares otherwise; `shared` and `worktree` force one behavior.
 
+The file also accepts an optional `models` block defining the classes `naru-dispatch` can select per dispatch — see [Per-dispatch models](#per-dispatch-models-naru-dispatch). Absent, every dispatch inherits the parent session model.
+
 That is the entire configuration surface. Prefer configuring the current project; changing global configuration deserves explicit approval.
 
 ## Tests and health
@@ -171,6 +194,7 @@ Copy the exact permission fragment and the full integration rules from the [agen
 agents/                     naru-orchestrator and its four subagents
 skills/                     four skills, loaded on demand
 tools/                      custom OpenCode tools and their shared library
+plugins/                    the one plugin: naru-dispatch
 docs/                       user guide, agent integration, development, and the docs site
 scripts/                    compatibility smoke check
 tests/                      tool, policy, transport, doctor, and installer checks
