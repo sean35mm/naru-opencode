@@ -1,19 +1,23 @@
-// Naru dispatch: per-task model selection for subagents.
+// Naru dispatch: per-task model selection via generated agent variants.
 //
-// The orchestrator picks a model class per dispatch; config maps classes to
-// ordered model chains. The child agent is bound BY NAME so OpenCode applies
-// its permission frontmatter itself — this module never mirrors or weakens
-// the agent permission model. Two invariants keep that true:
-//   1. The prompt body never contains a `tools` map (it would overwrite
-//      session permissions wholesale).
-//   2. Session permissions passed at create are deny-only (evaluation is
-//      last-match-wins, so an allow here could override an agent deny).
+// The optional `models` block in naru-runtime.json defines model classes.
+// For each class this module clones the three base subagents into hidden
+// variants — naru-reader-<class>, naru-runner-<class>, naru-writer-<class> —
+// with the class's model and effort baked in. The orchestrator then picks a
+// model per task by dispatching a variant through OpenCode's native task
+// tool, which keeps the TUI's subagent rendering, click-through, and thread
+// cycling intact.
+//
+// Safety: variants are byte-for-byte clones of the base agents' permission
+// maps with only model/variant/description changed. Model selection never
+// touches permissions. The names naru-reader-*, naru-runner-*, and
+// naru-writer-* are a reserved, Naru-managed namespace.
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export const DISPATCH_AGENTS = Object.freeze(['naru-reader', 'naru-runner', 'naru-writer']);
-export const DISPATCHING_AGENTS = Object.freeze(new Set(['naru-orchestrator']));
+export const VARIANT_ROLES = Object.freeze(['naru-reader', 'naru-runner', 'naru-writer']);
+export const ORCHESTRATOR = 'naru-orchestrator';
 
 const MAX_CLASSES = 16;
 const MAX_CHAIN = 4;
@@ -21,26 +25,9 @@ const MAX_USE_LENGTH = 200;
 const CLASS_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const EFFORT_PATTERN = /^[a-z][a-z0-9-]{0,15}$/;
-const MAX_PROMPT_BYTES = 256 * 1024;
-
-// Child sessions can only be tightened here, never loosened. `task` and
-// `naru-dispatch` keep the topology at depth 1; `question`/`todowrite` match
-// what the built-in task tool denies for children.
-export const CHILD_SESSION_DENIES = Object.freeze([
-    Object.freeze({ permission: 'task', pattern: '*', action: 'deny' }),
-    Object.freeze({ permission: 'naru-dispatch', pattern: '*', action: 'deny' }),
-    Object.freeze({ permission: 'todowrite', pattern: '*', action: 'deny' }),
-    Object.freeze({ permission: 'question', pattern: '*', action: 'deny' }),
-]);
-
-export function assertDenyOnly(rules, label = 'session permission') {
-    for (const rule of rules) {
-        if (rule.action !== 'deny') {
-            throw new Error(`${label} must be deny-only; found action "${rule.action}" for "${rule.permission}"`);
-        }
-    }
-    return rules;
-}
+const VARIANT_NAME_PATTERN = /^naru-(?:reader|runner|writer)-[a-z][a-z0-9-]{0,31}$/;
+const APPENDIX_BEGIN = '<!-- naru-model-classes:begin -->';
+const APPENDIX_END = '<!-- naru-model-classes:end -->';
 
 export function parseChainEntry(value, label = 'chain entry') {
     if (typeof value !== 'string' || value.length === 0 || value.length > 128) {
@@ -97,29 +84,9 @@ export function parseModelsConfig(value) {
     return classes;
 }
 
-export function buildToolDescription(classes) {
-    const lines = [
-        'Dispatch a Naru subagent on a chosen model class. Creates a fresh child',
-        'session, runs it to completion, and returns its final answer prefixed with',
-        'the model that actually ran. Multiple dispatches in one turn run',
-        'concurrently. Use the built-in task tool instead when model choice does',
-        'not matter (children then inherit your session model).',
-        `Agents: ${DISPATCH_AGENTS.join(', ')}. Only naru-writer can edit files.`,
-    ];
-    const names = Object.keys(classes);
-    if (names.length === 0) {
-        lines.push('No model classes are configured in naru-runtime.json, so every dispatch inherits the parent session model.');
-    } else {
-        lines.push('Model classes (from naru-runtime.json):');
-        for (const name of names) {
-            const def = classes[name];
-            const primary = def.chain[0];
-            const label = `${primary.providerID}/${primary.modelID}${primary.effort ? `@${primary.effort}` : ''}`;
-            lines.push(`- "${name}": ${def.use} -> ${label}${def.chain.length > 1 ? ` (+${def.chain.length - 1} fallback)` : ''}`);
-        }
-        lines.push('Optional "effort" overrides the chain default (e.g. low, medium, high, xhigh, max) when the model supports it. Escalate effort for consequence, not by default.');
-    }
-    return lines.join('\n');
+export function modelLabel(candidate) {
+    if (!candidate) return 'inherited';
+    return `${candidate.providerID}/${candidate.modelID}${candidate.effort ? `@${candidate.effort}` : ''}`;
 }
 
 export function readAuthProviders(path = join(homedir(), '.local', 'share', 'opencode', 'auth.json')) {
@@ -135,136 +102,125 @@ export function readAuthProviders(path = join(homedir(), '.local', 'share', 'ope
     }
 }
 
-// Ordered candidates for one dispatch. Unknown-to-catalog model IDs are
-// trusted and attempted (e.g. openai's -fast tier IDs are absent from the
-// catalog but work); only a definite auth miss skips an entry.
-export function resolveCandidates(classes, className, effortOverride, authProviders) {
-    if (className === undefined || className === null || className === '') return { candidates: [], className: null };
-    const def = classes[className];
-    if (!def) {
-        const known = Object.keys(classes);
-        throw new Error(`unknown model class "${className}"${known.length ? `; configured classes: ${known.join(', ')}` : ' (no classes configured)'}`);
-    }
-    if (effortOverride !== undefined && !EFFORT_PATTERN.test(effortOverride)) {
-        throw new Error('effort must be a short lowercase token such as low, medium, high, xhigh, or max');
-    }
-    const candidates = def.chain
-        .filter((entry) => authProviders === null || authProviders === undefined || authProviders.has(entry.providerID))
-        .map((entry) => ({
-            providerID: entry.providerID,
-            modelID: entry.modelID,
-            effort: effortOverride ?? entry.effort,
-        }));
-    return { candidates, className };
-}
-
-export function modelLabel(candidate) {
-    if (!candidate) return 'inherited';
-    return `${candidate.providerID}/${candidate.modelID}${candidate.effort ? `@${candidate.effort}` : ''}`;
-}
-
-function textFromParts(parts) {
-    if (!Array.isArray(parts)) return null;
-    const last = parts.filter((part) => part?.type === 'text' && typeof part.text === 'string').at(-1);
-    return last ? last.text : null;
-}
-
-async function promptChild(client, input) {
-    const body = {
-        agent: input.agent,
-        parts: [{ type: 'text', text: input.prompt }],
-        ...(input.candidate
-            ? {
-                model: { providerID: input.candidate.providerID, modelID: input.candidate.modelID },
-                ...(input.candidate.effort ? { variant: input.candidate.effort } : {}),
-            }
-            : {}),
-    };
-    if ('tools' in body) throw new Error('dispatch prompt body must never set tools');
-    const result = await client.session.prompt({ path: { id: input.sessionID }, body });
-    if (result.error !== undefined) {
-        throw new Error(typeof result.error === 'string' ? result.error : JSON.stringify(result.error).slice(0, 400));
-    }
-    const direct = textFromParts(result.data?.parts);
-    if (direct !== null) return direct;
-    const messages = await client.session.messages({ path: { id: input.sessionID } });
-    const list = Array.isArray(messages.data) ? messages.data : [];
-    for (let index = list.length - 1; index >= 0; index -= 1) {
-        const message = list[index];
-        if (message?.info?.role !== 'assistant') continue;
-        const text = textFromParts(message.parts);
-        if (text !== null) return text;
-    }
-    return '';
-}
-
-export async function runDispatch({ client, ctx, args, classes, authProviders }) {
-    const agent = args.agent;
-    if (!DISPATCH_AGENTS.includes(agent)) {
-        return { error: `naru-dispatch can only dispatch: ${DISPATCH_AGENTS.join(', ')}` };
-    }
-    if (!DISPATCHING_AGENTS.has(ctx.agent)) {
-        return { error: 'naru-dispatch is reserved for the naru-orchestrator identity' };
-    }
-    const description = typeof args.description === 'string' && args.description.trim() ? args.description.trim().slice(0, 120) : null;
-    if (!description) return { error: 'description is required (a short label for the task)' };
-    const prompt = typeof args.prompt === 'string' ? args.prompt : '';
-    if (!prompt.trim()) return { error: 'prompt is required' };
-    if (Buffer.byteLength(prompt, 'utf8') > MAX_PROMPT_BYTES) return { error: `prompt exceeds ${MAX_PROMPT_BYTES} bytes` };
-
-    let resolution;
-    try {
-        resolution = resolveCandidates(classes, args.class, args.effort, authProviders);
-    }
-    catch (error) {
-        return { error: error instanceof Error ? error.message : String(error) };
-    }
-
-    // Candidates first, then a final inherit attempt so model trouble never
-    // hard-fails a dispatch.
-    const attempts = [...resolution.candidates.map((candidate) => ({ candidate })), { candidate: null }];
-    const failures = [];
-    const permission = assertDenyOnly([...CHILD_SESSION_DENIES]);
-
-    for (const attempt of attempts) {
-        const label = modelLabel(attempt.candidate);
-        ctx.metadata?.({ title: `${agent} · ${label} — ${description}` });
-        let sessionID;
-        try {
-            const created = await client.session.create({
-                body: {
-                    parentID: ctx.sessionID,
-                    title: `${description} (@${agent} · ${label})`,
-                    agent,
-                    permission,
-                },
-                query: { directory: args.directory ?? ctx.directory },
-            });
-            if (created.error !== undefined || created.data?.id === undefined) {
-                throw new Error(typeof created.error === 'string' ? created.error : 'session create failed');
-            }
-            sessionID = created.data.id;
-            const text = await promptChild(client, { sessionID, agent, prompt, candidate: attempt.candidate });
-            const fallbackNote = failures.length > 0
-                ? `\n(note: fell back after ${failures.map((f) => f.label).join(', ')} failed)`
-                : '';
-            return {
-                output: [
-                    `<dispatch agent="${agent}" model="${label}"${resolution.className ? ` class="${resolution.className}"` : ''} session="${sessionID}">`,
-                    text,
-                    '</dispatch>',
-                ].join('\n') + fallbackNote,
-                title: `${agent} · ${label} — ${description}`,
-                metadata: { agent, model: label, class: resolution.className, sessionID },
-            };
-        }
-        catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            failures.push({ label, message });
-            if (attempt.candidate === null) {
-                return { error: `dispatch failed on every model (${failures.map((f) => `${f.label}: ${f.message}`).join('; ')})` };
-            }
+// First chain entry whose provider is authenticated; when auth state is
+// unknown, trust the config and take the first entry. Model IDs the catalog
+// does not know are attempted anyway (openai's -fast tier IDs are absent
+// from the catalog but work), so auth is the only availability signal used.
+export function pickChainEntry(classDef, authProviders) {
+    for (const entry of classDef.chain) {
+        if (authProviders === null || authProviders === undefined || authProviders.has(entry.providerID)) {
+            return entry;
         }
     }
-    return { error: 'dispatch failed unexpectedly' };
+    return null;
+}
+
+export function variantAgentName(role, className) {
+    return `${role}-${className}`;
+}
+
+function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function clone(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+function stripAppendix(prompt) {
+    const begin = prompt.indexOf(APPENDIX_BEGIN);
+    if (begin === -1) return prompt;
+    const end = prompt.indexOf(APPENDIX_END);
+    if (end === -1) return prompt.slice(0, begin).trimEnd();
+    return (prompt.slice(0, begin) + prompt.slice(end + APPENDIX_END.length)).trimEnd();
+}
+
+export function buildPromptAppendix(generated) {
+    if (generated.length === 0) return '';
+    const lines = [
+        APPENDIX_BEGIN,
+        '',
+        '## Model classes (generated from naru-runtime.json)',
+        '',
+        'Each class below exists as three dispatchable agents — naru-reader-<class>,',
+        'naru-runner-<class>, and naru-writer-<class> — identical to the base agents',
+        'except for the model baked in. Pick the class per task: cheap and wide for',
+        'breadth, heavy only where the answer carries consequence. Base agents',
+        '(naru-reader, naru-runner, naru-writer) inherit the session model.',
+        '',
+    ];
+    for (const item of generated) {
+        lines.push(`- "${item.className}" -> ${item.label}: ${item.use}`);
+    }
+    lines.push('', APPENDIX_END);
+    return lines.join('\n');
+}
+
+// Mutates an OpenCode config object: regenerates variant agents from the
+// current classes and refreshes the orchestrator's task allowlist and prompt
+// appendix. Idempotent — safe to call on every config hook invocation. All
+// validation happens before any mutation so a bad config leaves the object
+// untouched.
+export function applyVariantsToConfig(config, classes, authProviders) {
+    if (!isPlainObject(config) || !isPlainObject(config.agent)) {
+        throw new Error('OpenCode configuration has no agent map');
+    }
+    const agents = config.agent;
+    const orchestrator = agents[ORCHESTRATOR];
+    if (!isPlainObject(orchestrator)) throw new Error(`agent ${ORCHESTRATOR} is not configured`);
+    if (!isPlainObject(orchestrator.permission) || !isPlainObject(orchestrator.permission.task)) {
+        throw new Error(`agent ${ORCHESTRATOR} has no task permission map`);
+    }
+    if (orchestrator.permission.task['*'] !== 'deny') {
+        throw new Error(`agent ${ORCHESTRATOR} task permissions must begin fail-closed`);
+    }
+    const bases = {};
+    for (const role of VARIANT_ROLES) {
+        const base = agents[role];
+        if (!isPlainObject(base)) throw new Error(`agent ${role} is not configured`);
+        if (orchestrator.permission.task[role] !== 'allow') {
+            throw new Error(`agent ${ORCHESTRATOR} does not allow expected target ${role}`);
+        }
+        bases[role] = base;
+    }
+
+    // Build everything before mutating anything.
+    const generated = [];
+    const variants = {};
+    for (const className of Object.keys(classes)) {
+        const def = classes[className];
+        const entry = pickChainEntry(def, authProviders);
+        if (entry === null) continue;
+        for (const role of VARIANT_ROLES) {
+            const name = variantAgentName(role, className);
+            const variant = clone(bases[role]);
+            variant.model = `${entry.providerID}/${entry.modelID}`;
+            if (entry.effort !== undefined) variant.variant = entry.effort;
+            else delete variant.variant;
+            variant.hidden = true;
+            variant.mode = 'subagent';
+            variant.description = `${typeof variant.description === 'string' ? variant.description : ''} Model class "${className}" (${modelLabel(entry)}): ${def.use}`.trim();
+            variant.options = { ...(isPlainObject(variant.options) ? variant.options : {}), naruVariant: true };
+            variants[name] = variant;
+        }
+        generated.push({ className, label: modelLabel(entry), use: def.use });
+    }
+
+    // Clear the reserved namespace, then install the current generation.
+    for (const name of Object.keys(agents)) {
+        if (VARIANT_NAME_PATTERN.test(name)) delete agents[name];
+    }
+    for (const key of Object.keys(orchestrator.permission.task)) {
+        if (VARIANT_NAME_PATTERN.test(key)) delete orchestrator.permission.task[key];
+    }
+    Object.assign(agents, variants);
+    for (const name of Object.keys(variants)) {
+        orchestrator.permission.task[name] = 'allow';
+    }
+    if (typeof orchestrator.prompt === 'string') {
+        const bare = stripAppendix(orchestrator.prompt);
+        const appendix = buildPromptAppendix(generated);
+        orchestrator.prompt = appendix ? `${bare}\n\n${appendix}` : bare;
+    }
+    return { variants: Object.keys(variants).sort(), classes: generated.map((item) => item.className) };
 }

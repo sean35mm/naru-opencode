@@ -2,6 +2,16 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## Unreleased
+
+### Changed
+
+- `naru-dispatch` now works through generated agent variants instead of a custom tool. The plugin's config hook clones the base subagents into hidden per-class variants — `naru-reader-<class>`, `naru-runner-<class>`, `naru-writer-<class>` — with the class's model and thinking effort baked in, and the orchestrator dispatches them through OpenCode's native `task` tool. This restores the TUI's native subagent rendering: proper cards, click-to-open child threads, and thread cycling, with the class visible in the agent name. The `models` block in `naru-runtime.json` is unchanged; a class's first authenticated chain entry is baked into its variants at startup.
+
+### Removed
+
+- The `naru-dispatch` tool and its SDK session path. Model selection no longer creates sessions by hand, so Naru no longer carries custody of session-creation safety invariants — variants are byte-for-byte permission clones of the base agents, and OpenCode's task tool owns spawning end to end. The per-dispatch `effort` override is expressed as additional classes (for example `deep-max`) rather than a call argument.
+
 ## [0.3.0] - 2026-08-07
 
 ### Added

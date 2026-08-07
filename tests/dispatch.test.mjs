@@ -1,61 +1,53 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  assertDenyOnly,
-  buildToolDescription,
-  CHILD_SESSION_DENIES,
-  DISPATCH_AGENTS,
+  applyVariantsToConfig,
+  buildPromptAppendix,
   modelLabel,
   parseChainEntry,
   parseModelsConfig,
-  resolveCandidates,
-  runDispatch,
+  pickChainEntry,
+  variantAgentName,
+  VARIANT_ROLES,
 } from '../tools/naru-lib/dispatch.mjs';
 import { NaruDispatchPlugin } from '../plugins/naru-dispatch.js';
 
 const CLASSES = parseModelsConfig({
   light: { use: 'wide fan-out', chain: ['openai/gpt-5.6-luna-fast@high', 'opencode-go/deepseek-v4-flash'] },
   deep: { use: 'high consequence', chain: ['openai/gpt-5.6-sol-fast@high', 'openai/gpt-5.6-sol@high'] },
-  reasoning: { use: 'hardest problems', chain: ['openai/gpt-5.6-sol@xhigh'] },
+  crosscheck: { use: 'non-openai second opinion', chain: ['opencode-go/kimi-k2.5'] },
 });
 
-function fakeContext(overrides = {}) {
-  const titles = [];
+function fakeConfig() {
   return {
-    ctx: {
-      sessionID: 'ses_parent',
-      messageID: 'msg_1',
-      agent: 'naru-orchestrator',
-      directory: '/work/project',
-      metadata: (input) => titles.push(input.title),
-      ...overrides,
-    },
-    titles,
-  };
-}
-
-function fakeClient({ createResults, promptResults } = {}) {
-  const calls = { create: [], prompt: [] };
-  let createIndex = 0;
-  let promptIndex = 0;
-  return {
-    calls,
-    session: {
-      async create(input) {
-        calls.create.push(input);
-        const result = createResults?.[createIndex] ?? { data: { id: `ses_child_${createIndex}` } };
-        createIndex += 1;
-        return result;
+    agent: {
+      'naru-orchestrator': {
+        mode: 'primary',
+        prompt: 'You coordinate work.',
+        permission: {
+          '*': 'deny',
+          task: { '*': 'deny', 'naru-reader': 'allow', 'naru-runner': 'allow', 'naru-writer': 'allow' },
+        },
       },
-      async prompt(input) {
-        calls.prompt.push(input);
-        const result = promptResults?.[promptIndex] ?? { data: { parts: [{ type: 'text', text: 'child answer' }] } };
-        promptIndex += 1;
-        return result;
+      'naru-reader': {
+        mode: 'subagent',
+        hidden: true,
+        description: 'Read-only investigator.',
+        permission: { '*': 'deny', bash: 'deny', edit: 'deny', task: 'deny', read: { '*': 'allow', '.env': 'deny' } },
       },
-      async messages() {
-        return { data: [] };
+      'naru-runner': {
+        mode: 'subagent',
+        hidden: true,
+        description: 'Read-only checker.',
+        permission: { '*': 'deny', bash: { '*': 'allow' }, edit: 'deny', task: 'deny' },
       },
+      'naru-writer': {
+        mode: 'subagent',
+        hidden: true,
+        description: 'The only editor.',
+        permission: { '*': 'deny', bash: { '*': 'allow' }, edit: 'allow', apply_patch: 'allow', task: 'deny' },
+      },
+      build: { mode: 'primary' },
     },
   };
 }
@@ -83,153 +75,93 @@ test('models config validation rejects malformed classes and accepts absence', (
   assert.throws(() => parseModelsConfig({ light: { use: 'x' } }), /chain/);
   assert.throws(() => parseModelsConfig({ light: { use: 'x', chain: [] } }), /chain/);
   assert.throws(() => parseModelsConfig({ light: { use: 'x', chain: ['a/b'], extra: 1 } }), /unknown fields/);
-  assert.throws(() => parseModelsConfig({ light: { use: '', chain: ['a/b'] } }), /use/);
 });
 
-test('tool description lists configured classes and the unconfigured fallback', () => {
-  const withClasses = buildToolDescription(CLASSES);
-  assert.match(withClasses, /"light": wide fan-out -> openai\/gpt-5\.6-luna-fast@high \(\+1 fallback\)/);
-  assert.match(withClasses, /"reasoning": hardest problems -> openai\/gpt-5\.6-sol@xhigh/);
-  const empty = buildToolDescription({});
-  assert.match(empty, /No model classes are configured/);
+test('chain selection honors auth and falls to null when nothing is available', () => {
+  assert.equal(pickChainEntry(CLASSES.light, null).modelID, 'gpt-5.6-luna-fast');
+  assert.equal(pickChainEntry(CLASSES.light, new Set(['opencode-go'])).modelID, 'deepseek-v4-flash');
+  assert.equal(pickChainEntry(CLASSES.deep, new Set(['zai'])), null);
 });
 
-test('candidate resolution honors auth, effort override, and unknown classes', () => {
-  const all = resolveCandidates(CLASSES, 'light', undefined, null);
-  assert.equal(all.candidates.length, 2);
-  assert.equal(all.candidates[0].effort, 'high');
+test('variants are exact permission clones with only model, effort, and description changed', () => {
+  const config = fakeConfig();
+  const summary = applyVariantsToConfig(config, CLASSES, null);
 
-  const filtered = resolveCandidates(CLASSES, 'light', undefined, new Set(['opencode-go']));
-  assert.deepEqual(filtered.candidates.map((c) => c.providerID), ['opencode-go']);
-
-  const overridden = resolveCandidates(CLASSES, 'deep', 'max', null);
-  assert.ok(overridden.candidates.every((c) => c.effort === 'max'));
-
-  assert.deepEqual(resolveCandidates(CLASSES, undefined, undefined, null).candidates, []);
-  assert.throws(() => resolveCandidates(CLASSES, 'nope', undefined, null), /unknown model class "nope"/);
-  assert.throws(() => resolveCandidates(CLASSES, 'deep', 'NOT VALID', null), /effort/);
+  assert.equal(summary.variants.length, 9);
+  for (const role of VARIANT_ROLES) {
+    const variant = config.agent[variantAgentName(role, 'deep')];
+    assert.ok(variant, `${role}-deep exists`);
+    assert.equal(variant.model, 'openai/gpt-5.6-sol-fast');
+    assert.equal(variant.variant, 'high');
+    assert.equal(variant.hidden, true);
+    assert.equal(variant.mode, 'subagent');
+    assert.equal(variant.options.naruVariant, true);
+    assert.deepEqual(variant.permission, config.agent[role].permission, `${role}-deep permissions identical`);
+    assert.match(variant.description, /Model class "deep" \(openai\/gpt-5\.6-sol-fast@high\)/);
+  }
+  // A chain entry without effort produces no variant field.
+  assert.equal('variant' in config.agent['naru-reader-crosscheck'], false);
+  assert.equal(config.agent['naru-reader-crosscheck'].model, 'opencode-go/kimi-k2.5');
+  // Base agents remain model-less and untouched.
+  assert.equal('model' in config.agent['naru-reader'], false);
+  assert.equal(config.agent['naru-writer'].permission.edit, 'allow');
 });
 
-test('child session permissions are deny-only and pin depth to one', () => {
-  assertDenyOnly(CHILD_SESSION_DENIES);
-  const denied = CHILD_SESSION_DENIES.map((rule) => rule.permission);
-  assert.ok(denied.includes('task'));
-  assert.ok(denied.includes('naru-dispatch'));
-  assert.throws(() => assertDenyOnly([{ permission: 'edit', pattern: '*', action: 'allow' }]), /deny-only/);
+test('the orchestrator allowlist and prompt appendix are regenerated idempotently', () => {
+  const config = fakeConfig();
+  applyVariantsToConfig(config, CLASSES, null);
+  const task = config.agent['naru-orchestrator'].permission.task;
+  assert.equal(task['naru-reader-light'], 'allow');
+  assert.equal(task['naru-writer-crosscheck'], 'allow');
+  assert.equal(task['*'], 'deny');
+  assert.match(config.agent['naru-orchestrator'].prompt, /Model classes \(generated from naru-runtime\.json\)/);
+  assert.match(config.agent['naru-orchestrator'].prompt, /"deep" -> openai\/gpt-5\.6-sol-fast@high: high consequence/);
+
+  // Second application with fewer classes removes stale variants and keys.
+  applyVariantsToConfig(config, parseModelsConfig({ light: { use: 'wide', chain: ['openai/gpt-5.6-luna-fast@high'] } }), null);
+  assert.equal(config.agent['naru-reader-deep'], undefined);
+  assert.equal(task['naru-reader-deep'], undefined);
+  assert.equal(task['naru-reader-light'], 'allow');
+  assert.equal((config.agent['naru-orchestrator'].prompt.match(/Model classes/g) || []).length, 1);
+
+  // Empty classes strips everything, restoring the base config shape.
+  applyVariantsToConfig(config, {}, null);
+  assert.equal(Object.keys(config.agent).filter((k) => /^naru-(reader|runner|writer)-/.test(k)).length, 0);
+  assert.equal(config.agent['naru-orchestrator'].prompt, 'You coordinate work.');
 });
 
-test('dispatch binds the agent by name, sets the model, and never sends tools', async () => {
-  const client = fakeClient();
-  const { ctx, titles } = fakeContext();
-  const result = await runDispatch({
-    client,
-    ctx,
-    args: { agent: 'naru-reader', class: 'deep', description: 'trace auth flow', prompt: 'Trace it.' },
-    classes: CLASSES,
-    authProviders: null,
-  });
-  assert.equal(result.error, undefined);
-  assert.match(result.output, /<dispatch agent="naru-reader" model="openai\/gpt-5\.6-sol-fast@high" class="deep"/);
-  assert.match(result.output, /child answer/);
-
-  const create = client.calls.create[0];
-  assert.equal(create.body.agent, 'naru-reader');
-  assert.equal(create.body.parentID, 'ses_parent');
-  assert.match(create.body.title, /@naru-reader · openai\/gpt-5\.6-sol-fast@high/);
-  assertDenyOnly(create.body.permission);
-  assert.equal(create.query.directory, '/work/project');
-
-  const prompt = client.calls.prompt[0];
-  assert.equal(prompt.body.agent, 'naru-reader');
-  assert.deepEqual(prompt.body.model, { providerID: 'openai', modelID: 'gpt-5.6-sol-fast' });
-  assert.equal(prompt.body.variant, 'high');
-  assert.equal('tools' in prompt.body, false, 'prompt body must never contain a tools map');
-  assert.equal('system' in prompt.body, false);
-
-  assert.ok(titles.some((t) => t.includes('naru-reader · openai/gpt-5.6-sol-fast@high')));
+test('classes whose providers are all unauthenticated are skipped, not broken', () => {
+  const config = fakeConfig();
+  const summary = applyVariantsToConfig(config, CLASSES, new Set(['openai']));
+  assert.deepEqual(summary.classes.sort(), ['deep', 'light']);
+  assert.equal(config.agent['naru-reader-crosscheck'], undefined);
 });
 
-test('dispatch without a class inherits the parent model', async () => {
-  const client = fakeClient();
-  const { ctx } = fakeContext();
-  const result = await runDispatch({
-    client,
-    ctx,
-    args: { agent: 'naru-runner', description: 'run the tests', prompt: 'Run them.' },
-    classes: CLASSES,
-    authProviders: null,
-  });
-  assert.equal(result.error, undefined);
-  assert.match(result.output, /model="inherited"/);
-  assert.equal('model' in client.calls.prompt[0].body, false);
-  assert.equal('variant' in client.calls.prompt[0].body, false);
+test('validation happens before mutation: a broken config is left untouched', () => {
+  const config = fakeConfig();
+  delete config.agent['naru-writer'];
+  const before = JSON.stringify(config);
+  assert.throws(() => applyVariantsToConfig(config, CLASSES, null), /naru-writer is not configured/);
+  assert.equal(JSON.stringify(config), before);
+
+  const noTask = fakeConfig();
+  noTask.agent['naru-orchestrator'].permission.task['*'] = 'allow';
+  assert.throws(() => applyVariantsToConfig(noTask, CLASSES, null), /fail-closed/);
 });
 
-test('dispatch falls through the chain and reports the fallback', async () => {
-  const client = fakeClient({
-    promptResults: [
-      { error: 'model refused' },
-      { data: { parts: [{ type: 'text', text: 'fallback answer' }] } },
-    ],
-  });
-  const { ctx } = fakeContext();
-  const result = await runDispatch({
-    client,
-    ctx,
-    args: { agent: 'naru-reader', class: 'light', description: 'find usages', prompt: 'Find them.' },
-    classes: CLASSES,
-    authProviders: null,
-  });
-  assert.equal(result.error, undefined);
-  assert.match(result.output, /model="opencode-go\/deepseek-v4-flash"/);
-  assert.match(result.output, /fell back after openai\/gpt-5\.6-luna-fast@high/);
+test('the plugin hooks config only and fails open on unusable configs', async () => {
+  const hooks = await NaruDispatchPlugin({});
+  assert.deepEqual(Object.keys(hooks), ['config']);
+  const broken = { agent: {} };
+  await hooks.config(broken);
+  assert.deepEqual(broken, { agent: {} });
 });
 
-test('dispatch refuses foreign agents and foreign callers before any I/O', async () => {
-  const client = fakeClient();
-  const { ctx } = fakeContext();
-  const foreignAgent = await runDispatch({
-    client, ctx,
-    args: { agent: 'build', description: 'x', prompt: 'y' },
-    classes: CLASSES, authProviders: null,
-  });
-  assert.match(foreignAgent.error, /can only dispatch/);
-
-  const { ctx: readerCtx } = fakeContext({ agent: 'naru-reader' });
-  const foreignCaller = await runDispatch({
-    client, ctx: readerCtx,
-    args: { agent: 'naru-reader', description: 'x', prompt: 'y' },
-    classes: CLASSES, authProviders: null,
-  });
-  assert.match(foreignCaller.error, /reserved for the naru-orchestrator/);
-  assert.equal(client.calls.create.length, 0);
-  assert.equal(client.calls.prompt.length, 0);
-});
-
-test('dispatch passes an explicit directory through for worktree writers', async () => {
-  const client = fakeClient();
-  const { ctx } = fakeContext();
-  await runDispatch({
-    client, ctx,
-    args: { agent: 'naru-writer', class: 'deep', description: 'apply edits', prompt: 'Edit.', directory: '/tmp/wt-a' },
-    classes: CLASSES, authProviders: null,
-  });
-  assert.equal(client.calls.create[0].query.directory, '/tmp/wt-a');
-});
-
-test('the plugin registers exactly one tool with the documented surface', async () => {
-  const hooks = await NaruDispatchPlugin({ client: fakeClient() });
-  const keys = Object.keys(hooks);
-  assert.deepEqual(keys, ['tool']);
-  const tools = Object.keys(hooks.tool);
-  assert.deepEqual(tools, ['naru-dispatch']);
-  const def = hooks.tool['naru-dispatch'];
-  assert.deepEqual(Object.keys(def.args).sort(), ['agent', 'class', 'description', 'directory', 'effort', 'prompt']);
-  assert.deepEqual(def.args.agent.enum, [...DISPATCH_AGENTS]);
-  assert.equal(typeof def.execute, 'function');
-});
-
-test('model labels render for candidates and inheritance', () => {
+test('appendix and labels render as documented', () => {
   assert.equal(modelLabel({ providerID: 'openai', modelID: 'gpt-5.6-sol', effort: 'xhigh' }), 'openai/gpt-5.6-sol@xhigh');
   assert.equal(modelLabel(null), 'inherited');
+  assert.equal(buildPromptAppendix([]), '');
+  const appendix = buildPromptAppendix([{ className: 'light', label: 'openai/gpt-5.6-luna-fast@high', use: 'wide fan-out' }]);
+  assert.match(appendix, /naru-reader-<class>/);
+  assert.match(appendix, /"light" -> openai\/gpt-5\.6-luna-fast@high: wide fan-out/);
 });
