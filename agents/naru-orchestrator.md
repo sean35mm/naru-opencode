@@ -154,12 +154,12 @@ review against the current head (never reuse a pasted or cached payload), confir
 the target still matches, and call `naru-github-post-review`. It posts a
 comment-only review — it cannot approve, request changes, or merge.
 
-The no-retry rule is about GitHub, not about your own payload. If the tool
-rejects the call before contacting GitHub — caller identity, `invalid input`,
-or incomplete coverage — nothing was posted: fix the payload and call again.
-Only once a POST has been attempted does the one-attempt rule bind: never repeat
-a post, never fall back to another mechanism, and report an outcome the tool
-flags as `outcomeUnknown` as ambiguous rather than retrying it.
+Make at most one GitHub POST attempt, not one tool invocation. A corrected tool
+call is allowed only when the preceding result explicitly reports
+`postAttempted: false` and `correctable: true`. Wrong-agent results,
+`postAttempted: true`, and `outcomeUnknown: true` are terminal. Never retry or
+use another mechanism; report an unknown outcome as ambiguous. The tool remains
+orchestrator-only and posts comment-only reviews.
 
 Two payload details the tool is strict about: build `coverage.limitations` from
 what you genuinely could not check — it does not block the post, it is published

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import * as validate from '../tools/naru-lib/validate.mjs';
 import { runGit, validateGitInput } from '../tools/naru-lib/git.mjs';
 import {
@@ -274,12 +275,30 @@ test('source-at-SHA rejects secret paths and bounds content', async () => {
 
 test('strict review payload validates nested schema and rejects unknown fields', () => {
   const input = reviewInput();
-  assert.doesNotThrow(() => validateReviewPayload(input));
+  const canonical = validateReviewPayload(input);
+  assert.equal(canonical.target.number, 42);
+  assert.match(canonical.snapshot.id, /^naru-snap-/);
   assert.throws(() => validateReviewPayload({ ...input, endpoint: 'evil' }), /unknown fields/);
   assert.throws(() => validateReviewPayload({
     ...input,
     reviewResult: { ...input.reviewResult, event: 'APPROVE' },
   }), /unknown fields/);
+});
+
+test('review payload accepts aliases but rejects dual canonical and alias keys', () => {
+  const aliased = structuredClone(reviewInput());
+  aliased.reviewResult.target.number = aliased.reviewResult.target.pullNumber;
+  delete aliased.reviewResult.target.pullNumber;
+  aliased.reviewResult.snapshot.snapshotId = aliased.reviewResult.snapshot.id;
+  delete aliased.reviewResult.snapshot.id;
+  assert.equal(validateReviewPayload(aliased).target.number, 42);
+
+  const dualTarget = structuredClone(reviewInput());
+  dualTarget.reviewResult.target.number = dualTarget.reviewResult.target.pullNumber;
+  assert.throws(() => validateReviewPayload(dualTarget), /both pullNumber and number/);
+  const dualSnapshot = structuredClone(reviewInput());
+  dualSnapshot.reviewResult.snapshot.snapshotId = dualSnapshot.reviewResult.snapshot.id;
+  assert.throws(() => validateReviewPayload(dualSnapshot), /both id and snapshotId/);
 });
 
 test('post tool accepts only the orchestrator identity and rejects all others before I/O', async () => {
@@ -298,15 +317,51 @@ test('post tool accepts only the orchestrator identity and rejects all others be
       },
     });
     assert.match(result.error, /identity/, String(agent));
+    assert.deepEqual(
+      { postAttempted: result.postAttempted, correctable: result.correctable, outcomeUnknown: result.outcomeUnknown },
+      { postAttempted: false, correctable: false, outcomeUnknown: false },
+      String(agent),
+    );
     assert.equal(ioCalls, 0, String(agent));
   }
   const result = await postReview(reviewInput({ status: 'incomplete', degraded: true }), { agent: 'naru-orchestrator' });
   assert.match(result.error, /incomplete/);
 });
 
+test('a correctable invalid preflight can be corrected with exactly one POST total', async () => {
+  const head = '9'.repeat(40);
+  const { spawn, calls } = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(head) }),
+    { match: (argv) => argv.includes('POST'), reply: response({ id: 301 }) },
+  ]);
+  const invalid = structuredClone(reviewInput({ head }));
+  invalid.reviewResult.unknown = true;
+  const rejected = await postReview(invalid, { agent: 'naru-orchestrator' }, { spawn });
+  assert.equal(rejected.postAttempted, false);
+  assert.equal(rejected.correctable, true);
+  assert.equal(rejected.outcomeUnknown, false);
+  const posted = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn });
+  assert.equal(posted.ok, true, posted.error);
+  assert.equal(posted.postAttempted, true);
+  assert.equal(posted.correctable, false);
+  assert.equal(posted.outcomeUnknown, false);
+  assert.equal(calls.filter((call) => call.argv.includes('POST')).length, 1);
+});
+
 test('post tool rejects incomplete and degraded reviews before I/O', async () => {
   assert.match((await postReview(reviewInput({ status: 'incomplete', degraded: true }), { agent: 'naru-orchestrator' })).error, /incomplete/);
   assert.match((await postReview(reviewInput({ status: 'partial', degraded: true }), { agent: 'naru-orchestrator' })).error, /cannot be posted/);
+});
+
+test('post tool rejects snapshot.complete false as correctable before I/O', async () => {
+  let ioCalls = 0;
+  const result = await postReview(reviewInput({ snapshotComplete: false }), { agent: 'naru-orchestrator' }, {
+    spawn: async () => { ioCalls += 1; },
+  });
+  assert.equal(result.postAttempted, false);
+  assert.equal(result.correctable, true);
+  assert.equal(result.outcomeUnknown, false);
+  assert.equal(ioCalls, 0);
 });
 
 test('post tool preserves body, hard-codes COMMENT and commit_id, and posts once', async () => {
@@ -325,6 +380,8 @@ test('post tool preserves body, hard-codes COMMENT and commit_id, and posts once
   const input = reviewInput();
   const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
   assert.equal(result.ok, true, result.error);
+  assert.equal(result.postAttempted, true);
+  assert.equal(result.outcomeUnknown, false);
   assert.equal(posted.event, 'COMMENT');
   assert.equal(posted.commit_id, HEAD);
   assert.match(posted.body, /## Verdict/);
@@ -584,6 +641,14 @@ test('ambiguous POST is never retried', async () => {
   const result = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn });
   assert.equal(result.ok, false);
   assert.match(result.error, /outcomeUnknown/);
+  assert.equal(result.postAttempted, true);
+  assert.equal(result.correctable, false);
+  assert.equal(result.outcomeUnknown, true);
+  const priorUnknown = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn });
+  assert.match(priorUnknown.error, /prior in-process POST attempt/);
+  assert.equal(priorUnknown.postAttempted, false);
+  assert.equal(priorUnknown.correctable, false);
+  assert.equal(priorUnknown.outcomeUnknown, true);
   assert.equal(postCalls, 1);
 });
 
@@ -602,6 +667,34 @@ test('OpenCode wrappers expose one input schema and return JSON text', async () 
   const postResult = await githubPostReviewTool.execute({ input: reviewInput() }, { agent: 'wrong' });
   assert.equal(typeof postResult, 'string');
   assert.match(JSON.parse(postResult).error, /identity/);
+});
+
+test('post tool schema exposes the exact nested review contract and aliases', () => {
+  const reviewSchema = githubPostReviewTool.args.input.properties.reviewResult;
+  assert.deepEqual(reviewSchema.required, [
+    'schemaVersion', 'target', 'snapshot', 'coverage', 'body', 'inlineComments', 'skippedInlineComments',
+  ]);
+  assert.equal(reviewSchema.additionalProperties, false);
+  assert.deepEqual(Object.keys(reviewSchema.properties.target.properties), ['owner', 'repo', 'pullNumber', 'number']);
+  assert.deepEqual(reviewSchema.properties.target.required, ['owner', 'repo']);
+  assert.deepEqual(Object.keys(reviewSchema.properties.snapshot.properties), [
+    'id', 'snapshotId', 'baseSha', 'headSha', 'feedbackDigest', 'complete', 'warnings',
+  ]);
+  assert.deepEqual(reviewSchema.properties.snapshot.required, [
+    'baseSha', 'headSha', 'feedbackDigest', 'complete', 'warnings',
+  ]);
+  assert.match(reviewSchema.properties.target.description, /exactly one of pullNumber or number/);
+  assert.match(reviewSchema.properties.target.properties.pullNumber.description, /exactly one/);
+  assert.match(reviewSchema.properties.target.properties.number.description, /exactly one/);
+  assert.match(reviewSchema.properties.snapshot.description, /exactly one of id or snapshotId/);
+  assert.match(reviewSchema.properties.snapshot.properties.id.description, /exactly one/);
+  assert.match(reviewSchema.properties.snapshot.properties.snapshotId.description, /exactly one/);
+  assert.equal(reviewSchema.properties.target.oneOf, undefined);
+  assert.equal(reviewSchema.properties.snapshot.oneOf, undefined);
+  assert.deepEqual(reviewSchema.properties.inlineComments.items.required, [
+    'path', 'line', 'side', 'body', 'priority', 'severity', 'confidence',
+  ]);
+  assert.deepEqual(reviewSchema.properties.skippedInlineComments.items.required, ['path', 'line', 'side', 'reason']);
 });
 
 test('a pull snapshot from naru-github-read feeds the posting tool without renaming fields', async () => {
@@ -667,6 +760,46 @@ test('honest coverage limitations are published, not treated as incomplete cover
   assert.match(posted.body, /Native build not exercised/);
 });
 
+test('coverage limitations alter the dedupe digest', async () => {
+  const head = 'b'.repeat(40);
+  let posted;
+  const first = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(head) }),
+    { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+      posted = JSON.parse(options.input);
+      return response({ id: 302 });
+    } },
+  ]);
+  const initial = reviewInput({ head });
+  initial.reviewResult.coverage.limitations = ['Browser suite not run'];
+  assert.equal((await postReview(initial, { agent: 'naru-orchestrator' }, { spawn: first.spawn })).ok, true);
+
+  const marker = posted.body.match(/^<!-- naru-review:[^>]+-->/)[0];
+  const reviews = [{ id: 302, commit_id: head, body: marker, user: { login: 'viewer' } }];
+  const changed = reviewInput({ head, reviews });
+  changed.reviewResult.coverage.limitations = ['Native build not run'];
+  const second = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), reviews }));
+  const result = await postReview(changed, { agent: 'naru-orchestrator' }, { spawn: second.spawn });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /different Naru review/);
+  assert.equal(result.postAttempted, false);
+  assert.equal(result.correctable, false);
+});
+
+test('oversized composed body is a correctable pre-POST failure with no I/O', async () => {
+  let ioCalls = 0;
+  const input = reviewInput({ body: 'x'.repeat(64 * 1024 - 257) });
+  input.reviewResult.coverage.limitations = ['y'.repeat(512)];
+  const result = await postReview(input, { agent: 'naru-orchestrator' }, {
+    spawn: async () => { ioCalls += 1; },
+  });
+  assert.match(result.error, /composed review body exceeds/);
+  assert.equal(result.postAttempted, false);
+  assert.equal(result.correctable, true);
+  assert.equal(result.outcomeUnknown, false);
+  assert.equal(ioCalls, 0);
+});
+
 test('coverage.complete false still refuses to post', async () => {
   const result = await postReview(
     reviewInput({ status: 'incomplete', degraded: true }),
@@ -674,4 +807,26 @@ test('coverage.complete false still refuses to post', async () => {
     { spawn: async () => { throw new Error('unexpected I/O'); } },
   );
   assert.match(result.error, /incomplete/);
+});
+
+test('review policy permits correction only from explicit pre-POST state', async () => {
+  const [orchestrator, skill, userGuide, agentsGuide] = await Promise.all([
+    readFile(new URL('../agents/naru-orchestrator.md', import.meta.url), 'utf8'),
+    readFile(new URL('../skills/naru-review/SKILL.md', import.meta.url), 'utf8'),
+    readFile(new URL('../docs/user-guide.md', import.meta.url), 'utf8'),
+    readFile(new URL('../docs/src/content/docs/workflows/agents.md', import.meta.url), 'utf8'),
+  ]);
+  for (const policy of [orchestrator, skill, userGuide, agentsGuide]) {
+    assert.match(policy, /(?:Make |allows )?[Aa]t most one GitHub POST attempt(?: is allowed)?, not one tool invocation/);
+    assert.match(policy, /`postAttempted: false` and `correctable: true`/);
+    assert.match(policy, /[Ww]rong-agent/);
+    assert.match(policy, /`postAttempted: true`/);
+    assert.match(policy, /`outcomeUnknown: true`/);
+  }
+  for (const policy of [orchestrator, skill]) {
+    assert.match(policy, /Never (retry or\nuse|use) another/);
+    assert.match(policy, /orchestrator-only/);
+    assert.match(policy, /comment-only/);
+  }
+  for (const policy of [userGuide, agentsGuide]) assert.match(policy, /Never use another posting mechanism/);
 });

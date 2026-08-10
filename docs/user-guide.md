@@ -220,7 +220,7 @@ Reviewing and posting are separate acts.
 
 Review is dry-run by default: findings come back to you and nothing leaves your machine. A PR link is not posting authorization.
 
-Posting requires an explicit request in your current message to the directly selected orchestrator — "post the review". Then the orchestrator runs a fresh review against the current head, never a pasted or cached payload, confirms the target still matches, and calls `naru-github-post-review` exactly once.
+Posting requires an explicit request in your current message to the directly selected orchestrator — "post the review". Then the orchestrator runs a fresh review against the current head, never a pasted or cached payload, and confirms the target still matches. At most one GitHub POST attempt is allowed, not one tool invocation. A corrected tool invocation is permitted only after `postAttempted: false` and `correctable: true`; wrong-agent, `postAttempted: true`, or `outcomeUnknown: true` results are terminal. Never use another posting mechanism.
 
 That tool is hard-coded to a `COMMENT` event. It cannot approve, request changes, or merge. It writes a dedupe marker, makes one attempt, and never retries; an ambiguous outcome is reported as ambiguous rather than repeated. Only `naru-orchestrator` can call it. If edits or a push land after a review, that review is stale and needs a new explicit request.
 

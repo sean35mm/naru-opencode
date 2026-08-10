@@ -27,6 +27,6 @@ Dry-run is the default. Posting is allowed only when the current user explicitly
 }
 ```
 
-Make one posting call only. Never retry posting, reuse a stale payload, or use this skill to authorize a post.
+Make at most one GitHub POST attempt, not one tool invocation. A corrected tool call is allowed only after an explicit result with `postAttempted: false` and `correctable: true`. Wrong-agent results, `postAttempted: true`, and `outcomeUnknown: true` are terminal. Never use another posting mechanism, reuse a stale payload, or use this skill to authorize a post. The tool remains orchestrator-only and comment-only.
 
-When a review will be posted, the payload nests the target as `{ owner, repo, pullNumber }` and the snapshot as `{ id, baseSha, headSha, feedbackDigest, complete, warnings }`; `naru-github-read` emits the same values as `number` and `snapshotId`, and either spelling is accepted. Record what you genuinely could not check in `coverage.limitations` — it is published with the review rather than blocking it. Set `coverage.complete` to false only when the review itself is incomplete, which does block posting.
+When a review will be posted, the payload nests the target as `{ owner, repo, pullNumber }` and the snapshot as `{ id, baseSha, headSha, feedbackDigest, complete, warnings }`; `naru-github-read` emits the same values as `number` and `snapshotId`, and either spelling is accepted, but canonical and alias spellings must never both be present. Record what you genuinely could not check in `coverage.limitations` — it is published with the review rather than blocking it. Set `coverage.complete` to false only when the review itself is incomplete, which does block posting.

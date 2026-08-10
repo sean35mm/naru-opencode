@@ -22,6 +22,12 @@ const postRecords = new Map();
 function hash(value) {
     return createHash('sha256').update(value).digest('hex');
 }
+function postState(result, { postAttempted = false, correctable = false, outcomeUnknown = false } = {}) {
+    return { ...result, postAttempted, correctable, outcomeUnknown };
+}
+function postError(error, state) {
+    return postState(errEnvelope('naru-github-post-review', error), state);
+}
 function isUnknownRecord(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -57,7 +63,9 @@ function requireStringArray(value, name, max) {
 // carried straight into a posting payload without a silent rename trap.
 function normalizeTargetAliases(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
-    if (raw.pullNumber === undefined && raw.number !== undefined) {
+    if (Object.hasOwn(raw, 'pullNumber') && Object.hasOwn(raw, 'number'))
+        throw new Error('reviewResult.target cannot contain both pullNumber and number');
+    if (!Object.hasOwn(raw, 'pullNumber') && Object.hasOwn(raw, 'number')) {
         const { number, ...rest } = raw;
         return { ...rest, pullNumber: number };
     }
@@ -65,7 +73,9 @@ function normalizeTargetAliases(raw) {
 }
 function normalizeSnapshotAliases(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
-    if (raw.id === undefined && raw.snapshotId !== undefined) {
+    if (Object.hasOwn(raw, 'id') && Object.hasOwn(raw, 'snapshotId'))
+        throw new Error('reviewResult.snapshot cannot contain both id and snapshotId');
+    if (!Object.hasOwn(raw, 'id') && Object.hasOwn(raw, 'snapshotId')) {
         const { snapshotId, ...rest } = raw;
         return { ...rest, id: snapshotId };
     }
@@ -165,6 +175,7 @@ function markerDigest(payload, comments) {
         ...payload.target,
         headSha: payload.snapshot.headSha,
         body: payload.body,
+        limitations: payload.coverage.limitations,
         comments: normalized,
     }));
 }
@@ -252,26 +263,26 @@ function rememberPost(key, record) {
     }
 }
 function alreadyPosted(reviewId, reviewUrl) {
-    return okEnvelope('naru-github-post-review', {
+    return postState(okEnvelope('naru-github-post-review', {
         posted: false,
         reason: 'alreadyPosted',
         reviewId,
         reviewUrl,
-    });
+    }));
 }
 function recordedPostResult(key, payload, actor, digest) {
     const record = postRecord(key);
     if (!record || record.headSha !== payload.snapshot.headSha)
         return null;
     if (record.actor !== actor.toLowerCase()) {
-        return errEnvelope('naru-github-post-review', 'a review post is already recorded for this head under a different actor; duplicate refused');
+        return postError('a review post is already recorded for this head under a different actor; duplicate refused');
     }
     if (record.digest !== digest) {
-        return errEnvelope('naru-github-post-review', 'a different Naru review already exists on this head; duplicate refused');
+        return postError('a different Naru review already exists on this head; duplicate refused');
     }
     if (record.status === 'succeeded')
         return alreadyPosted(record.reviewId, record.reviewUrl);
-    return errEnvelope('naru-github-post-review', 'outcomeUnknown: a prior in-process POST attempt on this head has an unknown outcome; duplicate refused');
+    return postError('outcomeUnknown: a prior in-process POST attempt on this head has an unknown outcome; duplicate refused', { outcomeUnknown: true });
 }
 function validateCurrentComments(comments, snapshot) {
     const files = new Map(snapshot.files.map(file => [file.filename, file]));
@@ -335,18 +346,18 @@ async function postReviewLocked(payload, spawn, key) {
         snapshot = await currentSnapshot(payload, spawn);
     }
     catch (error) {
-        return errEnvelope('naru-github-post-review', `snapshot failed: ${safeError(error)}`);
+        return postError(`snapshot failed: ${safeError(error)}`, { correctable: true });
     }
     const identityError = snapshotIdentityError(payload, snapshot);
     if (identityError)
-        return errEnvelope('naru-github-post-review', identityError);
+        return postError(identityError, { correctable: true });
     payload.target = { ...payload.target, owner: snapshot.owner, repo: snapshot.repo };
     let actor;
     try {
         actor = await fetchAuthenticatedLogin({ spawn });
     }
     catch (error) {
-        return errEnvelope('naru-github-post-review', `could not resolve authenticated GitHub identity: ${safeError(error)}`);
+        return postError(`could not resolve authenticated GitHub identity: ${safeError(error)}`);
     }
     const initialValidation = validateCurrentComments(payload.inlineComments, snapshot);
     const digest = markerDigest(payload, initialValidation.valid);
@@ -363,24 +374,24 @@ async function postReviewLocked(payload, spawn, key) {
             });
             return alreadyPosted(existing.reviewId, existing.url);
         }
-        return errEnvelope('naru-github-post-review', 'a different Naru review already exists on this head; duplicate refused');
+        return postError('a different Naru review already exists on this head; duplicate refused');
     }
     const recorded = recordedPostResult(key, payload, actor, digest);
     if (recorded)
         return recorded;
     const freshnessError = snapshotFreshnessError(payload, snapshot);
     if (freshnessError)
-        return errEnvelope('naru-github-post-review', freshnessError);
+        return postError(freshnessError, { correctable: true });
     let finalSnapshot;
     try {
         finalSnapshot = await currentSnapshot(payload, spawn);
     }
     catch (error) {
-        return errEnvelope('naru-github-post-review', `final snapshot failed: ${safeError(error)}`);
+        return postError(`final snapshot failed: ${safeError(error)}`, { correctable: true });
     }
     const finalIdentityError = snapshotIdentityError(payload, finalSnapshot);
     if (finalIdentityError)
-        return errEnvelope('naru-github-post-review', `final ${finalIdentityError}`);
+        return postError(`final ${finalIdentityError}`, { correctable: true });
     const finalValidation = validateCurrentComments(payload.inlineComments, finalSnapshot);
     const finalDigest = markerDigest(payload, finalValidation.valid);
     const finalExisting = markerOnHead(finalSnapshot.reviews, payload.target, finalSnapshot.headSha, actor);
@@ -396,16 +407,16 @@ async function postReviewLocked(payload, spawn, key) {
             });
             return alreadyPosted(finalExisting.reviewId, finalExisting.url);
         }
-        return errEnvelope('naru-github-post-review', 'a different Naru review already exists on this head; duplicate refused');
+        return postError('a different Naru review already exists on this head; duplicate refused');
     }
     const finalRecorded = recordedPostResult(key, payload, actor, finalDigest);
     if (finalRecorded)
         return finalRecorded;
     const finalFreshnessError = snapshotFreshnessError(payload, finalSnapshot);
     if (finalFreshnessError)
-        return errEnvelope('naru-github-post-review', `final ${finalFreshnessError}`);
+        return postError(`final ${finalFreshnessError}`, { correctable: true });
     if (finalDigest !== digest || locationValidationDigest(finalValidation) !== locationValidationDigest(initialValidation)) {
-        return errEnvelope('naru-github-post-review', 'inline comment locations changed during final validation; refusing to post');
+        return postError('inline comment locations changed during final validation; refusing to post', { correctable: true });
     }
     const validComments = finalValidation.valid;
     const droppedComments = finalValidation.dropped;
@@ -414,6 +425,8 @@ async function postReviewLocked(payload, spawn, key) {
         ? `\n\n---\n\n**Review limitations**\n${payload.coverage.limitations.map(item => `- ${item}`).join('\n')}`
         : '';
     const body = `${marker}\n${payload.body}${limitationsNote}`;
+    if (body.length > MAX_BODY_LENGTH)
+        return postError(`composed review body exceeds ${MAX_BODY_LENGTH} characters`, { correctable: true });
     const ghPayload = {
         body,
         event: 'COMMENT',
@@ -454,7 +467,7 @@ async function postReviewLocked(payload, spawn, key) {
                     reviewId: result.id,
                     reviewUrl,
                 });
-                return okEnvelope('naru-github-post-review', {
+                return postState(okEnvelope('naru-github-post-review', {
                     posted: true,
                     reviewId: result.id,
                     reviewUrl,
@@ -462,7 +475,7 @@ async function postReviewLocked(payload, spawn, key) {
                     droppedComments,
                 }, {
                     warnings: droppedComments.length ? [`dropped ${droppedComments.length} invalid inline comments`] : [],
-                });
+                }), { postAttempted: true });
             }
         }
         catch {
@@ -482,42 +495,49 @@ async function postReviewLocked(payload, spawn, key) {
                 reviewId: recovered.reviewId,
                 reviewUrl: recovered.url,
             });
-            return okEnvelope('naru-github-post-review', {
+            return postState(okEnvelope('naru-github-post-review', {
                 posted: true,
                 recovered: true,
                 reviewId: recovered.reviewId,
                 reviewUrl: recovered.url,
                 commentsPosted: ghPayload.comments.length,
                 droppedComments,
-            });
+            }), { postAttempted: true });
         }
     }
     catch {
         // Preserve the unknown outcome below.
     }
-    return errEnvelope('naru-github-post-review', 'outcomeUnknown: the review may or may not have been posted', {
+    return postState(errEnvelope('naru-github-post-review', 'outcomeUnknown: the review may or may not have been posted', {
         warnings: [stripSecrets(postResult.stderr || postResult.stdout || '')].filter(Boolean),
-    });
+    }), { postAttempted: true, outcomeUnknown: true });
 }
 export async function postReview(rawPayload, context, { spawn } = {}) {
     if (!context || typeof context !== 'object' || !POSTING_AGENTS.has(typeof context.agent === 'string' ? context.agent : '')) {
-        return errEnvelope('naru-github-post-review', 'caller agent identity mismatch');
+        return postError('caller agent identity mismatch');
     }
     let payload;
     try {
         payload = validateReviewPayload(rawPayload);
     }
     catch (error) {
-        return errEnvelope('naru-github-post-review', `invalid input: ${safeError(error)}`);
+        return postError(`invalid input: ${safeError(error)}`, { correctable: true });
     }
     if (!payload.coverage.complete || !payload.snapshot.complete) {
-        return errEnvelope('naru-github-post-review', 'incomplete coverage or snapshot cannot be posted');
+        return postError('incomplete coverage or snapshot cannot be posted', { correctable: true });
     }
+    const preflightDigest = markerDigest(payload, payload.inlineComments);
+    const preflightMarker = markerTag(payload, preflightDigest);
+    const preflightLimitations = payload.coverage.limitations.length > 0
+        ? `\n\n---\n\n**Review limitations**\n${payload.coverage.limitations.map(item => `- ${item}`).join('\n')}`
+        : '';
+    if (`${preflightMarker}\n${payload.body}${preflightLimitations}`.length > MAX_BODY_LENGTH)
+        return postError(`composed review body exceeds ${MAX_BODY_LENGTH} characters`, { correctable: true });
     const key = targetKey(payload.target);
     try {
         return await withPostLock(key, () => postReviewLocked(payload, spawn, key));
     }
     catch (error) {
-        return errEnvelope('naru-github-post-review', `review post coordination failed: ${safeError(error)}`);
+        return postError(`review post coordination failed: ${safeError(error)}`);
     }
 }
