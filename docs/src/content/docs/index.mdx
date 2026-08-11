@@ -94,7 +94,7 @@ The three subagents are hidden and cannot spawn children of their own. The topol
 - Local changes are the default stop. Commit, push, PR, and posting each need an explicit current request.
 - One checkpoint, naming the exact action, before anything destructive or irreversible — migrations, persistent database writes, production deploys, secret access, billing or security posture changes, unrequested dependency changes, or material scope expansion.
 - One writer per logical scope; overlapping scopes serialize.
-- PR review is dry-run by default: one COMMENT-only attempt, never a retry of an ambiguous POST. It cannot approve, request changes, or merge.
+- PR review is dry-run by default. A generic current request posts `COMMENT`; explicit current-message policy can authorize an evidence-gated `APPROVE` or `REQUEST_CHANGES`. Limited evidence remains `COMMENT`. There is one POST attempt and never a retry of an ambiguous outcome; Naru cannot merge.
 - Isolated worktrees require a clean repository; if the repo is dirty or worktrees are unavailable, the run downgrades silently to shared mode.
 
 ## What Naru is not

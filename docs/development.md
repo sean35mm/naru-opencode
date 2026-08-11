@@ -70,8 +70,10 @@ Tools (`tools/`):
   `grep`, `merge-base`. Fixed argv arrays, `--no-pager`/`--no-color`, never mutates state.
 - **`naru-github-read`** — `resolve`, `issue`, `pull`, `source`. Pull snapshots are pinned to exact
   40-hex SHAs so a review reasons about an immutable target.
-- **`naru-github-post-review`** — orchestrator-only, hard-coded `COMMENT` event, one attempt, no
-  retry, dedupe marker. It cannot approve, request changes, or merge.
+- **`naru-github-post-review`** — orchestrator-only; derives `COMMENT`, `APPROVE`, or
+  `REQUEST_CHANGES` from the asserted current-message policy and final validated evidence. It
+  accepts no raw event, makes one POST attempt with no retry, and carries freshness and dedupe
+  guards. Limited evidence is always `COMMENT`; it cannot merge.
 - **`naru-worktree`** — isolated writer worktrees: `prepare_run`, `recover_run`, `prepare_item`,
   `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run`.
 - **`naru-doctor`** — provider-free local install and configuration health report.
@@ -139,8 +141,9 @@ Concurrency and review:
 
 - One writer per logical scope; overlapping scopes serialize. A writer takes a Weaver claim before
   its first edit. A claim conflict is a scheduling signal, never a user prompt.
-- Pull-request review is dry-run by default. Posting requires an explicit current request, is
-  `COMMENT`-only, is a single attempt, and is never retried when the outcome of a POST is ambiguous.
+- Pull-request review is dry-run by default. Posting requires explicit current-message policy;
+  generic posting language authorizes `COMMENT`, while formal decisions require complete evidence.
+  There is one POST attempt, never a retry when its outcome is ambiguous.
 - Isolated worktrees require a clean repository. A dirty or unavailable workspace downgrades
   silently to shared mode instead of failing or prompting.
 
@@ -277,8 +280,9 @@ any of them only with a migration and a targeted test.
    (`naru-dispatch`), and an orchestrator `task` map that allows exactly the three subagents (the dispatch plugin extends it with generated class variants at config load).
 2. Review permission blocks for the `'*': deny` start, the writer-only edit boundary, the runner-only
    bash boundary, read-only `bash`/`external_directory` denials, and the secret path denials.
-3. Confirm the posting path is still orchestrator-only, `COMMENT`-only, single-attempt, and
-   deduped.
+3. Confirm the posting path is still orchestrator-only, derives review events only within schema v3
+   policy and final evidence gates, makes one POST attempt with no retry, and is deduped; v2 remains
+   complete-evidence `COMMENT`-only.
 4. Run the three suites plus `git diff --check`, and record any check that was not run. Run
    `npm run test:installer` whenever installed inventory, migration, or copy/symlink behavior
    changed.

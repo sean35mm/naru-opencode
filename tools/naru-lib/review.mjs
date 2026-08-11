@@ -1,4 +1,4 @@
-// Validated COMMENT-only PR review posting. This module exposes no caller-
+// Validated PR review posting. This module exposes no caller-
 // controlled command, HTTP method, endpoint, environment, or working directory.
 import { createHash } from 'node:crypto';
 import { run } from './transport.mjs';
@@ -9,10 +9,17 @@ const MAX_BODY_LENGTH = 64 * 1024;
 const MAX_COMMENT_BODY_LENGTH = 32 * 1024;
 const MAX_COMMENTS = 100;
 const MAX_WARNINGS = 100;
+const MAX_RENDERED_FINDINGS_LENGTH = 48 * 1024;
 const MAX_GH_BYTES = 32 * 1024 * 1024;
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
 const SEVERITIES = ['Critical', 'High', 'Medium', 'Low'];
 const CONFIDENCE = ['High', 'Medium', 'Low'];
+const SUBMISSION_POLICY_EVENTS = Object.freeze({
+    'comment-only': new Set(['COMMENT']),
+    'approve-if-clear': new Set(['COMMENT', 'APPROVE']),
+    'request-changes-if-blocked': new Set(['COMMENT', 'REQUEST_CHANGES']),
+    'select-state': new Set(['COMMENT', 'APPROVE', 'REQUEST_CHANGES']),
+});
 const SNAPSHOT_ID = /^naru-snap-[0-9a-f]{64}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
 const POSTING_AGENTS = new Set(['naru-orchestrator']);
@@ -110,6 +117,15 @@ function validateCoverage(raw) {
         limitations: requireStringArray(requireField(raw, 'limitations', isUnknownArray), 'reviewResult.coverage.limitations', MAX_WARNINGS),
     };
 }
+function validateV3Coverage(raw, snapshotWarnings) {
+    assertPlainObject(raw, 'reviewResult.coverage');
+    validateAllowedKeys(raw, ['posture', 'limitations']);
+    const posture = requireField(raw, 'posture', value => value === 'complete' || value === 'limited');
+    const limitations = requireStringArray(requireField(raw, 'limitations', isUnknownArray), 'reviewResult.coverage.limitations', MAX_WARNINGS);
+    if (posture === 'limited' && limitations.length === 0 && snapshotWarnings.length === 0)
+        throw new Error('limited review evidence requires at least one coverage limitation or snapshot warning');
+    return { posture, limitations };
+}
 function validateComment(raw, index) {
     assertPlainObject(raw, `reviewResult.inlineComments[${index}]`);
     validateAllowedKeys(raw, ['path', 'line', 'side', 'body', 'priority', 'severity', 'confidence']);
@@ -132,28 +148,57 @@ function validateSkippedComment(raw, index) {
         reason: requireField(raw, 'reason', (value) => isBoundedText(value, 4096)),
     };
 }
+function validateFinding(raw, index) {
+    assertPlainObject(raw, `reviewResult.findings[${index}]`);
+    validateAllowedKeys(raw, ['path', 'line', 'side', 'body', 'priority', 'severity', 'confidence']);
+    const hasPath = Object.hasOwn(raw, 'path');
+    const hasLine = Object.hasOwn(raw, 'line');
+    const hasSide = Object.hasOwn(raw, 'side');
+    if (hasLine !== hasSide || (!hasPath && (hasLine || hasSide)))
+        throw new Error(`reviewResult.findings[${index}] must omit path, line, and side together, or provide path with line and side together`);
+    const finding = {
+        body: requireField(raw, 'body', value => isBoundedText(value, MAX_COMMENT_BODY_LENGTH)),
+        priority: requireField(raw, 'priority', isPriority),
+        severity: requireField(raw, 'severity', isSeverity),
+        confidence: requireField(raw, 'confidence', isConfidence),
+    };
+    if (hasPath)
+        finding.path = requireField(raw, 'path', isSafeRelativePath);
+    if (hasLine) {
+        finding.line = requireField(raw, 'line', isPositiveInteger);
+        finding.side = requireField(raw, 'side', isReviewSide);
+    }
+    return finding;
+}
 export function validateReviewPayload(raw) {
     assertPlainObject(raw, 'input');
     validateAllowedKeys(raw, ['reviewResult']);
     const result = requireField(raw, 'reviewResult', isUnknownRecord);
     assertPlainObject(result, 'reviewResult');
-    validateAllowedKeys(result, [
-        'schemaVersion',
-        'target',
-        'snapshot',
-        'coverage',
-        'body',
-        'inlineComments',
-        'skippedInlineComments',
-    ]);
-    if (result.schemaVersion !== 2)
-        throw new Error('reviewResult.schemaVersion must be 2');
+    if (result.schemaVersion !== 2 && result.schemaVersion !== 3)
+        throw new Error('reviewResult.schemaVersion must be 2 or 3');
+    const version = result.schemaVersion;
+    validateAllowedKeys(result, version === 2
+        ? ['schemaVersion', 'target', 'snapshot', 'coverage', 'body', 'inlineComments', 'skippedInlineComments']
+        : ['schemaVersion', 'target', 'snapshot', 'coverage', 'body', 'submissionPolicy', 'conclusion', 'findings']);
     const target = validateTarget(normalizeTargetAliases(requireField(result, 'target', isUnknownRecord)));
     const snapshot = validateSnapshot(normalizeSnapshotAliases(requireField(result, 'snapshot', isUnknownRecord)));
-    const coverage = validateCoverage(requireField(result, 'coverage', isUnknownRecord));
     const body = requireField(result, 'body', (value) => isBoundedText(value, MAX_BODY_LENGTH - 256));
     if (/<!--\s*naru-review:/i.test(body))
         throw new Error('reviewResult.body contains a reserved Naru marker');
+    if (version === 3) {
+        const coverage = validateV3Coverage(requireField(result, 'coverage', isUnknownRecord), snapshot.warnings);
+        const submissionPolicy = result.submissionPolicy;
+        if (typeof submissionPolicy !== 'string' || !Object.hasOwn(SUBMISSION_POLICY_EVENTS, submissionPolicy)) {
+            throw new Error('reviewResult.submissionPolicy must assert current user authorization as comment-only, approve-if-clear, request-changes-if-blocked, or select-state');
+        }
+        const conclusion = requireField(result, 'conclusion', value => ['informational', 'clear', 'blocking'].includes(value));
+        const findingsRaw = requireField(result, 'findings', isUnknownArray);
+        if (findingsRaw.length > MAX_COMMENTS)
+            throw new Error(`findings exceeds ${MAX_COMMENTS}`);
+        return { schemaVersion: 3, target, snapshot, coverage, body, submissionPolicy, conclusion, findings: findingsRaw.map(validateFinding) };
+    }
+    const coverage = validateCoverage(requireField(result, 'coverage', isUnknownRecord));
     const commentsRaw = requireField(result, 'inlineComments', isUnknownArray);
     if (commentsRaw.length > MAX_COMMENTS)
         throw new Error(`inlineComments exceeds ${MAX_COMMENTS}`);
@@ -162,21 +207,36 @@ export function validateReviewPayload(raw) {
     if (skippedRaw.length > MAX_COMMENTS)
         throw new Error(`skippedInlineComments exceeds ${MAX_COMMENTS}`);
     const skippedInlineComments = skippedRaw.map(validateSkippedComment);
-    return { target, snapshot, coverage, body, inlineComments, skippedInlineComments };
+    return { schemaVersion: 2, target, snapshot, coverage, body, inlineComments, skippedInlineComments };
 }
-function markerDigest(payload, comments) {
+function markerDigest(payload, comments, decision, renderedFindings = '') {
     const normalized = comments.map(comment => ({
         path: comment.path,
         line: comment.line,
         side: comment.side,
         body: comment.body,
     })).sort((a, b) => `${a.path}:${a.side}:${a.line}`.localeCompare(`${b.path}:${b.side}:${b.line}`));
-    return hash(JSON.stringify({
+    const legacy = {
         ...payload.target,
         headSha: payload.snapshot.headSha,
         body: payload.body,
         limitations: payload.coverage.limitations,
         comments: normalized,
+    };
+    if (payload.schemaVersion === 2)
+        return hash(JSON.stringify(legacy));
+    return hash(JSON.stringify({
+        ...legacy,
+        schemaVersion: 3,
+        event: decision.event,
+        evidencePosture: decision.evidencePosture,
+        limitations: decision.limitations,
+        coveragePosture: payload.coverage.posture,
+        conclusion: payload.conclusion,
+        submissionPolicy: payload.submissionPolicy,
+        authorizationPolicy: decision.authorizationPolicy,
+        findings: payload.findings,
+        renderedFindings,
     }));
 }
 function markerTag(payload, digest) {
@@ -262,12 +322,16 @@ function rememberPost(key, record) {
         postRecords.delete(oldest.value);
     }
 }
-function alreadyPosted(reviewId, reviewUrl) {
+function alreadyPosted(reviewId, reviewUrl, decision = {}) {
     return postState(okEnvelope('naru-github-post-review', {
         posted: false,
         reason: 'alreadyPosted',
         reviewId,
         reviewUrl,
+        event: decision.event,
+        evidencePosture: decision.evidencePosture,
+        limitations: decision.limitations,
+        submissionPolicy: decision.authorizationPolicy,
     }));
 }
 function recordedPostResult(key, payload, actor, digest) {
@@ -281,7 +345,7 @@ function recordedPostResult(key, payload, actor, digest) {
         return postError('a different Naru review already exists on this head; duplicate refused');
     }
     if (record.status === 'succeeded')
-        return alreadyPosted(record.reviewId, record.reviewUrl);
+        return alreadyPosted(record.reviewId, record.reviewUrl, record);
     return postError('outcomeUnknown: a prior in-process POST attempt on this head has an unknown outcome; duplicate refused', { outcomeUnknown: true });
 }
 function validateCurrentComments(comments, snapshot) {
@@ -303,6 +367,59 @@ function validateCurrentComments(comments, snapshot) {
     }
     return { valid, dropped };
 }
+function isCompletePatch(file) {
+    return Boolean(file && !file.patchRedacted && !file.patchTruncated && file.patchAvailable
+        && (!file.patchEvidence || file.patchEvidence.status === 'complete'));
+}
+function isApprovalBlocker(finding) {
+    return (finding.priority === 'P0' || finding.priority === 'P1')
+        && (finding.severity === 'Critical' || finding.severity === 'High')
+        && finding.confidence === 'High';
+}
+function validateCurrentFindings(findings, snapshot) {
+    const files = new Map(snapshot.files.map(file => [file.filename, file]));
+    const validInline = [];
+    const invalid = [];
+    const nonInline = [];
+    const eligibleBlockers = [];
+    for (const finding of findings) {
+        const file = finding.path ? files.get(finding.path) : undefined;
+        let reason;
+        let displayPath = finding.path;
+        let blockerEvidenceValid = false;
+        let invalidLocation = false;
+        if (!finding.path)
+            reason = 'no path or inline location was supplied';
+        else if (!isCompletePatch(file)) {
+            reason = 'current path does not have complete patch evidence';
+            invalidLocation = true;
+        }
+        else if (finding.line !== undefined) {
+            const lines = finding.side === 'LEFT' ? file?.lineMap?.left : file?.lineMap?.right;
+            if (!Array.isArray(lines) || !lines.includes(finding.line)) {
+                reason = 'line and side are not present in the current patch';
+                invalidLocation = true;
+            }
+            else {
+                validInline.push(finding);
+                blockerEvidenceValid = true;
+            }
+        }
+        else {
+            reason = 'no inline location was supplied for this path-level finding';
+            blockerEvidenceValid = true;
+        }
+        if (file?.patchRedacted)
+            displayPath = undefined;
+        if (invalidLocation)
+            invalid.push({ finding, reason });
+        if (!validInline.includes(finding))
+            nonInline.push({ finding, reason, displayPath });
+        if (isApprovalBlocker(finding) && blockerEvidenceValid)
+            eligibleBlockers.push(finding);
+    }
+    return { validInline, invalid, nonInline, eligibleBlockers };
+}
 function locationValidationDigest(validation) {
     return hash(JSON.stringify({
         valid: validation.valid.map(({ path, line, side }) => ({ path, line, side })),
@@ -311,6 +428,61 @@ function locationValidationDigest(validation) {
             line: comment.line,
             side: comment.side,
             reason,
+        })),
+    }));
+}
+function findingValidationDigest(validation) {
+    return hash(JSON.stringify({
+        validInline: validation.validInline.map(({ path, line, side }) => ({ path, line, side })),
+        invalid: validation.invalid.map(({ finding, reason }) => ({ path: finding.path, line: finding.line, side: finding.side, reason })),
+        nonInline: validation.nonInline.map(({ finding, reason, displayPath }) => ({ body: finding.body, displayPath, line: finding.line, side: finding.side, reason })),
+        eligibleBlockers: validation.eligibleBlockers.map(({ path, line, side, body }) => ({ path, line, side, body })),
+    }));
+}
+function boundedSafeMarkdown(value, max) {
+    const normalized = value.replace(/\r\n?/g, '\n').replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ');
+    const escaped = normalized
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('`', '&#96;');
+    return escaped.length > max ? `${escaped.slice(0, max)}…` : escaped;
+}
+function renderNonInlineFindings(entries) {
+    if (entries.length === 0)
+        return '';
+    const bodyLimit = Math.max(64, Math.min(256, Math.floor(16 * 1024 / entries.length)));
+    const rendered = entries.map(({ finding, reason, displayPath }, index) => {
+        const location = displayPath
+            ? `${boundedSafeMarkdown(displayPath, 96)}${finding.line !== undefined ? `:${finding.line} (${finding.side})` : ''}`
+            : 'not available';
+        const body = boundedSafeMarkdown(finding.body, bodyLimit).split('\n').map(line => `> ${line}`).join('\n');
+        return [
+            `### Finding ${index + 1}: ${finding.priority} · ${finding.severity} · ${finding.confidence} confidence`,
+            `Location: ${location}`,
+            `Location unavailable: ${boundedSafeMarkdown(reason || 'not emitted as an inline comment', 128)}`,
+            body,
+        ].join('\n\n');
+    }).join('\n\n');
+    const section = `\n\n---\n\n## Findings not posted inline\n\n${rendered}`;
+    if (section.length > MAX_RENDERED_FINDINGS_LENGTH)
+        throw new Error('rendered non-inline findings exceed the safe body allowance');
+    return section;
+}
+function snapshotEvidenceDigest(snapshot) {
+    return hash(JSON.stringify({
+        state: snapshot.pull?.state,
+        draft: snapshot.pull?.draft,
+        author: snapshot.pull?.author,
+        contentDigest: snapshot.pull?.contentDigest,
+        reviewability: snapshot.reviewability,
+        files: snapshot.files.map(file => ({
+            filename: file.filename,
+            patchEvidence: file.patchEvidence,
+            patchAvailable: file.patchAvailable,
+            patchTruncated: file.patchTruncated,
+            patchRedacted: file.patchRedacted,
+            lineMap: file.lineMap,
         })),
     }));
 }
@@ -336,9 +508,82 @@ function snapshotFreshnessError(payload, snapshot) {
         return 'snapshot ID mismatch';
     if (snapshot.feedbackDigest !== payload.snapshot.feedbackDigest)
         return 'snapshot feedback digest mismatch';
-    if (!snapshot.complete)
+    if (payload.schemaVersion === 2 && !snapshot.complete)
         return 'current snapshot is incomplete; refusing to post';
     return null;
+}
+function reviewability(snapshot) {
+    if (snapshot.reviewability)
+        return snapshot.reviewability;
+    return {
+        status: snapshot.complete ? 'complete' : 'unpostable',
+        inventoryComplete: Boolean(snapshot.completeness?.allFilesIncluded),
+        feedbackComplete: Boolean(snapshot.completeness?.feedbackComplete),
+        patchesComplete: Boolean(snapshot.completeness?.patchesComplete),
+        limitations: snapshot.warnings ?? [],
+    };
+}
+function deriveReviewSubmission(payload, initialSnapshot, finalSnapshot, actor, validation) {
+    const currentEvidence = reviewability(initialSnapshot);
+    const finalEvidence = reviewability(finalSnapshot);
+    if (finalSnapshot.pull?.state?.toLowerCase() !== 'open')
+        throw new Error('pull request is not open');
+    if (currentEvidence.status === 'unpostable' || finalEvidence.status === 'unpostable')
+        throw new Error('snapshot reviewability is unpostable');
+    if (payload.schemaVersion === 2) {
+        if (currentEvidence.status !== 'complete' || finalEvidence.status !== 'complete')
+            throw new Error('v2 requires complete review evidence');
+        return {
+            event: 'COMMENT', evidencePosture: 'complete', limitations: payload.coverage.limitations,
+            authorizationPolicy: 'comment-only',
+        };
+    }
+    const payloadEvidenceLimited = payload.snapshot.complete !== true;
+    if ((payloadEvidenceLimited || currentEvidence.status === 'limited-comment' || finalEvidence.status === 'limited-comment')
+        && payload.coverage.posture !== 'limited') {
+        throw new Error('limited snapshot evidence requires limited coverage posture');
+    }
+    const evidencePosture = payload.snapshot.complete === true
+        && currentEvidence.status === 'complete' && finalEvidence.status === 'complete'
+        && payload.coverage.posture === 'complete' ? 'complete' : 'limited';
+    const payloadWarnings = evidencePosture === 'limited'
+        ? payload.snapshot.warnings.map(warning => `Payload snapshot warning: ${warning}`)
+        : [];
+    const snapshotLimitations = [...new Set([
+        ...payloadWarnings,
+        ...(currentEvidence.limitations ?? []),
+        ...(finalEvidence.limitations ?? []),
+    ])].slice(0, MAX_WARNINGS);
+    const limitations = [...new Set([...snapshotLimitations, ...payload.coverage.limitations])].slice(0, MAX_WARNINGS);
+    if (evidencePosture === 'limited' && limitations.length === 0)
+        throw new Error('limited review evidence requires at least one limitation');
+    const declaredBlockers = payload.findings.filter(isApprovalBlocker);
+    const droppedBlocker = declaredBlockers.some(finding => !validation.eligibleBlockers.includes(finding));
+    const formalEligible = evidencePosture === 'complete'
+        && finalSnapshot.pull?.draft === false
+        && typeof finalSnapshot.pull?.author === 'string'
+        && finalSnapshot.pull.author.toLowerCase() !== actor.toLowerCase();
+    let event = 'COMMENT';
+    if (payload.submissionPolicy === 'approve-if-clear'
+        && formalEligible && payload.conclusion === 'clear' && declaredBlockers.length === 0 && !droppedBlocker) {
+        event = 'APPROVE';
+    }
+    else if (payload.submissionPolicy === 'request-changes-if-blocked'
+        && formalEligible && payload.conclusion === 'blocking' && validation.eligibleBlockers.length > 0) {
+        event = 'REQUEST_CHANGES';
+    }
+    else if (payload.submissionPolicy === 'select-state') {
+        if (formalEligible && payload.conclusion === 'blocking' && validation.eligibleBlockers.length > 0)
+            event = 'REQUEST_CHANGES';
+        else if (formalEligible && payload.conclusion === 'clear' && declaredBlockers.length === 0 && !droppedBlocker)
+            event = 'APPROVE';
+    }
+    if (!SUBMISSION_POLICY_EVENTS[payload.submissionPolicy].has(event))
+        throw new Error('derived review event exceeds the asserted submission authorization policy');
+    return {
+        event, evidencePosture, limitations, droppedBlocker,
+        authorizationPolicy: payload.submissionPolicy,
+    };
 }
 async function postReviewLocked(payload, spawn, key) {
     let snapshot;
@@ -359,26 +604,6 @@ async function postReviewLocked(payload, spawn, key) {
     catch (error) {
         return postError(`could not resolve authenticated GitHub identity: ${safeError(error)}`);
     }
-    const initialValidation = validateCurrentComments(payload.inlineComments, snapshot);
-    const digest = markerDigest(payload, initialValidation.valid);
-    const existing = markerOnHead(snapshot.reviews, payload.target, snapshot.headSha, actor);
-    if (existing) {
-        if (existing.digest === digest) {
-            rememberPost(key, {
-                actor: actor.toLowerCase(),
-                headSha: snapshot.headSha,
-                digest,
-                status: 'succeeded',
-                reviewId: existing.reviewId,
-                reviewUrl: existing.url,
-            });
-            return alreadyPosted(existing.reviewId, existing.url);
-        }
-        return postError('a different Naru review already exists on this head; duplicate refused');
-    }
-    const recorded = recordedPostResult(key, payload, actor, digest);
-    if (recorded)
-        return recorded;
     const freshnessError = snapshotFreshnessError(payload, snapshot);
     if (freshnessError)
         return postError(freshnessError, { correctable: true });
@@ -392,44 +617,71 @@ async function postReviewLocked(payload, spawn, key) {
     const finalIdentityError = snapshotIdentityError(payload, finalSnapshot);
     if (finalIdentityError)
         return postError(`final ${finalIdentityError}`, { correctable: true });
-    const finalValidation = validateCurrentComments(payload.inlineComments, finalSnapshot);
-    const finalDigest = markerDigest(payload, finalValidation.valid);
-    const finalExisting = markerOnHead(finalSnapshot.reviews, payload.target, finalSnapshot.headSha, actor);
-    if (finalExisting) {
-        if (finalExisting.digest === finalDigest) {
-            rememberPost(key, {
-                actor: actor.toLowerCase(),
-                headSha: finalSnapshot.headSha,
-                digest: finalDigest,
-                status: 'succeeded',
-                reviewId: finalExisting.reviewId,
-                reviewUrl: finalExisting.url,
-            });
-            return alreadyPosted(finalExisting.reviewId, finalExisting.url);
-        }
-        return postError('a different Naru review already exists on this head; duplicate refused');
-    }
-    const finalRecorded = recordedPostResult(key, payload, actor, finalDigest);
-    if (finalRecorded)
-        return finalRecorded;
     const finalFreshnessError = snapshotFreshnessError(payload, finalSnapshot);
     if (finalFreshnessError)
         return postError(`final ${finalFreshnessError}`, { correctable: true });
-    if (finalDigest !== digest || locationValidationDigest(finalValidation) !== locationValidationDigest(initialValidation)) {
-        return postError('inline comment locations changed during final validation; refusing to post', { correctable: true });
+    if (snapshotEvidenceDigest(snapshot) !== snapshotEvidenceDigest(finalSnapshot))
+        return postError('review evidence or pull request state changed during final validation; refusing to post', { correctable: true });
+    const initialValidation = payload.schemaVersion === 2
+        ? validateCurrentComments(payload.inlineComments, snapshot)
+        : validateCurrentFindings(payload.findings, snapshot);
+    const finalValidation = payload.schemaVersion === 2
+        ? validateCurrentComments(payload.inlineComments, finalSnapshot)
+        : validateCurrentFindings(payload.findings, finalSnapshot);
+    const validationChanged = payload.schemaVersion === 2
+        ? locationValidationDigest(finalValidation) !== locationValidationDigest(initialValidation)
+        : findingValidationDigest(finalValidation) !== findingValidationDigest(initialValidation);
+    if (validationChanged)
+        return postError('finding locations or evidence changed during final validation; refusing to post', { correctable: true });
+    let decision;
+    try {
+        decision = deriveReviewSubmission(payload, snapshot, finalSnapshot, actor, finalValidation);
     }
-    const validComments = finalValidation.valid;
-    const droppedComments = finalValidation.dropped;
+    catch (error) {
+        return postError(safeError(error), { correctable: true });
+    }
+    const validComments = payload.schemaVersion === 2 ? finalValidation.valid : finalValidation.validInline;
+    const droppedComments = payload.schemaVersion === 2 ? finalValidation.dropped : finalValidation.invalid;
+    let findingsSection = '';
+    try {
+        findingsSection = payload.schemaVersion === 3 ? renderNonInlineFindings(finalValidation.nonInline) : '';
+    }
+    catch (error) {
+        return postError(safeError(error), { correctable: true });
+    }
+    const digest = markerDigest(payload, validComments, decision, findingsSection);
+    const existing = markerOnHead(finalSnapshot.reviews, payload.target, finalSnapshot.headSha, actor);
+    if (existing) {
+        if (existing.digest === digest) {
+            rememberPost(key, {
+                actor: actor.toLowerCase(), headSha: finalSnapshot.headSha, digest,
+                status: 'succeeded', reviewId: existing.reviewId, reviewUrl: existing.url,
+                event: decision.event, evidencePosture: decision.evidencePosture,
+                limitations: decision.limitations,
+                authorizationPolicy: decision.authorizationPolicy,
+            });
+            return alreadyPosted(existing.reviewId, existing.url, decision);
+        }
+        return postError('a different Naru review already exists on this head; duplicate refused');
+    }
+    const recorded = recordedPostResult(key, payload, actor, digest);
+    if (recorded)
+        return recorded;
     const marker = markerTag(payload, digest);
-    const limitationsNote = payload.coverage.limitations.length > 0
-        ? `\n\n---\n\n**Review limitations**\n${payload.coverage.limitations.map(item => `- ${item}`).join('\n')}`
+    const limitationsNote = decision.limitations.length > 0
+        ? `\n\n---\n\n**Review limitations**\n${decision.limitations.map(item => `- ${item}`).join('\n')}`
         : '';
-    const body = `${marker}\n${payload.body}${limitationsNote}`;
+    const limitedBanner = payload.schemaVersion === 3 && decision.evidencePosture === 'limited'
+        ? `\n> [!WARNING]\n> **Limited review:** This review was forced to COMMENT because complete evidence was unavailable.\n> ${decision.limitations.join('; ')}\n`
+        : '';
+    const formalBody = decision.event !== 'COMMENT' && payload.body.trim().length === 0
+        ? 'Naru identified review findings requiring a formal decision.' : payload.body;
+    const body = `${marker}${limitedBanner}\n${formalBody}${findingsSection}${limitationsNote}`;
     if (body.length > MAX_BODY_LENGTH)
         return postError(`composed review body exceeds ${MAX_BODY_LENGTH} characters`, { correctable: true });
     const ghPayload = {
         body,
-        event: 'COMMENT',
+        event: decision.event,
         commit_id: finalSnapshot.headSha,
         comments: validComments.map(comment => ({
             path: comment.path,
@@ -444,6 +696,10 @@ async function postReviewLocked(payload, spawn, key) {
         headSha: finalSnapshot.headSha,
         digest,
         status: 'unknown',
+        event: decision.event,
+        evidencePosture: decision.evidencePosture,
+        limitations: decision.limitations,
+        authorizationPolicy: decision.authorizationPolicy,
     });
     let postResult;
     try {
@@ -466,6 +722,10 @@ async function postReviewLocked(payload, spawn, key) {
                     status: 'succeeded',
                     reviewId: result.id,
                     reviewUrl,
+                    event: decision.event,
+                    evidencePosture: decision.evidencePosture,
+                    limitations: decision.limitations,
+                    authorizationPolicy: decision.authorizationPolicy,
                 });
                 return postState(okEnvelope('naru-github-post-review', {
                     posted: true,
@@ -473,6 +733,10 @@ async function postReviewLocked(payload, spawn, key) {
                     reviewUrl,
                     commentsPosted: ghPayload.comments.length,
                     droppedComments,
+                    event: decision.event,
+                    evidencePosture: decision.evidencePosture,
+                    limitations: decision.limitations,
+                    submissionPolicy: decision.authorizationPolicy,
                 }, {
                     warnings: droppedComments.length ? [`dropped ${droppedComments.length} invalid inline comments`] : [],
                 }), { postAttempted: true });
@@ -494,6 +758,10 @@ async function postReviewLocked(payload, spawn, key) {
                 status: 'succeeded',
                 reviewId: recovered.reviewId,
                 reviewUrl: recovered.url,
+                event: decision.event,
+                evidencePosture: decision.evidencePosture,
+                limitations: decision.limitations,
+                authorizationPolicy: decision.authorizationPolicy,
             });
             return postState(okEnvelope('naru-github-post-review', {
                 posted: true,
@@ -502,6 +770,10 @@ async function postReviewLocked(payload, spawn, key) {
                 reviewUrl: recovered.url,
                 commentsPosted: ghPayload.comments.length,
                 droppedComments,
+                event: decision.event,
+                evidencePosture: decision.evidencePosture,
+                limitations: decision.limitations,
+                submissionPolicy: decision.authorizationPolicy,
             }), { postAttempted: true });
         }
     }
@@ -523,11 +795,10 @@ export async function postReview(rawPayload, context, { spawn } = {}) {
     catch (error) {
         return postError(`invalid input: ${safeError(error)}`, { correctable: true });
     }
-    if (!payload.coverage.complete || !payload.snapshot.complete) {
+    if (payload.schemaVersion === 2 && (!payload.coverage.complete || !payload.snapshot.complete)) {
         return postError('incomplete coverage or snapshot cannot be posted', { correctable: true });
     }
-    const preflightDigest = markerDigest(payload, payload.inlineComments);
-    const preflightMarker = markerTag(payload, preflightDigest);
+    const preflightMarker = markerTag(payload, '0'.repeat(64));
     const preflightLimitations = payload.coverage.limitations.length > 0
         ? `\n\n---\n\n**Review limitations**\n${payload.coverage.limitations.map(item => `- ${item}`).join('\n')}`
         : '';

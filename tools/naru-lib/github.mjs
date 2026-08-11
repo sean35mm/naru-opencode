@@ -7,6 +7,7 @@ const MAX_GH_BYTES = 32 * 1024 * 1024;
 const MAX_CHANGED_FILES = 3000;
 const MAX_BODY_LENGTH = 64 * 1024;
 const MAX_ITEMS = 1000;
+const MAX_REVIEWABILITY_LIMITATIONS = 100;
 const MAX_PATCH_BYTES_PER_FILE = 1024 * 1024;
 const MAX_TOTAL_PATCH_BYTES = 16 * 1024 * 1024;
 const MAX_SOURCE_BYTES = 1024 * 1024;
@@ -49,6 +50,7 @@ function normalizePullMetadata(value) {
         title: stringField(item.title),
         body: stringField(item.body),
         state: stringField(item.state),
+        draft: typeof item.draft === 'boolean' ? item.draft : undefined,
         html_url: stringField(item.html_url),
         user: loginField(item.user),
         base: pullRefField(item.base),
@@ -136,6 +138,8 @@ export function digestSnapshot(meta, files, reviews, reviewComments, issueCommen
     return hashString(JSON.stringify({
         headSha: meta.head?.sha || '',
         baseSha: meta.base?.sha || '',
+        pullTitle: hashString(typeof meta.title === 'string' ? meta.title : ''),
+        pullBody: hashString(typeof meta.body === 'string' ? meta.body : ''),
         files: fileDigest(files),
         reviews: normalize(reviews),
         reviewComments: normalize(reviewComments),
@@ -307,56 +311,139 @@ export async function fetchIssue({ owner, repo, number }, { spawn } = {}) {
 export async function fetchPull({ owner, repo, number }, { spawn } = {}) {
     return normalizePullMetadata(await ghApi(`repos/${owner}/${repo}/pulls/${number}`, { spawn }));
 }
-function parsePatchLineMap(patch) {
+function assessPatch(file, totalBytesUsed) {
     const map = { left: new Set(), right: new Set(), hunks: [] };
-    if (typeof patch !== 'string' || patch.length === 0)
-        return map;
-    const lines = patch.split('\n');
-    let oldLine = null;
-    let newLine = null;
-    for (const line of lines) {
-        const hunk = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
-        if (hunk) {
-            oldLine = Number.parseInt(hunk[1] ?? '', 10);
-            newLine = Number.parseInt(hunk[3] ?? '', 10);
-            map.hunks.push({ oldStart: oldLine, newStart: newLine });
-            continue;
-        }
-        if (oldLine === null || newLine === null)
-            continue;
-        if (line.startsWith('-')) {
-            map.left.add(oldLine);
-            oldLine += 1;
-        }
-        else if (line.startsWith('+')) {
-            map.right.add(newLine);
-            newLine += 1;
-        }
-        else if (line.startsWith('\\')) {
-            // "\ No newline at end of file" — no line number advance.
-        }
-        else {
-            map.left.add(oldLine);
-            map.right.add(newLine);
-            oldLine += 1;
-            newLine += 1;
-        }
-    }
-    return map;
-}
-function summarizeFile(file, totalBytesUsed) {
     const safePath = isSafeRelativePath(file.filename)
         && (file.previous_filename === undefined || isSafeRelativePath(file.previous_filename));
     const patch = file.patch || '';
     const patchBytes = Buffer.byteLength(patch, 'utf-8');
     const available = safePath && patchBytes > 0;
-    const wouldExceed = totalBytesUsed + patchBytes > MAX_TOTAL_PATCH_BYTES;
-    const truncated = !available
-        || patchBytes > MAX_PATCH_BYTES_PER_FILE
-        || wouldExceed
-        || (typeof file.changes === 'number' && file.changes > 300);
-    const keepPatch = available && !wouldExceed && patchBytes <= MAX_PATCH_BYTES_PER_FILE;
-    const lineMap = keepPatch ? parsePatchLineMap(patch) : parsePatchLineMap(undefined);
+    const perFileLimited = patchBytes > MAX_PATCH_BYTES_PER_FILE;
+    const aggregateLimited = totalBytesUsed + patchBytes > MAX_TOTAL_PATCH_BYTES;
+    const retained = available && !perFileLimited && !aggregateLimited;
+    let reason = !safePath ? 'redacted-path'
+        : patchBytes === 0 ? 'missing-patch'
+            : perFileLimited ? 'per-file-byte-limit'
+                : aggregateLimited ? 'aggregate-byte-limit'
+                    : 'malformed-patch';
+    if (!retained) {
+        return {
+            available,
+            patchBytes,
+            patch: undefined,
+            bytesUsed: 0,
+            map,
+            complete: false,
+            evidence: {
+                status: patchBytes === 0 || !safePath ? 'unavailable' : 'limited',
+                reason,
+                retention: 'none',
+                validation: { structural: false, metadata: false },
+            },
+        };
+    }
+    const lines = patch.split('\n');
+    let current = null;
+    let previousOldEnd = -1;
+    let previousNewEnd = -1;
+    let additions = 0;
+    let deletions = 0;
+    let valid = true;
+    const finishHunk = () => {
+        if (!current)
+            return;
+        if (current.oldConsumed !== current.oldCount || current.newConsumed !== current.newCount)
+            valid = false;
+        previousOldEnd = current.oldStart + current.oldCount;
+        previousNewEnd = current.newStart + current.newCount;
+    };
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (index === lines.length - 1 && line === '')
+            continue;
+        const hunk = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$/);
+        if (hunk) {
+            finishHunk();
+            const oldStart = Number.parseInt(hunk[1] ?? '', 10);
+            const oldCount = hunk[2] === undefined ? 1 : Number.parseInt(hunk[2], 10);
+            const newStart = Number.parseInt(hunk[3] ?? '', 10);
+            const newCount = hunk[4] === undefined ? 1 : Number.parseInt(hunk[4], 10);
+            if (!Number.isSafeInteger(oldStart) || !Number.isSafeInteger(newStart)
+                || !Number.isSafeInteger(oldCount) || !Number.isSafeInteger(newCount)
+                || (oldCount > 0 && oldStart < 1) || (newCount > 0 && newStart < 1)
+                || oldStart < previousOldEnd || newStart < previousNewEnd) {
+                valid = false;
+            }
+            current = { oldStart, oldCount, newStart, newCount, oldConsumed: 0, newConsumed: 0 };
+            map.hunks.push({ oldStart, oldCount, newStart, newCount });
+            continue;
+        }
+        if (!current) {
+            valid = false;
+            continue;
+        }
+        const oldLine = current.oldStart + current.oldConsumed;
+        const newLine = current.newStart + current.newConsumed;
+        if (line.startsWith('-')) {
+            map.left.add(oldLine);
+            current.oldConsumed += 1;
+            deletions += 1;
+        }
+        else if (line.startsWith('+')) {
+            map.right.add(newLine);
+            current.newConsumed += 1;
+            additions += 1;
+        }
+        else if (line === '\\ No newline at end of file') {
+            // "\ No newline at end of file" — no line number advance.
+        }
+        else if (line.startsWith(' ')) {
+            map.left.add(oldLine);
+            map.right.add(newLine);
+            current.oldConsumed += 1;
+            current.newConsumed += 1;
+        }
+        else
+            valid = false;
+        if (current.oldConsumed > current.oldCount || current.newConsumed > current.newCount)
+            valid = false;
+    }
+    finishHunk();
+    if (map.hunks.length === 0)
+        valid = false;
+    const additionsMatch = file.additions === undefined || file.additions === additions;
+    const deletionsMatch = file.deletions === undefined || file.deletions === deletions;
+    const changesMatch = file.changes === undefined
+        || (file.changes === additions + deletions
+            && (file.additions === undefined || file.deletions === undefined || file.changes === file.additions + file.deletions));
+    const metadataValid = additionsMatch && deletionsMatch && changesMatch;
+    const complete = valid && metadataValid;
+    if (!valid)
+        reason = 'malformed-patch';
+    else if (!metadataValid)
+        reason = 'metadata-mismatch';
+    else
+        reason = 'complete';
+    return {
+        available,
+        patchBytes,
+        patch,
+        bytesUsed: patchBytes,
+        map: complete ? map : { left: new Set(), right: new Set(), hunks: [] },
+        complete,
+        evidence: {
+            status: complete ? 'complete' : 'limited',
+            reason,
+            retention: 'full',
+            validation: { structural: valid, metadata: metadataValid },
+        },
+    };
+}
+function summarizeFile(file, totalBytesUsed) {
+    const safePath = isSafeRelativePath(file.filename)
+        && (file.previous_filename === undefined || isSafeRelativePath(file.previous_filename));
+    const assessment = assessPatch(file, totalBytesUsed);
+    const lineMap = assessment.map;
     return {
         filename: file.filename,
         previousFilename: file.previous_filename,
@@ -364,17 +451,18 @@ function summarizeFile(file, totalBytesUsed) {
         additions: file.additions ?? 0,
         deletions: file.deletions ?? 0,
         changes: file.changes ?? 0,
-        patchAvailable: available,
-        patchTruncated: truncated,
+        patchAvailable: assessment.available,
+        patchTruncated: !assessment.complete,
         patchRedacted: !safePath,
-        patchBytes,
+        patchBytes: assessment.patchBytes,
         lineMap: {
             left: [...lineMap.left].sort((a, b) => a - b),
             right: [...lineMap.right].sort((a, b) => a - b),
             hunks: lineMap.hunks,
         },
-        patch: keepPatch ? patch : undefined,
-        bytesUsed: keepPatch ? patchBytes : 0,
+        patch: assessment.patch,
+        patchEvidence: assessment.evidence,
+        bytesUsed: assessment.bytesUsed,
     };
 }
 function normalizeReview(review) {
@@ -442,7 +530,7 @@ export async function pullSnapshot({ owner, repo, number }, { spawn } = {}) {
     const allFiles = acquired.files;
     const fetchedFiles = allFiles.length;
     const totalChangedFiles = meta.changed_files ?? fetchedFiles;
-    if (totalChangedFiles > MAX_CHANGED_FILES || fetchedFiles < totalChangedFiles) {
+    if (totalChangedFiles > MAX_CHANGED_FILES || fetchedFiles !== totalChangedFiles) {
         warnings.push(`changed files exceed or did not satisfy the ${MAX_CHANGED_FILES} file API limit`);
     }
     const files = allFiles.slice(0, MAX_CHANGED_FILES);
@@ -456,6 +544,10 @@ export async function pullSnapshot({ owner, repo, number }, { spawn } = {}) {
     ].some(item => typeof item.body === 'string' && item.body.length > MAX_BODY_LENGTH);
     if (feedbackBodyWasTruncated)
         warnings.push('one or more feedback bodies were truncated');
+    const pullBodyWasTruncated = [meta.title, meta.body]
+        .some(item => typeof item === 'string' && item.length > MAX_BODY_LENGTH);
+    if (pullBodyWasTruncated)
+        warnings.push('pull request title or body was truncated');
     const reviews = boundItems(acquired.reviews.map(normalizeReview), MAX_ITEMS, warnings);
     const reviewComments = boundItems(acquired.reviewComments.map(normalizeComment), MAX_ITEMS, warnings);
     const issueComments = boundItems(acquired.issueComments.map(normalizeComment), MAX_ITEMS, warnings);
@@ -470,6 +562,10 @@ export async function pullSnapshot({ owner, repo, number }, { spawn } = {}) {
     if (fileSummaries.some(file => file.patchTruncated))
         warnings.push('one or more file patches were unavailable or truncated');
     const feedbackDigest = digestSnapshot(meta, files, acquired.reviews, acquired.reviewComments, acquired.issueComments);
+    const pullContentDigest = hashString(JSON.stringify({
+        title: hashString(typeof meta.title === 'string' ? meta.title : ''),
+        body: hashString(typeof meta.body === 'string' ? meta.body : ''),
+    }));
     const headSha = meta.head?.sha;
     const baseSha = meta.base?.sha;
     if (!is40HexSha(headSha) || !is40HexSha(baseSha))
@@ -479,10 +575,29 @@ export async function pullSnapshot({ owner, repo, number }, { spawn } = {}) {
     if (!isSafeOwner(canonicalOwner) || !isSafeRepo(canonicalRepo)) {
         throw new Error('PR metadata returned an invalid canonical repository identity');
     }
-    const allFilesIncluded = totalChangedFiles <= MAX_CHANGED_FILES && fetchedFiles >= totalChangedFiles;
+    const allFilesIncluded = totalChangedFiles <= MAX_CHANGED_FILES && fetchedFiles === totalChangedFiles;
     const patchesComplete = !fileSummaries.some(file => file.patchTruncated || file.patchRedacted);
-    const complete = allFilesIncluded && !feedbackWasCapped && patchesComplete;
-    const contentTruncated = feedbackBodyWasTruncated || fileSummaries.some(file => file.patchTruncated);
+    const inventoryComplete = allFilesIncluded;
+    const feedbackComplete = !feedbackWasCapped && !feedbackBodyWasTruncated;
+    const integrityComplete = inventoryComplete && feedbackComplete && !pullBodyWasTruncated;
+    const reviewabilityStatus = !integrityComplete ? 'unpostable' : patchesComplete ? 'complete' : 'limited-comment';
+    const limitations = [];
+    if (!inventoryComplete)
+        limitations.push('changed file inventory is incomplete');
+    if (feedbackWasCapped)
+        limitations.push('review feedback inventory is capped');
+    if (feedbackBodyWasTruncated)
+        limitations.push('one or more feedback bodies were truncated');
+    if (pullBodyWasTruncated)
+        limitations.push('pull request title or body was truncated');
+    for (const file of fileSummaries) {
+        if (file.patchEvidence.status !== 'complete' && limitations.length < MAX_REVIEWABILITY_LIMITATIONS) {
+            const label = file.patchRedacted ? 'redacted file' : file.filename.slice(0, 256);
+            limitations.push(`${label}: patch evidence ${file.patchEvidence.reason}`);
+        }
+    }
+    const complete = reviewabilityStatus === 'complete';
+    const contentTruncated = !complete;
     return {
         owner: canonicalOwner,
         repo: canonicalRepo,
@@ -491,10 +606,12 @@ export async function pullSnapshot({ owner, repo, number }, { spawn } = {}) {
             title: boundText(meta.title, MAX_BODY_LENGTH),
             body: boundText(meta.body, MAX_BODY_LENGTH),
             state: meta.state,
+            draft: meta.draft,
             url: meta.html_url,
             author: meta.user?.login,
             baseRef: meta.base?.ref,
             headRef: meta.head?.ref,
+            contentDigest: pullContentDigest,
         },
         snapshotId: snapshotId(canonicalOwner, canonicalRepo, number, headSha, baseSha, files),
         headSha,
@@ -510,10 +627,17 @@ export async function pullSnapshot({ owner, repo, number }, { spawn } = {}) {
         feedbackDigest,
         complete,
         contentTruncated,
+        reviewability: {
+            status: reviewabilityStatus,
+            inventoryComplete,
+            feedbackComplete,
+            patchesComplete,
+            limitations: limitations.slice(0, MAX_REVIEWABILITY_LIMITATIONS),
+        },
         completeness: {
             headCoherent: true,
             allFilesIncluded,
-            feedbackComplete: !feedbackWasCapped,
+            feedbackComplete,
             patchesComplete,
             patchesMayBeTruncated: !patchesComplete,
         },

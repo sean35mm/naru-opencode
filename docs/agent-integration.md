@@ -115,12 +115,12 @@ Naru installs four custom OpenCode tools. Each returns the same JSON envelope:
 | --- | --- | --- |
 | `naru-git-read` | orchestrator and all three subagents | `repository`, `status`, `diff`, `log`, `file`, `grep`, `merge-base` |
 | `naru-github-read` | orchestrator and all three subagents | `resolve`, `issue`, `pull`, `source` |
-| `naru-github-post-review` | `naru-orchestrator` only | one comment-only review post |
+| `naru-github-post-review` | `naru-orchestrator` only | one policy- and evidence-gated review post |
 | `naru-worktree` | `naru-orchestrator` only | `prepare_run`, `recover_run`, `prepare_item`, `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run` |
 
 - **`naru-git-read`** runs bounded read-only git in the current workspace. Pathspecs must be relative — absolute paths and `..` are rejected — and log output is capped (50 entries by default, 1000 maximum). It cannot mutate the repository.
 - **`naru-github-read`** performs read-only GitHub inspection. `resolve` normalizes a full URL, `owner/repo#number`, `owner/repo number`, or a bare number. `pull` captures a snapshot pinned to exact 40-character hex SHAs; `source` reads a file at one of those SHAs. Snapshots are point-in-time and can go stale.
-- **`naru-github-post-review`** rejects any caller whose `context.agent` is not exactly `naru-orchestrator`. The event is hard-coded `COMMENT`, so it cannot approve, request changes, or merge. Input is a strict schemaVersion 2 `naru_review_result` payload. It deduplicates through a hidden marker digest, makes one attempt, and never retries a POST; an ambiguous POST is reported, not repeated.
+- **`naru-github-post-review`** rejects any caller whose `context.agent` is not exactly `naru-orchestrator`. It accepts strict schemaVersion 2 and 3 `naru_review_result` payloads but no caller-supplied event. V2 remains complete-evidence `COMMENT`-only; v3 is canonical and derives `COMMENT`, `APPROVE`, or `REQUEST_CHANGES` within the current-message `submissionPolicy` after final evidence validation. Limited evidence is always `COMMENT`; inventory or feedback-integrity failures refuse. It cannot merge. It deduplicates through a hidden marker digest, makes one POST attempt, and never retries; an ambiguous POST is reported, not repeated.
 - **`naru-worktree`** prepares isolated writer worktrees and serializes integration. It is restricted to `naru-orchestrator`, requires a clean repository, and downgrades silently to shared mode when the repository is dirty or worktrees are unavailable. It never pushes and never creates delivery commits.
 
 `tools/naru-doctor.js` is a local CLI, not an agent-callable tool. `node tools/naru-doctor.js --json` prints a schemaVersion 1 report on installation and configuration health. It reads local state only: no providers, credentials, or network calls.

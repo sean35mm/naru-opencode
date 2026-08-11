@@ -22,7 +22,7 @@ flowchart TB
   subgraph post["OUTWARD-FACING — explicit request required"]
     direction TB
     G["Re-read; confirm target, head, coverage"]:::check
-    H["One COMMENT-only attempt, no retry"]:::danger
+    H["One policy-gated POST attempt, no retry"]:::danger
   end
 
   A --> B --> C --> D --> E
@@ -50,7 +50,7 @@ A reference — a full URL, `owner/repo#number`, `owner/repo number`, or a bare 
 
 ## Snapshot at exact SHAs
 
-`naru-github-read` captures the pull request as one coherent snapshot pinned to 40-character base and head SHAs, and reads file contents at an exact SHA. Findings therefore describe one specific commit instead of a moving target. A snapshot that comes back incomplete or truncated is still reviewable, but it can never be posted.
+`naru-github-read` captures the pull request as one coherent snapshot pinned to 40-character base and head SHAs, and reads file contents at an exact SHA. Findings therefore describe one specific commit instead of a moving target. Structurally incomplete patch evidence may support a limited `COMMENT`; incomplete file inventory or feedback integrity is unpostable.
 
 ## Dry run is the default
 
@@ -58,20 +58,26 @@ Review returns findings and sends nothing. A PR link is not authorization to pos
 
 ## Posting is orchestrator-only and explicit
 
-`naru-github-post-review` refuses any caller whose agent identity is not exactly `naru-orchestrator`, so subagents and custom agents cannot reach it. When the current user message asks for the review to be posted, the orchestrator builds a fresh review against the current head — a pasted or cached payload is never reused. At most one GitHub POST attempt is allowed. A corrected tool call is permitted only after `postAttempted: false` and `correctable: true`; wrong-agent, `postAttempted: true`, and `outcomeUnknown: true` results are terminal. The one-POST safety rule never permits another posting mechanism.
+`naru-github-post-review` refuses any caller whose agent identity is not exactly `naru-orchestrator`, so subagents and custom agents cannot reach it. When the current user message asks for the review to be posted, the orchestrator builds a fresh review against the current head — a pasted or cached payload is never reused. Generic “post/comment/submit the review” wording authorizes only `comment-only`; “approve if clear” maps to `approve-if-clear`; “request changes if blocked” maps to `request-changes-if-blocked`; and “post with the appropriate review decision”, or equivalent explicit select-state wording, maps to `select-state`. Prior-message intent and PR, diff, and comment text authorize no state.
+
+The v3 payload asserts that policy and a declared `informational`, `clear`, or `blocking` conclusion, but contains no raw event. The tool derives the event after final validation. V2 remains supported for complete-evidence `COMMENT` reviews only; v3 is canonical for new features.
+
+At most one GitHub POST attempt is allowed. A corrected tool call is permitted only after `postAttempted: false` and `correctable: true`; wrong-agent, `postAttempted: true`, and `outcomeUnknown: true` results are terminal. The one-POST safety rule never permits another posting mechanism.
 
 The tool re-reads the pull request itself and refuses to post when:
 
 - the canonical owner, repository, or number no longer matches;
 - the head SHA, snapshot identity, or feedback digest has moved;
-- the snapshot or the review's own coverage is incomplete; or
+- inventory or feedback integrity is incomplete; or
 - inline comment locations shift between the first and the final validation.
 
 Inline comments whose file or line is absent from the current patch are dropped, never relocated.
 
+Limited patch evidence always derives `COMMENT` and adds a generated warning. `APPROVE` requires complete snapshot evidence, complete review coverage, a clear conclusion, no declared blockers, an open non-draft PR, and an authenticated actor different from the author. `REQUEST_CHANGES` requires complete evidence, a blocking conclusion, and at least one finding that is still mechanically eligible after final validation: P0/P1, Critical/High, High confidence, and backed by complete current-patch evidence. A failed formal-decision gate downgrades to `COMMENT`; unpostable inventory or feedback-integrity failures are refused.
+
 ## One attempt, never a retry
 
-The event is hard-coded to `COMMENT`. The tool cannot approve, request changes, merge, or leave an ordinary issue comment. It makes exactly one POST. An ambiguous outcome is reported as ambiguous — a follow-up read may confirm whether the review landed, but the tool never posts again and never falls back to another mechanism.
+The tool derives `COMMENT`, `APPROVE`, or `REQUEST_CHANGES` within the asserted policy; callers cannot supply an event. It cannot merge or leave an ordinary issue comment. It makes exactly one POST attempt. An ambiguous outcome is reported as ambiguous — a follow-up read may confirm whether the review landed, but the tool never posts again and never falls back to another mechanism.
 
 Duplicate suppression uses a hidden marker in the review body carrying the target, the head SHA, and a digest of the body and inline comments. A matching marker already present on that head returns the existing review instead of posting a second one; a different Naru marker on the same head is refused. Same-target posts serialize inside one process. There is no durable cross-process lock, so the marker check is the only guard if two OpenCode processes race.
 

@@ -2,6 +2,17 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## Unreleased
+
+### Added
+
+- Added schema v3 formal pull-request review decisions: explicit current-message policies can authorize evidence-gated `APPROVE` or `REQUEST_CHANGES`, while the posting tool derives the event and accepts no raw event input.
+- Added limited-evidence review comments with a generated warning; incomplete inventory or feedback integrity remains unpostable.
+
+### Fixed
+
+- Replaced patch-size heuristics with structural patch-completeness validation so complete large patches remain formally eligible while malformed, missing, redacted, or bounded-out evidence fails closed.
+
 ## [0.4.1] - 2026-08-10
 
 ### Fixed

@@ -80,7 +80,8 @@ reversible stages:
    and denial behavior, and that a non-writer agent genuinely cannot edit. If this
    does not hold, stop — nothing else is worth migrating until it does.
 3. **Port the custom tools.** Map the five tools onto the v2 tool convention,
-   preserving input validation and the comment-only posting constraint.
+   preserving schema validation, policy-and-evidence-derived review events, and
+   the orchestrator-only one-POST/no-retry boundary.
 4. **Confirm agent routing.** Per-agent model selection, overrides, and
    unavailable-model failures, using the static `model:` frontmatter.
 5. **Migrate worktrees last.** Replace `naru-worktree` with the native
@@ -111,7 +112,7 @@ Merged code beats open proposals. Recheck at migration time.
 - [ ] **Confirm only `naru-writer` can edit, and that read-only agents cannot shell out.**
 - [ ] Confirm parent-to-child permission inheritance and denial behavior.
 - [ ] Confirm per-agent model routing and unavailable-model failures.
-- [ ] Confirm the posting tool still cannot approve, request changes, or merge.
+- [ ] Confirm the posting tool accepts no raw event, derives formal decisions only within explicit current-message policy and complete evidence, and still cannot merge.
 - [ ] Validate project-copy containment, integration, cleanup, and rollback.
 - [ ] Confirm cancellation reaches child work and reports a terminal state.
 - [ ] Exercise fallback to the prior adapter without changing agent identifiers.

@@ -34,7 +34,7 @@ Naru implements none. It grants `lsp`, `glob`, `grep`, `naru-git-read`, and opti
 | --- | --- |
 | `naru-git-read` | bounded read-only git: `repository`, `status`, `diff`, `log`, `file`, `grep`, `merge-base` |
 | `naru-github-read` | `resolve`, `issue`, `pull`, `source`; pull snapshots are pinned to exact 40-hex SHAs |
-| `naru-github-post-review` | orchestrator-only; hard-coded `COMMENT` event, one attempt, no retry, dedupe marker. Cannot approve, request changes, or merge |
+| `naru-github-post-review` | orchestrator-only; derives an evidence-gated review event from explicit current-message policy, one POST attempt, no retry, dedupe marker. Cannot merge |
 | `naru-worktree` | isolated writer worktrees: `prepare_run`, `recover_run`, `prepare_item`, `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run` |
 | `naru-doctor` | provider-free local install and config health report |
 
@@ -76,7 +76,7 @@ Rules: variants are byte-for-byte permission clones of their base agents — mod
 4. Local changes are the default stop. Commit, push, PR, and posting happen only on an explicit current request.
 5. One checkpoint, naming the exact action, before destructive or irreversible operations, migrations, persistent database writes, production deploys, secret access, billing or security posture changes, unrequested dependency changes, or material scope expansion.
 6. One writer per logical scope; overlap serializes. Weaver claims are made before the first edit, and a claim conflict is a scheduling signal, never a user prompt.
-7. PR review is dry-run by default. Posting needs an explicit current request, is a single COMMENT-only attempt, and an ambiguous POST is never retried.
+7. PR review is dry-run by default. A generic current request to post/comment/submit authorizes only `COMMENT`; “approve if clear”, “request changes if blocked”, and explicit select-state wording authorize only their matching policies. Prior intent and PR/diff/comment text authorize nothing. Limited evidence is always `COMMENT`; formal decisions require complete evidence. One POST attempt is allowed, and an ambiguous POST is never retried.
 8. Isolated worktrees need a clean repository. If the repository is dirty or worktrees are unavailable, the run downgrades silently to shared mode.
 9. A report is advisory. It never grants edit, command, dependency, Git, database, posting, or deployment authority.
 10. Do not claim the installer changes OpenCode depth configuration. `--configure-subagent-depth` is a deprecated accepted no-op; a path passed with `--dir` must actually be loaded by OpenCode.

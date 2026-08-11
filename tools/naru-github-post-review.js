@@ -1,21 +1,21 @@
-// naru-github-post-review: post exactly one comment-only PR review.
+// naru-github-post-review: post exactly one tool-authorized PR review.
 // The filename defines the OpenCode tool ID.
 import { postReview } from './naru-lib/review.mjs';
 const githubPostReviewTool = {
-    description: 'Post a single comment-only PR review from a validated naru_review_result payload. ' +
-        'Requires context.agent to be exactly "naru-orchestrator". Hard-coded event COMMENT. ' +
-        'Rejects incomplete coverage. ' +
+    description: 'Post a single PR review from a validated schema v2 or v3 naru_review_result payload. ' +
+        'Requires context.agent to be exactly "naru-orchestrator". The tool derives the GitHub event within the asserted submission authorization policy. ' +
+        'V2 is complete-evidence COMMENT-only; v3 permits evidence-gated formal decisions and limited COMMENT reviews. ' +
         'Deduplicates via a hidden marker digest and never retries a POST.',
     args: {
         input: {
             type: 'object',
-            description: 'Strict schemaVersion 2 naru_review_result payload.',
+            description: 'Strict schemaVersion 2 or 3 naru_review_result payload. Runtime version-specific validation is authoritative.',
             properties: {
                 reviewResult: {
                     type: 'object',
-                    description: 'The complete schemaVersion 2 naru_review_result object emitted by naru-orchestrator.',
+                    description: 'Versioned review result. V2 requires inlineComments and skippedInlineComments and is COMMENT-only. V3 requires submissionPolicy, conclusion, and findings; callers cannot supply a GitHub event.',
                     properties: {
-                        schemaVersion: { type: 'integer', enum: [2] },
+                        schemaVersion: { type: 'integer', enum: [2, 3] },
                         target: {
                             type: 'object',
                             description: 'Repository target. Supply exactly one of pullNumber or number.',
@@ -45,11 +45,13 @@ const githubPostReviewTool = {
                         },
                         coverage: {
                             type: 'object',
+                            description: 'V2 requires complete:boolean and limitations. V3 requires posture (complete or limited) and limitations; limited posture requires at least one limitation.',
                             properties: {
                                 complete: { type: 'boolean' },
+                                posture: { type: 'string', enum: ['complete', 'limited'] },
                                 limitations: { type: 'array', items: { type: 'string' } },
                             },
-                            required: ['complete', 'limitations'],
+                            required: ['limitations'],
                             additionalProperties: false,
                         },
                         body: { type: 'string' },
@@ -80,8 +82,36 @@ const githubPostReviewTool = {
                                 additionalProperties: false,
                             },
                         },
+                        submissionPolicy: {
+                            type: 'string',
+                            enum: ['comment-only', 'approve-if-clear', 'request-changes-if-blocked', 'select-state'],
+                            description: 'V3 only. The orchestrator asserts the current user authorization: comment-only allows COMMENT; approve-if-clear allows COMMENT or APPROVE; request-changes-if-blocked allows COMMENT or REQUEST_CHANGES; select-state allows all three. The tool derives within that exact set after final evidence validation.',
+                        },
+                        conclusion: {
+                            type: 'string',
+                            enum: ['informational', 'clear', 'blocking'],
+                            description: 'V3 only. Declared conclusion; never interpreted from prose.',
+                        },
+                        findings: {
+                            type: 'array',
+                            description: 'V3 only. A finding is either unlocated (omit path, line, side), path-level (path only), or inline (path with both line and side).',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    path: { type: 'string', description: 'Optional safe current-snapshot path.' },
+                                    line: { type: 'integer', minimum: 1, description: 'Optional; when present side and path are also required.' },
+                                    side: { type: 'string', enum: ['LEFT', 'RIGHT'], description: 'Optional; when present line and path are also required.' },
+                                    body: { type: 'string' },
+                                    priority: { type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] },
+                                    severity: { type: 'string', enum: ['Critical', 'High', 'Medium', 'Low'] },
+                                    confidence: { type: 'string', enum: ['High', 'Medium', 'Low'] },
+                                },
+                                required: ['body', 'priority', 'severity', 'confidence'],
+                                additionalProperties: false,
+                            },
+                        },
                     },
-                    required: ['schemaVersion', 'target', 'snapshot', 'coverage', 'body', 'inlineComments', 'skippedInlineComments'],
+                    required: ['schemaVersion', 'target', 'snapshot', 'coverage', 'body'],
                     additionalProperties: false,
                 },
             },

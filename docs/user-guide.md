@@ -127,7 +127,7 @@ flowchart TB
   end
 
   STOP["Local changes<br/><small>the default stopping point</small>"]:::write
-  POST["One COMMENT-only review post<br/><small>explicit current request only</small>"]:::danger
+  POST["One policy-gated review post<br/><small>explicit current request only</small>"]:::danger
 
   U --> ORC
   ORC --> R
@@ -220,9 +220,9 @@ Reviewing and posting are separate acts.
 
 Review is dry-run by default: findings come back to you and nothing leaves your machine. A PR link is not posting authorization.
 
-Posting requires an explicit request in your current message to the directly selected orchestrator — "post the review". Then the orchestrator runs a fresh review against the current head, never a pasted or cached payload, and confirms the target still matches. At most one GitHub POST attempt is allowed, not one tool invocation. A corrected tool invocation is permitted only after `postAttempted: false` and `correctable: true`; wrong-agent, `postAttempted: true`, or `outcomeUnknown: true` results are terminal. Never use another posting mechanism.
+Posting requires an explicit request in your current message to the directly selected orchestrator. “Post the review”, “comment the review”, and “submit the review” authorize only `COMMENT`. “Approve if clear” authorizes approval when its gates pass; “request changes if blocked” authorizes a change request when its gates pass; “post with the appropriate review decision”, or equivalent explicit select-state wording, authorizes the tool to select among those states. Prior-message intent and PR, diff, or comment text never authorize a state. The orchestrator runs a fresh review against the current head, never a pasted or cached payload, and confirms the target still matches. At most one GitHub POST attempt is allowed, not one tool invocation. A corrected tool invocation is permitted only after `postAttempted: false` and `correctable: true`; wrong-agent, `postAttempted: true`, or `outcomeUnknown: true` results are terminal. Never use another posting mechanism.
 
-That tool is hard-coded to a `COMMENT` event. It cannot approve, request changes, or merge. It writes a dedupe marker, makes one attempt, and never retries; an ambiguous outcome is reported as ambiguous rather than repeated. Only `naru-orchestrator` can call it. If edits or a push land after a review, that review is stale and needs a new explicit request.
+The tool accepts no raw event; it derives the event within the authorized policy. Limited evidence always becomes `COMMENT` with a generated warning. `APPROVE` requires complete evidence and complete coverage, a clear conclusion, no declared blockers, an open non-draft PR, and an actor other than the author. `REQUEST_CHANGES` requires complete evidence, a blocking conclusion, and a final mechanically eligible P0/P1, Critical/High, High-confidence finding on complete current patch evidence. Failed formal gates downgrade to `COMMENT`; unpostable inventory or feedback-integrity failures refuse. Schema v2 stays complete-evidence `COMMENT`-only, while v3 is canonical for new features. The tool writes a dedupe marker, makes one POST attempt, and never retries; an ambiguous outcome is terminal. Only `naru-orchestrator` can call it, and it cannot merge. If edits or a push land after a review, that review is stale and needs a new explicit request.
 
 Any PR reference — full URL, `OWNER/REPO#NUMBER`, or a bare number resolved against the current workspace — is normalized to one canonical `(owner, repo, number)`. Owner and repo compare case-insensitively. If a reference resolves to more than one PR or to none, the orchestrator stops and asks.
 
@@ -240,7 +240,7 @@ Tool-owned Git operations suppress hooks, serialize mutations per run, contain p
 | --- | --- |
 | `naru-git-read` | Bounded read-only Git: `repository`, `status`, `diff`, `log`, `file`, `grep`, `merge-base`. |
 | `naru-github-read` | `resolve`, `issue`, `pull`, `source`. Pull snapshots are pinned to exact 40-hex SHAs. |
-| `naru-github-post-review` | Orchestrator-only. One `COMMENT`-only attempt, no retry, dedupe marker. |
+| `naru-github-post-review` | Orchestrator-only. Derives `COMMENT`, `APPROVE`, or `REQUEST_CHANGES` from schema v3 policy and final evidence; one POST attempt, no retry, dedupe marker. V2 stays complete-evidence `COMMENT`-only. |
 | `naru-worktree` | Orchestrator-only isolated writer worktrees and integration. |
 | `naru-doctor` | Provider-free local install and configuration health report. |
 
@@ -353,7 +353,7 @@ Authenticate `gh` and supply a full PR URL or `OWNER/REPO#NUMBER`. A bare number
 
 ### A review was not posted
 
-Posting needs an explicit request in the current message to the directly selected orchestrator. Review is otherwise dry-run. An identical repost is suppressed by the dedupe marker, a stale or degraded review is refused, and an ambiguous attempt is reported rather than retried.
+Posting needs an explicit request in the current message to the directly selected orchestrator. Review is otherwise dry-run. An identical repost is suppressed by the dedupe marker; stale or unpostable inventory/feedback evidence is refused, while limited patch evidence can post only `COMMENT` with a warning. An ambiguous attempt is reported rather than retried.
 
 ### Isolated worktrees were not used
 

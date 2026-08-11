@@ -122,8 +122,10 @@ worth migrating.
 ## Residual risks
 
 1. **Prompt policy is not enforcement.** Checkpoints, scope discipline, and evidence
-   requirements are instructions to a model. Only the permission map, the comment-only
-   posting tool, and worktree path containment are mechanical.
+   requirements are instructions to a model. Only the permission map, the posting tool's
+   orchestrator-only boundary and derivation of `COMMENT`, `APPROVE`, or `REQUEST_CHANGES`
+   from asserted current-message policy plus final evidence gates, and worktree path containment
+   are mechanical.
 2. **Naru is not a sandbox.** It does not contain repository code, package scripts, or
    shell commands.
 3. **One maintainer.** Response times and support scope are bounded by that.

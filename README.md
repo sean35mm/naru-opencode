@@ -2,7 +2,7 @@
 
 Naru is an extension layer for [OpenCode](https://opencode.ai): one orchestrating agent, four subagents it delegates to, four on-demand skills, a small set of bounded tools, and one plugin.
 
-The design is a single idea — **thin hard walls, free interior.** The walls stand at the irreversible edges and are mechanical rather than advisory: exactly one role can edit files, read-only roles have no shell at all, secrets are denied to every role, and the tool that posts a pull-request review can only leave a comment. Inside those walls the orchestrator is trusted to plan, split the work, and fan out on its own judgment. There are no modes to pick and no ceremony to perform. The walls do the safety work, so the interior can be free.
+The design is a single idea — **thin hard walls, free interior.** The walls stand at the irreversible edges and are mechanical rather than advisory: exactly one role can edit files, read-only roles have no shell at all, secrets are denied to every role, and the review tool derives `COMMENT`, `APPROVE`, or `REQUEST_CHANGES` only from schema v3 policy plus final evidence gates. Generic posting language still authorizes only `COMMENT`; formal states need explicit current-message policy and complete evidence. Inside those walls the orchestrator is trusted to plan, split the work, and fan out on its own judgment. There are no modes to pick and no ceremony to perform. The walls do the safety work, so the interior can be free.
 
 Built by [Naru Labs](https://github.com/sean35mm).
 
@@ -96,11 +96,11 @@ Skill text is advisory guidance, never authorization. A skill cannot change an a
 | --- | --- |
 | `naru-git-read` | Bounded read-only git: `repository`, `status`, `diff`, `log`, `file`, `grep`, `merge-base` |
 | `naru-github-read` | Read-only GitHub: `resolve`, `issue`, `pull`, `source`. Pull snapshots are pinned to exact 40-hex SHAs |
-| `naru-github-post-review` | Orchestrator-only. Hard-coded `COMMENT` event, one attempt, no retry, dedupe marker |
+| `naru-github-post-review` | Orchestrator-only. Derives `COMMENT`, `APPROVE`, or `REQUEST_CHANGES` from explicit current-message policy and validated evidence; one POST attempt, no retry |
 | `naru-worktree` | Isolated writer worktrees: `prepare_run`, `recover_run`, `prepare_item`, `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run` |
 | `naru-doctor` | Provider-free local install and config health report |
 
-`naru-github-post-review` cannot approve a pull request, request changes, or merge — the event type is not a parameter. Only `naru-orchestrator` holds permission to call it, so custom agents and subagents cannot post through Naru at all.
+`naru-github-post-review` accepts no raw event. A generic current request to post, comment, or submit the review authorizes only `COMMENT`; explicit “approve if clear”, “request changes if blocked”, or “post with the appropriate review decision” wording enables the corresponding evidence-gated policy. Limited evidence always posts as `COMMENT`, and unpostable inventory or feedback failures are refused. It cannot merge. Only `naru-orchestrator` holds permission to call it, so custom agents and subagents cannot post through Naru at all.
 
 ### Per-dispatch models (naru-dispatch)
 
@@ -136,7 +136,7 @@ The MCP server is optional. Without it, investigation falls back to LSP and lite
 - **Local changes are the default stop.** Commit, push, PR create or update, and posting to GitHub happen only when the current request asks for them. That ask is the authorization; it is neither reconfirmed nor assumed.
 - **One checkpoint, naming the exact action**, before destructive or irreversible operations, migrations, persistent database writes, production deploys, secret access, billing or security-posture changes, dependency changes the user did not request, or material scope expansion. Routine reads and in-scope checks need no checkpoint.
 - **One writer per logical scope.** Overlapping scopes serialize, always. Writers claim their exact scope in Weaver before the first edit; a claim conflict is a scheduling signal to requeue, never a reason to prompt the user.
-- **Review is dry-run by default.** Posting requires an explicit request in the current message, uses a fresh review against the current head, and makes exactly one comment-only attempt. An ambiguous POST is reported as ambiguous, never retried.
+- **Review is dry-run by default.** Posting requires explicit current-message policy, uses a fresh review against the current head, and makes exactly one POST attempt. Generic posting language authorizes `COMMENT`; formal decisions require explicit policy and complete evidence. An ambiguous POST is reported as ambiguous, never retried.
 - **Isolated worktrees require a clean repository.** If the workspace is dirty or isolation is unavailable, writers silently fall back to shared mode rather than asking or faking isolation.
 
 Naru is not a sandbox, not a proof system, not durable across processes, and not a global capacity meter. It constrains Naru's own agents; it does not constrain the machine.

@@ -258,7 +258,7 @@
         <div class="card">
           <p class="meta">Tools</p>
           <h3>Five, bounded</h3>
-          <p class="micro">Read-only git and GitHub, a comment-only review poster, isolated writer worktrees, and a local health report.</p>
+          <p class="micro">Read-only git and GitHub, a policy-gated review poster, isolated writer worktrees, and a local health report.</p>
         </div>
         <div class="card">
           <p class="meta">Plugin</p>
@@ -308,7 +308,7 @@
           concurrently, with no child-count ceiling.
         </p>
         <ul class="plain-list">
-          <li><b>Can:</b> read (secrets excluded), glob/grep/lsp, webfetch, todowrite, skills, git/GitHub reads, dispatch, post one comment-only review on explicit request.</li>
+          <li><b>Can:</b> read (secrets excluded), glob/grep/lsp, webfetch, todowrite, skills, git/GitHub reads, dispatch, post one policy-gated review on explicit current request.</li>
           <li><b>Cannot:</b> edit or <code>apply_patch</code>, run bash, read secrets — all denied by the <code>'*': deny</code> baseline or explicit rules.</li>
         </ul>
       </div>
@@ -504,7 +504,7 @@ Dispatched: 3× naru-reader-light, 1× naru-writer-standard</pre>
         <div class="card accent">
           <p class="meta">Layer 4 · construction</p>
           <h3>The posting tool</h3>
-          <p class="micro"><code>naru-github-post-review</code> is comment-only <b>by construction</b> — the event type is not a parameter. One attempt, no retry, orchestrator-only.</p>
+          <p class="micro"><code>naru-github-post-review</code> accepts no event parameter. From schema v3 policy and final evidence it derives <code>COMMENT</code>, <code>APPROVE</code>, or <code>REQUEST_CHANGES</code>; generic posting language authorizes only <code>COMMENT</code>, and formal states require explicit current-message policy plus complete evidence. One POST attempt, no retry, orchestrator-only.</p>
         </div>
       </div>
 
@@ -544,7 +544,7 @@ Dispatched: 3× naru-reader-light, 1× naru-writer-standard</pre>
         <div class="card">
           <p class="meta">Review wall</p>
           <h3>Dry-run by default</h3>
-          <p class="micro">A review returns findings and posts nothing. Posting takes an explicit ask in the current message, a fresh review against the current head, and exactly one comment-only attempt. An ambiguous POST is reported as ambiguous — never retried, never worked around with another mechanism.</p>
+          <p class="micro">A review returns findings and posts nothing. Posting takes explicit current-message policy, a fresh review against the current head, and exactly one POST attempt. Generic posting language authorizes <code>COMMENT</code>; formal decisions require explicit policy and complete evidence. An ambiguous POST is reported as ambiguous — never retried, never worked around with another mechanism.</p>
         </div>
       </div>
     </section>
@@ -571,7 +571,7 @@ Dispatched: 3× naru-reader-light, 1× naru-writer-standard</pre>
         <div class="card accent">
           <p class="meta">orchestrator only</p>
           <h3>naru-github-post-review</h3>
-          <p class="micro">Hard-coded <code>COMMENT</code> event — cannot approve, request changes, or merge. One attempt, no retry, dedupe marker. Custom agents and subagents cannot post through Naru at all.</p>
+          <p class="micro">No raw event input: generic post/comment/submit wording authorizes <code>COMMENT</code>; explicit current-message policy can authorize evidence-gated <code>APPROVE</code> or <code>REQUEST_CHANGES</code>. Limited evidence stays <code>COMMENT</code>. One POST attempt, no retry, freshness and dedupe guards. Cannot merge; custom agents and subagents cannot post through Naru.</p>
         </div>
         <div class="card accent">
           <p class="meta">orchestrator only</p>
@@ -687,11 +687,11 @@ sh install.sh --apply     <span class="c"># the only mutation boundary</span></p
         </div>
         <div class="card">
           <h3>Not a proof system</h3>
-          <p class="micro">No formal guarantees. It is a permission map, a comment-only tool, and careful defaults — not verification. Not durable across processes, and not a global capacity meter.</p>
+          <p class="micro">No formal guarantees. It is a permission map, a policy-and-evidence-gated review tool, and careful defaults — not verification. Not durable across processes, and not a global capacity meter.</p>
         </div>
         <div class="card">
           <h3>Prompt policy is not enforcement</h3>
-          <p class="micro">Checkpoints, scope discipline, and evidence requirements are instructions to a model. Only the permission maps, the comment-only posting tool, and worktree path containment are mechanical.</p>
+          <p class="micro">Checkpoints and scope discipline are instructions to a model. Mechanical boundaries are the permission maps, the posting tool's orchestrator-only schema validation and derived event gates, its one-POST/no-retry path, and worktree path containment.</p>
         </div>
         <div class="card">
           <h3>Chain selection is startup-time, auth-based</h3>

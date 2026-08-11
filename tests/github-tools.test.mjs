@@ -59,14 +59,15 @@ function has(argv, value) {
   return argv.some((item) => item.includes(value));
 }
 
-function pullMeta(head = HEAD, base = BASE, changedFiles = 1, number = 42) {
+function pullMeta(head = HEAD, base = BASE, changedFiles = 1, number = 42, overrides = {}) {
   return {
     number,
-    title: 'Safe change',
-    body: 'Description',
-    state: 'open',
+    title: overrides.title ?? 'Safe change',
+    body: overrides.body ?? 'Description',
+    state: overrides.state ?? 'open',
+    draft: Object.hasOwn(overrides, 'draft') ? overrides.draft : false,
     html_url: `https://github.com/owner/repo/pull/${number}`,
-    user: { login: 'author' },
+    user: { login: overrides.author ?? 'author' },
     head: { sha: head, ref: 'feature' },
     base: { sha: base, ref: 'main' },
     changed_files: changedFiles,
@@ -93,9 +94,10 @@ function snapshotHandlers({
   reviewComments = [],
   issueComments = [],
   metadataReply,
+  actor = 'viewer',
 } = {}) {
   return [
-    { match: (argv) => argv[3] === 'GET' && argv[4] === 'user', reply: response({ login: 'viewer' }) },
+    { match: (argv) => argv[3] === 'GET' && argv[4] === 'user', reply: response({ login: actor }) },
     {
       match: (argv) => argv[3] === 'GET' && has(argv, `pulls/${number}`) && !has(argv, '/files') && !has(argv, '/reviews') && !has(argv, '/comments'),
       reply: metadataReply ?? response(meta),
@@ -151,6 +153,57 @@ function reviewInput({
       skippedInlineComments: [],
     },
   };
+}
+
+function reviewInputV3({
+  number = 42,
+  head = HEAD,
+  base = BASE,
+  files = [changedFile()],
+  reviews = [],
+  reviewComments = [],
+  issueComments = [],
+  posture = 'complete',
+  limitations = posture === 'complete' ? [] : ['Patch evidence is unavailable'],
+  snapshotComplete = posture === 'complete',
+  snapshotWarnings = [],
+  submissionPolicy = 'comment-only',
+  conclusion = 'informational',
+  findings = [],
+  body = '## Verdict\n\nReview findings are listed below.',
+} = {}) {
+  const meta = pullMeta(head, base, files.length, number);
+  return {
+    reviewResult: {
+      schemaVersion: 3,
+      target: { owner: 'owner', repo: 'repo', pullNumber: number },
+      snapshot: {
+        id: snapshotId('owner', 'repo', number, head, base, files),
+        baseSha: base,
+        headSha: head,
+        feedbackDigest: digestSnapshot(meta, files, reviews, reviewComments, issueComments),
+        complete: snapshotComplete,
+        warnings: snapshotWarnings,
+      },
+      coverage: { posture, limitations },
+      body,
+      submissionPolicy,
+      conclusion,
+      findings,
+    },
+  };
+}
+
+function largeMatchingPatch(changes, targetBytes = 16 * 1024) {
+  const deletions = Math.floor(changes / 2);
+  const additions = changes - deletions;
+  const context = 2;
+  const lines = [`@@ -1,${deletions + context} +1,${additions + context} @@`];
+  lines.push(` ${'context'.repeat(Math.max(1, Math.ceil(targetBytes / 7)))}`);
+  for (let index = 0; index < deletions; index += 1) lines.push(`-old-${index}`);
+  for (let index = 0; index < additions; index += 1) lines.push(`+new-${index}`);
+  lines.push(' tail');
+  return { patch: lines.join('\n'), additions, deletions };
 }
 
 test('validators reject traversal, controls, secret paths, and option-like refs', () => {
@@ -262,6 +315,79 @@ test('pull snapshots flag API file limits and redact secret-like patches', async
   assert.equal(snapshot.files[0].patch, undefined);
 });
 
+test('large structurally complete patches do not use changes count as a truncation heuristic', async () => {
+  for (const changes of [343, 501, 1105]) {
+    const generated = largeMatchingPatch(changes, 16 * 1024);
+    const file = changedFile(`src/large-${changes}.js`, generated.patch);
+    Object.assign(file, { additions: generated.additions, deletions: generated.deletions, changes });
+    const { spawn } = fakeSpawn(snapshotHandlers({ files: [file] }));
+    const snapshot = await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn });
+    assert.equal(snapshot.reviewability.status, 'complete', String(changes));
+    assert.equal(snapshot.files[0].patchEvidence.status, 'complete', String(changes));
+    assert.equal(snapshot.files[0].patchTruncated, false, String(changes));
+    assert.equal(snapshot.files[0].lineMap.left.length > 0, true, String(changes));
+    assert.equal(snapshot.files[0].lineMap.right.length > 0, true, String(changes));
+    assert.equal(snapshot.files[0].patchBytes >= 16 * 1024, true, String(changes));
+  }
+});
+
+test('malformed, missing, metadata-mismatched, and redacted patches retain no trusted line map', async () => {
+  const files = [
+    { ...changedFile('src/cut.js', '@@ -1,2 +1,2 @@\n-old\n+new'), additions: 1, deletions: 1, changes: 2 },
+    { ...changedFile('src/mismatch.js'), additions: 2, deletions: 1, changes: 3 },
+    { ...changedFile('src/missing.js'), patch: undefined },
+    changedFile('.env', '@@ -1 +1 @@\n-old\n+new'),
+  ];
+  const { spawn } = fakeSpawn(snapshotHandlers({ meta: pullMeta(HEAD, BASE, files.length), files }));
+  const snapshot = await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn });
+  assert.equal(snapshot.reviewability.status, 'limited-comment');
+  for (const file of snapshot.files) {
+    assert.notEqual(file.patchEvidence.status, 'complete');
+    assert.deepEqual(file.lineMap.left, []);
+    assert.deepEqual(file.lineMap.right, []);
+  }
+  assert.equal(snapshot.files[0].patchEvidence.retention, 'full');
+  assert.equal(snapshot.files[1].patchEvidence.reason, 'metadata-mismatch');
+  assert.equal(snapshot.files[2].patchEvidence.reason, 'missing-patch');
+  assert.equal(snapshot.files[3].patchEvidence.reason, 'redacted-path');
+});
+
+test('per-file and aggregate patch byte limits are authoritative', async () => {
+  const oversized = changedFile('src/oversized.js', `@@ -1 +1 @@\n ${'x'.repeat(1024 * 1024)}`);
+  Object.assign(oversized, { additions: 0, deletions: 0, changes: 0 });
+  const perFile = fakeSpawn(snapshotHandlers({ files: [oversized] }));
+  const perFileSnapshot = await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: perFile.spawn });
+  assert.equal(perFileSnapshot.files[0].patchEvidence.reason, 'per-file-byte-limit');
+  assert.deepEqual(perFileSnapshot.files[0].lineMap.right, []);
+
+  const files = Array.from({ length: 17 }, (_, index) => {
+    const file = changedFile(`src/budget-${index}.js`, `@@ -1 +1 @@\n ${'x'.repeat(1024 * 1024 - 128)}`);
+    return { ...file, additions: 0, deletions: 0, changes: 0 };
+  });
+  const aggregate = fakeSpawn(snapshotHandlers({ meta: pullMeta(HEAD, BASE, files.length), files }));
+  const aggregateSnapshot = await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: aggregate.spawn });
+  assert.equal(aggregateSnapshot.files.at(-1).patchEvidence.reason, 'aggregate-byte-limit');
+  assert.equal(aggregateSnapshot.files.at(-1).patch, undefined);
+  assert.deepEqual(aggregateSnapshot.files.at(-1).lineMap.left, []);
+});
+
+test('snapshot reviewability distinguishes complete, patch-limited, and integrity failures', async () => {
+  const complete = fakeSpawn(snapshotHandlers());
+  assert.deepEqual(
+    (await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: complete.spawn })).reviewability,
+    { status: 'complete', inventoryComplete: true, feedbackComplete: true, patchesComplete: true, limitations: [] },
+  );
+  const missing = fakeSpawn(snapshotHandlers({ files: [{ ...changedFile(), patch: undefined }] }));
+  const limited = await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: missing.spawn });
+  assert.equal(limited.reviewability.status, 'limited-comment');
+  assert.equal(limited.complete, false);
+  assert.equal(limited.contentTruncated, true);
+  const inventory = fakeSpawn(snapshotHandlers({ meta: pullMeta(HEAD, BASE, 2), files: [changedFile()] }));
+  const unpostable = await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: inventory.spawn });
+  assert.equal(unpostable.reviewability.status, 'unpostable');
+  assert.equal(unpostable.reviewability.inventoryComplete, false);
+});
+
 test('source-at-SHA rejects secret paths and bounds content', async () => {
   await assert.rejects(fetchSourceAtSha({ owner: 'owner', repo: 'repo', sha: HEAD, path: '.env' }), /path/);
   const large = Buffer.from('x'.repeat(1024 * 1024 + 10)).toString('base64');
@@ -283,6 +409,27 @@ test('strict review payload validates nested schema and rejects unknown fields',
     ...input,
     reviewResult: { ...input.reviewResult, event: 'APPROVE' },
   }), /unknown fields/);
+});
+
+test('v3 payload validation enforces version-specific findings and rejects caller events', () => {
+  const input = reviewInputV3({ findings: [
+    { body: 'General observation', priority: 'P3', severity: 'Low', confidence: 'Medium' },
+    { path: 'src/index.js', body: 'Path-level blocker', priority: 'P1', severity: 'High', confidence: 'High' },
+    { path: 'src/index.js', line: 1, side: 'RIGHT', body: 'Inline issue', priority: 'P2', severity: 'Medium', confidence: 'High' },
+  ] });
+  const canonical = validateReviewPayload(input);
+  assert.equal(canonical.schemaVersion, 3);
+  assert.equal(canonical.findings.length, 3);
+  assert.throws(() => validateReviewPayload({
+    reviewResult: { ...input.reviewResult, event: 'APPROVE' },
+  }), /unknown fields/);
+  const partialLocation = structuredClone(input);
+  partialLocation.reviewResult.findings[0] = {
+    path: 'src/index.js', line: 1, body: 'Missing side', priority: 'P1', severity: 'High', confidence: 'High',
+  };
+  assert.throws(() => validateReviewPayload(partialLocation), /line and side together/);
+  const dishonestLimited = reviewInputV3({ posture: 'limited', limitations: [] });
+  assert.throws(() => validateReviewPayload(dishonestLimited), /at least one/);
 });
 
 test('review payload accepts aliases but rejects dual canonical and alias keys', () => {
@@ -387,6 +534,344 @@ test('post tool preserves body, hard-codes COMMENT and commit_id, and posts once
   assert.match(posted.body, /## Verdict/);
   assert.match(posted.body, /^<!-- naru-review:/);
   assert.equal(calls.filter((call) => call.argv.includes('POST')).length, 1);
+});
+
+test('v3 limited patch evidence posts one COMMENT with a generated banner and no inline comment', async () => {
+  const head = '01'.repeat(20);
+  const files = [{ ...changedFile(), patch: undefined }];
+  let posted;
+  const { spawn, calls } = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(head), files }),
+    { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+      posted = JSON.parse(options.input);
+      return response({ id: 401 });
+    } },
+  ]);
+  const input = reviewInputV3({
+    head, files, posture: 'limited', limitations: ['GitHub did not provide the file patch'],
+    submissionPolicy: 'approve-if-clear', conclusion: 'clear',
+    findings: [{ path: 'src/index.js', line: 1, side: 'RIGHT', body: 'Potential issue', priority: 'P1', severity: 'High', confidence: 'High' }],
+  });
+  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(posted.event, 'COMMENT');
+  assert.equal(posted.comments.length, 0);
+  assert.match(posted.body, /\*\*Limited review:\*\*/);
+  assert.equal(result.data.evidencePosture, 'limited');
+  assert.equal(calls.filter((call) => call.argv.includes('POST')).length, 1);
+});
+
+test('payload-incomplete evidence forces every formal policy to one visible limited COMMENT', async () => {
+  const blocker = { path: 'src/index.js', body: 'Eligible blocker', priority: 'P1', severity: 'High', confidence: 'High' };
+  const cases = [
+    { seed: '8a', policy: 'approve-if-clear', conclusion: 'clear', findings: [] },
+    { seed: '8b', policy: 'request-changes-if-blocked', conclusion: 'blocking', findings: [blocker] },
+    { seed: '8c', policy: 'select-state', conclusion: 'blocking', findings: [blocker] },
+  ];
+  for (const item of cases) {
+    const head = item.seed.repeat(20);
+    let posted;
+    const { spawn, calls } = fakeSpawn([
+      ...snapshotHandlers({ meta: pullMeta(head) }),
+      { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+        posted = JSON.parse(options.input);
+        return response({ id: Number.parseInt(item.seed, 16) });
+      } },
+    ]);
+    const result = await postReview(reviewInputV3({
+      head,
+      posture: 'limited',
+      limitations: [],
+      snapshotComplete: false,
+      snapshotWarnings: ['Original review snapshot omitted material evidence'],
+      submissionPolicy: item.policy,
+      conclusion: item.conclusion,
+      findings: item.findings,
+    }), { agent: 'naru-orchestrator' }, { spawn });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(posted.event, 'COMMENT');
+    assert.equal(result.data.evidencePosture, 'limited');
+    assert.match(posted.body, /\*\*Limited review:\*\*/);
+    assert.match(posted.body, /Payload snapshot warning: Original review snapshot omitted material evidence/);
+    assert.equal(calls.filter((call) => call.argv.includes('POST')).length, 1);
+  }
+});
+
+test('payload-incomplete evidence requires limited posture before any POST', async () => {
+  const head = '8d'.repeat(20);
+  const { spawn, calls } = fakeSpawn(snapshotHandlers({ meta: pullMeta(head) }));
+  const result = await postReview(reviewInputV3({
+    head,
+    posture: 'complete',
+    snapshotComplete: false,
+    snapshotWarnings: ['Material evidence was unavailable'],
+    submissionPolicy: 'approve-if-clear',
+    conclusion: 'clear',
+  }), { agent: 'naru-orchestrator' }, { spawn });
+  assert.equal(result.ok, false);
+  assert.equal(result.correctable, true);
+  assert.match(result.error, /requires limited coverage posture/);
+  assert.equal(calls.some((call) => call.argv.includes('POST')), false);
+});
+
+test('complete v3 evidence with honest non-material limitations remains formally eligible', async () => {
+  const head = '8e'.repeat(20);
+  let posted;
+  const { spawn, calls } = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(head) }),
+    { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+      posted = JSON.parse(options.input);
+      return response({ id: 814 });
+    } },
+  ]);
+  const result = await postReview(reviewInputV3({
+    head,
+    posture: 'complete',
+    limitations: ['Browser suite was not run'],
+    snapshotComplete: true,
+    submissionPolicy: 'approve-if-clear',
+    conclusion: 'clear',
+  }), { agent: 'naru-orchestrator' }, { spawn });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(posted.event, 'APPROVE');
+  assert.equal(result.data.evidencePosture, 'complete');
+  assert.match(posted.body, /Browser suite was not run/);
+  assert.doesNotMatch(posted.body, /\*\*Limited review:\*\*/);
+  assert.equal(calls.filter((call) => call.argv.includes('POST')).length, 1);
+});
+
+test('inventory and feedback integrity gaps refuse every v3 submission policy', async () => {
+  for (const [index, submissionPolicy] of ['comment-only', 'approve-if-clear', 'request-changes-if-blocked', 'select-state'].entries()) {
+    const head = `1${index}`.repeat(20);
+    const files = [changedFile()];
+    const { spawn, calls } = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, 2), files }));
+    const input = reviewInputV3({ head, files, submissionPolicy, conclusion: 'blocking' });
+    const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /unpostable/);
+    assert.equal(calls.some((call) => call.argv.includes('POST')), false);
+  }
+  const head = '15'.repeat(20);
+  const issueComments = Array.from({ length: 1001 }, (_, id) => ({ id, body: 'feedback' }));
+  const { spawn, calls } = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), issueComments }));
+  const result = await postReview(
+    reviewInputV3({ head, issueComments }),
+    { agent: 'naru-orchestrator' },
+    { spawn },
+  );
+  assert.match(result.error, /unpostable/);
+  assert.equal(calls.some((call) => call.argv.includes('POST')), false);
+});
+
+test('APPROVE is derived only for complete clear non-draft non-self reviews without blockers', async () => {
+  const cases = [
+    { seed: '21', expected: 'APPROVE' },
+    { seed: '22', expected: 'COMMENT', findings: [{ path: 'src/index.js', body: 'Blocker', priority: 'P1', severity: 'High', confidence: 'High' }] },
+    { seed: '23', expected: 'COMMENT', draft: true },
+    { seed: '24', expected: 'COMMENT', actor: 'AUTHOR' },
+    { seed: '26', expected: 'COMMENT', findings: [{ body: 'Unlocated blocker', priority: 'P0', severity: 'Critical', confidence: 'High' }] },
+    { seed: '27', expected: 'COMMENT', findings: [{ path: 'src/index.js', line: 999, side: 'RIGHT', body: 'Dropped blocker', priority: 'P1', severity: 'High', confidence: 'High' }] },
+    { seed: '28', expected: 'COMMENT', draft: undefined },
+    { seed: '29', expected: 'COMMENT', draft: 'unknown' },
+  ];
+  for (const item of cases) {
+    const head = item.seed.repeat(20);
+    let posted;
+    const meta = pullMeta(head, BASE, 1, 42, Object.hasOwn(item, 'draft') ? { draft: item.draft } : {});
+    const { spawn } = fakeSpawn([
+      ...snapshotHandlers({ meta, actor: item.actor }),
+      { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+        posted = JSON.parse(options.input);
+        return response({ id: Number(item.seed) });
+      } },
+    ]);
+    const result = await postReview(reviewInputV3({
+      head, submissionPolicy: 'approve-if-clear', conclusion: 'clear', findings: item.findings,
+    }), { agent: 'naru-orchestrator' }, { spawn });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(posted.event, item.expected);
+    assert.equal(result.data.event, item.expected);
+    assert.equal(result.data.submissionPolicy, 'approve-if-clear');
+  }
+  const head = '25'.repeat(20);
+  const closed = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, 1, 42, { state: 'closed' }) }));
+  const result = await postReview(
+    reviewInputV3({ head, submissionPolicy: 'approve-if-clear', conclusion: 'clear' }),
+    { agent: 'naru-orchestrator' }, { spawn: closed.spawn },
+  );
+  assert.match(result.error, /not open/);
+  assert.equal(closed.calls.some((call) => call.argv.includes('POST')), false);
+});
+
+test('REQUEST_CHANGES requires a final eligible blocker and otherwise falls back to COMMENT', async () => {
+  const cases = [
+    {
+      seed: '31', expected: 'REQUEST_CHANGES',
+      finding: { path: 'src/index.js', body: 'Blocking path issue', priority: 'P0', severity: 'Critical', confidence: 'High' },
+    },
+    {
+      seed: '32', expected: 'COMMENT',
+      finding: { path: 'src/index.js', line: 999, side: 'RIGHT', body: 'Stale location', priority: 'P1', severity: 'High', confidence: 'High' },
+    },
+    {
+      seed: '33', expected: 'COMMENT',
+      finding: { path: 'src/index.js', body: 'Uncertain', priority: 'P1', severity: 'High', confidence: 'Medium' },
+    },
+    {
+      seed: '34', expected: 'COMMENT',
+      finding: { path: 'src/missing.js', body: 'Missing path', priority: 'P1', severity: 'High', confidence: 'High' },
+    },
+    {
+      seed: '37', expected: 'COMMENT', draft: undefined,
+      finding: { path: 'src/index.js', body: 'Unknown-draft blocker', priority: 'P1', severity: 'High', confidence: 'High' },
+    },
+    {
+      seed: '38', expected: 'COMMENT', draft: 'malformed',
+      finding: { path: 'src/index.js', body: 'Malformed-draft blocker', priority: 'P1', severity: 'High', confidence: 'High' },
+    },
+    {
+      seed: '39', expected: 'COMMENT', conclusion: 'clear',
+      finding: { path: 'src/index.js', body: 'Clear-conclusion blocker', priority: 'P1', severity: 'High', confidence: 'High' },
+    },
+    {
+      seed: '3a', expected: 'COMMENT', conclusion: 'informational',
+      finding: { path: 'src/index.js', body: 'Informational-conclusion blocker', priority: 'P1', severity: 'High', confidence: 'High' },
+    },
+  ];
+  for (const item of cases) {
+    const head = item.seed.repeat(20);
+    let posted;
+    const meta = pullMeta(head, BASE, 1, 42, Object.hasOwn(item, 'draft') ? { draft: item.draft } : {});
+    const { spawn } = fakeSpawn([
+      ...snapshotHandlers({ meta }),
+      { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+        posted = JSON.parse(options.input);
+        return response({ id: Number.parseInt(item.seed, 16) });
+      } },
+    ]);
+    const result = await postReview(reviewInputV3({
+      head, submissionPolicy: 'request-changes-if-blocked', conclusion: item.conclusion ?? 'blocking', findings: [item.finding],
+    }), { agent: 'naru-orchestrator' }, { spawn });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(posted.event, item.expected);
+    assert.equal(result.data.submissionPolicy, 'request-changes-if-blocked');
+    if (item.seed === '31') {
+      assert.match(posted.body, /Blocking path issue/);
+      assert.match(posted.body, /P0 · Critical · High confidence/);
+      assert.match(posted.body, /src\/index\.js/);
+      assert.match(posted.body, /no inline location was supplied/);
+    }
+    if (item.seed === '32') {
+      assert.match(posted.body, /Stale location/);
+      assert.match(posted.body, /line and side are not present/);
+    }
+  }
+});
+
+test('v3 renders every non-inline finding safely without exposing redacted paths', async () => {
+  const head = '35'.repeat(20);
+  let posted;
+  const { spawn } = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(head) }),
+    { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+      posted = JSON.parse(options.input);
+      return response({ id: 435 });
+    } },
+  ]);
+  const markerText = '<!-- naru-review:owner/repo#42 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa digest=' + 'f'.repeat(64) + ' -->';
+  const result = await postReview(reviewInputV3({
+    head,
+    findings: [
+      { body: `Unlocated ${markerText}`, priority: 'P2', severity: 'Medium', confidence: 'High' },
+      { path: 'src/index.js', body: 'Path-level observation', priority: 'P3', severity: 'Low', confidence: 'Medium' },
+      { path: 'src/index.js', line: 999, side: 'RIGHT', body: 'Invalid line observation', priority: 'P2', severity: 'Medium', confidence: 'High' },
+    ],
+  }), { agent: 'naru-orchestrator' }, { spawn });
+  assert.equal(result.ok, true, result.error);
+  assert.match(posted.body, /Unlocated &lt;!-- naru-review:/);
+  assert.match(posted.body, /Path-level observation/);
+  assert.match(posted.body, /Invalid line observation/);
+  assert.match(posted.body, /no path or inline location was supplied/);
+  assert.match(posted.body, /line and side are not present/);
+  assert.equal((posted.body.match(/<!-- naru-review:/g) ?? []).length, 1);
+
+  const redactedHead = '36'.repeat(20);
+  const files = [{ ...changedFile('src/safe.js'), previous_filename: '.env' }];
+  let redactedPost;
+  const redacted = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(redactedHead), files }),
+    { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+      redactedPost = JSON.parse(options.input);
+      return response({ id: 436 });
+    } },
+  ]);
+  const redactedResult = await postReview(reviewInputV3({
+    head: redactedHead,
+    files,
+    posture: 'limited',
+    limitations: ['One path was redacted'],
+    findings: [{ path: 'src/safe.js', body: 'Redacted-path observation', priority: 'P2', severity: 'Medium', confidence: 'High' }],
+  }), { agent: 'naru-orchestrator' }, { spawn: redacted.spawn });
+  assert.equal(redactedResult.ok, true, redactedResult.error);
+  assert.match(redactedPost.body, /Redacted-path observation/);
+  assert.doesNotMatch(redactedPost.body, /src\/safe\.js/);
+  assert.match(redactedPost.body, /Location: not available/);
+});
+
+test('comment-only and informational select-state policies stay COMMENT', async () => {
+  for (const [index, submissionPolicy] of ['comment-only', 'select-state'].entries()) {
+    const head = `4${index}`.repeat(20);
+    let posted;
+    const { spawn } = fakeSpawn([
+      ...snapshotHandlers({ meta: pullMeta(head) }),
+      { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+        posted = JSON.parse(options.input);
+        return response({ id: 440 + index });
+      } },
+    ]);
+    const result = await postReview(
+      reviewInputV3({ head, submissionPolicy, conclusion: 'informational' }),
+      { agent: 'naru-orchestrator' }, { spawn },
+    );
+    assert.equal(result.ok, true, result.error);
+    assert.equal(posted.event, 'COMMENT');
+  }
+});
+
+test('each submission authorization policy derives only events in its exact allowed set', async () => {
+  const blocker = { path: 'src/index.js', body: 'Eligible blocker', priority: 'P1', severity: 'High', confidence: 'High' };
+  const cases = [
+    { seed: '81', policy: 'comment-only', conclusion: 'clear', findings: [], expected: 'COMMENT' },
+    { seed: '82', policy: 'comment-only', conclusion: 'blocking', findings: [blocker], expected: 'COMMENT' },
+    { seed: '83', policy: 'approve-if-clear', conclusion: 'blocking', findings: [blocker], expected: 'COMMENT' },
+    { seed: '84', policy: 'request-changes-if-blocked', conclusion: 'clear', findings: [], expected: 'COMMENT' },
+    { seed: '85', policy: 'select-state', conclusion: 'clear', findings: [], expected: 'APPROVE' },
+    { seed: '86', policy: 'select-state', conclusion: 'blocking', findings: [blocker], expected: 'REQUEST_CHANGES' },
+  ];
+  const allowed = {
+    'comment-only': new Set(['COMMENT']),
+    'approve-if-clear': new Set(['COMMENT', 'APPROVE']),
+    'request-changes-if-blocked': new Set(['COMMENT', 'REQUEST_CHANGES']),
+    'select-state': new Set(['COMMENT', 'APPROVE', 'REQUEST_CHANGES']),
+  };
+  for (const item of cases) {
+    const head = item.seed.repeat(20);
+    let posted;
+    const { spawn } = fakeSpawn([
+      ...snapshotHandlers({ meta: pullMeta(head) }),
+      { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+        posted = JSON.parse(options.input);
+        return response({ id: Number(item.seed) });
+      } },
+    ]);
+    const result = await postReview(reviewInputV3({
+      head, submissionPolicy: item.policy, conclusion: item.conclusion, findings: item.findings,
+    }), { agent: 'naru-orchestrator' }, { spawn });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(posted.event, item.expected);
+    assert.equal(allowed[item.policy].has(posted.event), true);
+    assert.equal(result.data.submissionPolicy, item.policy);
+  }
 });
 
 test('concurrent identical review posts serialize and use the process-local success record', async () => {
@@ -526,6 +1011,41 @@ test('post tool rejects head and feedback drift', async () => {
   assert.match((await postReview(reviewInput({ head: feedbackHead }), { agent: 'naru-orchestrator' }, { spawn: feedbackDrift.spawn })).error, /feedback digest mismatch/);
 });
 
+test('PR title and description participate in snapshot freshness', async () => {
+  const meta = pullMeta();
+  assert.notEqual(
+    digestSnapshot(meta, [changedFile()], [], [], []),
+    digestSnapshot({ ...meta, body: 'Materially changed description' }, [changedFile()], [], [], []),
+  );
+  assert.notEqual(
+    digestSnapshot(meta, [changedFile()], [], [], []),
+    digestSnapshot({ ...meta, title: 'Materially changed title' }, [changedFile()], [], [], []),
+  );
+
+  const head = '53'.repeat(20);
+  const initialDrift = fakeSpawn(snapshotHandlers({
+    meta: pullMeta(head, BASE, 1, 42, { body: 'Changed before posting' }),
+  }));
+  const initialResult = await postReview(
+    reviewInputV3({ head }), { agent: 'naru-orchestrator' }, { spawn: initialDrift.spawn },
+  );
+  assert.match(initialResult.error, /feedback digest mismatch/);
+  assert.equal(initialDrift.calls.some((call) => call.argv.includes('POST')), false);
+
+  const finalHead = '54'.repeat(20);
+  let metadataCalls = 0;
+  const finalDrift = fakeSpawn(snapshotHandlers({
+    metadataReply: () => response(pullMeta(finalHead, BASE, 1, 42, {
+      body: metadataCalls++ < 2 ? 'Description' : 'Changed during final validation',
+    })),
+  }));
+  const finalResult = await postReview(
+    reviewInputV3({ head: finalHead }), { agent: 'naru-orchestrator' }, { spawn: finalDrift.spawn },
+  );
+  assert.match(finalResult.error, /final snapshot feedback digest mismatch/);
+  assert.equal(finalDrift.calls.some((call) => call.argv.includes('POST')), false);
+});
+
 test('post tool refuses final head and feedback drift without POST', async () => {
   const head = '8'.repeat(40);
   const movedHead = '9'.repeat(40);
@@ -552,6 +1072,34 @@ test('post tool refuses final head and feedback drift without POST', async () =>
   assert.equal(feedbackResult.ok, false);
   assert.match(feedbackResult.error, /final snapshot feedback digest mismatch/);
   assert.equal(feedbackDrift.calls.filter((call) => call.argv.includes('POST')).length, 0);
+});
+
+test('post tool refuses final patch-evidence and pull-state drift without POST', async () => {
+  const head = '51'.repeat(20);
+  let fileCalls = 0;
+  const evidenceDrift = fakeSpawn([
+    {
+      match: (argv) => argv[3] === 'GET' && has(argv, 'pulls/42/files'),
+      reply: () => response([[fileCalls++ === 0 ? changedFile() : { ...changedFile(), patch: undefined }]]),
+    },
+    ...snapshotHandlers({ meta: pullMeta(head) }),
+  ]);
+  const evidenceResult = await postReview(
+    reviewInputV3({ head }), { agent: 'naru-orchestrator' }, { spawn: evidenceDrift.spawn },
+  );
+  assert.match(evidenceResult.error, /review evidence.*changed/);
+  assert.equal(evidenceDrift.calls.some((call) => call.argv.includes('POST')), false);
+
+  const stateHead = '52'.repeat(20);
+  let metadataCalls = 0;
+  const stateDrift = fakeSpawn(snapshotHandlers({
+    metadataReply: () => response(pullMeta(stateHead, BASE, 1, 42, { draft: metadataCalls++ >= 2 })),
+  }));
+  const stateResult = await postReview(
+    reviewInputV3({ head: stateHead }), { agent: 'naru-orchestrator' }, { spawn: stateDrift.spawn },
+  );
+  assert.match(stateResult.error, /state changed/);
+  assert.equal(stateDrift.calls.some((call) => call.argv.includes('POST')), false);
 });
 
 test('post tool drops invalid inline locations', async () => {
@@ -652,6 +1200,42 @@ test('ambiguous POST is never retried', async () => {
   assert.equal(postCalls, 1);
 });
 
+test('ambiguous formal review POSTs are attempted exactly once and remain terminal', async () => {
+  const cases = [
+    {
+      head: '61'.repeat(20), policy: 'approve-if-clear', conclusion: 'clear', findings: [], event: 'APPROVE',
+    },
+    {
+      head: '62'.repeat(20), policy: 'request-changes-if-blocked', conclusion: 'blocking',
+      findings: [{ path: 'src/index.js', body: 'Blocker', priority: 'P1', severity: 'High', confidence: 'High' }],
+      event: 'REQUEST_CHANGES',
+    },
+  ];
+  for (const item of cases) {
+    let postedEvent;
+    let postCalls = 0;
+    const { spawn } = fakeSpawn([
+      ...snapshotHandlers({ meta: pullMeta(item.head) }),
+      { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+        postCalls += 1;
+        postedEvent = JSON.parse(options.input).event;
+        return response('ambiguous failure', false);
+      } },
+    ]);
+    const input = reviewInputV3({
+      head: item.head, submissionPolicy: item.policy, conclusion: item.conclusion, findings: item.findings,
+    });
+    const first = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+    const second = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+    assert.equal(postedEvent, item.event);
+    assert.equal(first.outcomeUnknown, true);
+    assert.equal(first.postAttempted, true);
+    assert.equal(second.outcomeUnknown, true);
+    assert.equal(second.postAttempted, false);
+    assert.equal(postCalls, 1);
+  }
+});
+
 test('OpenCode wrappers expose one input schema and return JSON text', async () => {
   for (const tool of [gitReadTool, githubReadTool, githubPostReviewTool]) {
     assert.deepEqual(Object.keys(tool.args), ['input']);
@@ -672,7 +1256,7 @@ test('OpenCode wrappers expose one input schema and return JSON text', async () 
 test('post tool schema exposes the exact nested review contract and aliases', () => {
   const reviewSchema = githubPostReviewTool.args.input.properties.reviewResult;
   assert.deepEqual(reviewSchema.required, [
-    'schemaVersion', 'target', 'snapshot', 'coverage', 'body', 'inlineComments', 'skippedInlineComments',
+    'schemaVersion', 'target', 'snapshot', 'coverage', 'body',
   ]);
   assert.equal(reviewSchema.additionalProperties, false);
   assert.deepEqual(Object.keys(reviewSchema.properties.target.properties), ['owner', 'repo', 'pullNumber', 'number']);
@@ -695,6 +1279,19 @@ test('post tool schema exposes the exact nested review contract and aliases', ()
     'path', 'line', 'side', 'body', 'priority', 'severity', 'confidence',
   ]);
   assert.deepEqual(reviewSchema.properties.skippedInlineComments.items.required, ['path', 'line', 'side', 'reason']);
+  assert.deepEqual(reviewSchema.properties.schemaVersion.enum, [2, 3]);
+  assert.deepEqual(reviewSchema.properties.findings.items.required, ['body', 'priority', 'severity', 'confidence']);
+  assert.match(reviewSchema.properties.findings.description, /path-level/);
+  assert.match(reviewSchema.properties.submissionPolicy.description, /asserts the current user authorization/);
+  assert.match(reviewSchema.properties.submissionPolicy.description, /comment-only allows COMMENT/);
+  assert.equal(reviewSchema.properties.event, undefined);
+  const visit = (value) => {
+    if (!value || typeof value !== 'object') return;
+    assert.equal(Object.hasOwn(value, 'oneOf'), false);
+    assert.equal(Object.hasOwn(value, 'not'), false);
+    for (const nested of Object.values(value)) visit(nested);
+  };
+  visit(reviewSchema);
 });
 
 test('a pull snapshot from naru-github-read feeds the posting tool without renaming fields', async () => {
@@ -786,6 +1383,65 @@ test('coverage limitations alter the dedupe digest', async () => {
   assert.equal(result.correctable, false);
 });
 
+test('v3 derived event and evidence limitations alter same-head dedupe', async () => {
+  const eventHead = '71'.repeat(20);
+  let eventPost;
+  const firstEvent = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(eventHead) }),
+    { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+      eventPost = JSON.parse(options.input);
+      return response({ id: 701 });
+    } },
+  ]);
+  const approve = reviewInputV3({ head: eventHead, submissionPolicy: 'approve-if-clear', conclusion: 'clear' });
+  assert.equal((await postReview(approve, { agent: 'naru-orchestrator' }, { spawn: firstEvent.spawn })).data.event, 'APPROVE');
+  const eventMarker = eventPost.body.match(/^<!-- naru-review:[^>]+-->/)[0];
+  const eventReviews = [{ id: 701, commit_id: eventHead, body: eventMarker, user: { login: 'viewer' } }];
+  const secondEvent = fakeSpawn(snapshotHandlers({ meta: pullMeta(eventHead), reviews: eventReviews }));
+  const comment = reviewInputV3({ head: eventHead, reviews: eventReviews, submissionPolicy: 'comment-only', conclusion: 'clear' });
+  const eventConflict = await postReview(comment, { agent: 'naru-orchestrator' }, { spawn: secondEvent.spawn });
+  assert.match(eventConflict.error, /different Naru review/);
+
+  const limitationHead = '72'.repeat(20);
+  let limitationPost;
+  const firstLimitation = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(limitationHead) }),
+    { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+      limitationPost = JSON.parse(options.input);
+      return response({ id: 702 });
+    } },
+  ]);
+  const limited = reviewInputV3({ head: limitationHead, posture: 'limited', limitations: ['Browser suite not run'] });
+  assert.equal((await postReview(limited, { agent: 'naru-orchestrator' }, { spawn: firstLimitation.spawn })).ok, true);
+  const limitationMarker = limitationPost.body.match(/^<!-- naru-review:[^>]+-->/)[0];
+  const limitationReviews = [{ id: 702, commit_id: limitationHead, body: limitationMarker, user: { login: 'viewer' } }];
+  const changed = reviewInputV3({
+    head: limitationHead, reviews: limitationReviews, posture: 'limited', limitations: ['Native build not run'],
+  });
+  const secondLimitation = fakeSpawn(snapshotHandlers({ meta: pullMeta(limitationHead), reviews: limitationReviews }));
+  const limitationConflict = await postReview(changed, { agent: 'naru-orchestrator' }, { spawn: secondLimitation.spawn });
+  assert.match(limitationConflict.error, /different Naru review/);
+
+  const postureHead = '73'.repeat(20);
+  let posturePost;
+  const firstPosture = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(postureHead) }),
+    { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
+      posturePost = JSON.parse(options.input);
+      return response({ id: 703 });
+    } },
+  ]);
+  assert.equal((await postReview(reviewInputV3({ head: postureHead }), { agent: 'naru-orchestrator' }, { spawn: firstPosture.spawn })).data.evidencePosture, 'complete');
+  const postureMarker = posturePost.body.match(/^<!-- naru-review:[^>]+-->/)[0];
+  const postureReviews = [{ id: 703, commit_id: postureHead, body: postureMarker, user: { login: 'viewer' } }];
+  const secondPosture = fakeSpawn(snapshotHandlers({ meta: pullMeta(postureHead), reviews: postureReviews }));
+  const postureConflict = await postReview(
+    reviewInputV3({ head: postureHead, reviews: postureReviews, posture: 'limited', limitations: ['Manual coverage was limited'] }),
+    { agent: 'naru-orchestrator' }, { spawn: secondPosture.spawn },
+  );
+  assert.match(postureConflict.error, /different Naru review/);
+});
+
 test('oversized composed body is a correctable pre-POST failure with no I/O', async () => {
   let ioCalls = 0;
   const input = reviewInput({ body: 'x'.repeat(64 * 1024 - 257) });
@@ -800,6 +1456,20 @@ test('oversized composed body is a correctable pre-POST failure with no I/O', as
   assert.equal(ioCalls, 0);
 });
 
+test('rendered non-inline findings participate in final review body bounds', async () => {
+  const head = '87'.repeat(20);
+  const { spawn, calls } = fakeSpawn(snapshotHandlers({ meta: pullMeta(head) }));
+  const input = reviewInputV3({
+    head,
+    body: 'x'.repeat(64 * 1024 - 257),
+    findings: [{ body: 'Visible bounded finding', priority: 'P2', severity: 'Medium', confidence: 'High' }],
+  });
+  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+  assert.match(result.error, /composed review body exceeds/);
+  assert.equal(result.correctable, true);
+  assert.equal(calls.some((call) => call.argv.includes('POST')), false);
+});
+
 test('coverage.complete false still refuses to post', async () => {
   const result = await postReview(
     reviewInput({ status: 'incomplete', degraded: true }),
@@ -809,13 +1479,62 @@ test('coverage.complete false still refuses to post', async () => {
   assert.match(result.error, /incomplete/);
 });
 
-test('review policy permits correction only from explicit pre-POST state', async () => {
-  const [orchestrator, skill, userGuide, agentsGuide] = await Promise.all([
+test('review policy docs lock authorization, formal gates, and one-POST terminal behavior', async () => {
+  const [orchestrator, skill, readme, userGuide, agentsGuide, reviewLane, visualGuide] = await Promise.all([
     readFile(new URL('../agents/naru-orchestrator.md', import.meta.url), 'utf8'),
     readFile(new URL('../skills/naru-review/SKILL.md', import.meta.url), 'utf8'),
+    readFile(new URL('../README.md', import.meta.url), 'utf8'),
     readFile(new URL('../docs/user-guide.md', import.meta.url), 'utf8'),
     readFile(new URL('../docs/src/content/docs/workflows/agents.md', import.meta.url), 'utf8'),
+    readFile(new URL('../docs/src/content/docs/workflows/review-lane.md', import.meta.url), 'utf8'),
+    readFile(new URL('../naru-visual-guide.html', import.meta.url), 'utf8'),
   ]);
+
+  for (const publicDoc of [readme, userGuide, visualGuide]) {
+    assert.doesNotMatch(publicDoc, /tool that posts a pull-request review can only leave a comment/i);
+    assert.doesNotMatch(publicDoc, /One `COMMENT`-only attempt/i);
+    assert.doesNotMatch(publicDoc, /comment-only (?:<b>by construction<\/b>|tool|posting tool)/i);
+  }
+
+  for (const policy of [orchestrator, skill, readme, userGuide, agentsGuide, reviewLane]) {
+    assert.match(policy, /dry-run (?:is (?:the )?|by )default/i);
+    assert.match(policy, /post[\s\S]{0,80}comment[\s\S]{0,80}submit/i);
+    assert.match(policy, /approve if clear/i);
+    assert.match(policy, /request changes if blocked/i);
+    assert.match(policy, /appropriate review decision|select-state/i);
+    assert.match(policy, /limited(?: v3| patch)? evidence[\s\S]{0,100}`?COMMENT`?/i);
+  }
+
+  for (const policy of [orchestrator, skill, reviewLane]) {
+    assert.match(policy, /`comment-only`/);
+    assert.match(policy, /`approve-if-clear`/);
+    assert.match(policy, /`request-changes-if-blocked`/);
+    assert.match(policy, /`select-state`/);
+  }
+
+  for (const policy of [orchestrator, skill, userGuide, reviewLane]) {
+    assert.match(policy, /prior-message intent/i);
+    assert.match(policy, /PR, diff/i);
+    assert.match(policy, /no raw event|never include a raw `event`|never supply a raw GitHub event|contains no raw event/i);
+    assert.match(policy, /APPROVE/);
+    assert.match(policy, /complete (?:snapshot )?evidence/i);
+    assert.match(policy, /complete (?:review )?coverage/i);
+    assert.match(policy, /clear conclusion/i);
+    assert.match(policy, /no declared blockers/i);
+    assert.match(policy, /open non-draft PR/i);
+    assert.match(policy, /actor (?:!=|different from|other than) (?:the PR |the )?author/i);
+    assert.match(policy, /REQUEST_CHANGES/);
+    assert.match(policy, /blocking conclusion/i);
+    assert.match(policy, /P0\/P1/);
+    assert.match(policy, /Critical\/High/);
+    assert.match(policy, /High(?:-|\s)confidence/i);
+    assert.match(policy, /complete current(?:-|\s)patch evidence/i);
+    assert.match(policy, /formal[\s\S]{0,80}(?:gate|ineligib)[\s\S]{0,80}(?:downgrade|downgrades)[\s\S]{0,40}`COMMENT`/i);
+    assert.match(policy, /inventory[\s\S]{0,80}feedback[\s\S]{0,100}(?:refus|unpostable)/i);
+    assert.match(policy, /v2[\s\S]{0,100}complete(?:-|\s)evidence[\s\S]{0,40}`COMMENT`/i);
+    assert.match(policy, /v3[\s\S]{0,80}canonical/i);
+  }
+
   for (const policy of [orchestrator, skill, userGuide, agentsGuide]) {
     assert.match(policy, /(?:Make |allows )?[Aa]t most one GitHub POST attempt(?: is allowed)?, not one tool invocation/);
     assert.match(policy, /`postAttempted: false` and `correctable: true`/);
@@ -826,7 +1545,6 @@ test('review policy permits correction only from explicit pre-POST state', async
   for (const policy of [orchestrator, skill]) {
     assert.match(policy, /Never (retry or\nuse|use) another/);
     assert.match(policy, /orchestrator-only/);
-    assert.match(policy, /comment-only/);
   }
   for (const policy of [userGuide, agentsGuide]) assert.match(policy, /Never use another posting mechanism/);
 });
