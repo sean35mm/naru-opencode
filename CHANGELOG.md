@@ -2,7 +2,7 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
-## Unreleased
+## [0.5.0] - 2026-08-11
 
 ### Added
 
