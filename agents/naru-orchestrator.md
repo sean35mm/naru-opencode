@@ -149,7 +149,7 @@ and repo case-insensitively. If it resolves to more than one PR or none, ask.
 Review is dry-run by default — return findings, post nothing. A PR link is never
 posting authorization.
 
-Post only when the current user message explicitly asks you to. Derive the v3
+Post only when the current user message explicitly asks you to. Derive the v4
 `submissionPolicy` only from that message:
 
 - “post the review”, “comment the review”, or “submit the review” means
@@ -165,7 +165,31 @@ payload), confirm the target still matches, and call
 `naru-github-post-review`. Never supply a raw GitHub event; the tool derives it
 within the authorized policy.
 
-Use schema v3, the canonical contract for new reviews. Limited evidence always
+Use schema v4, the only contract that can create a new review. Start with
+`pull-manifest`, freeze its exact target/base/head, `feedbackDigest`, and
+`evidenceDigest`, then partition its changed paths into explicit, disjoint file
+lists. Every final manifest path must be assigned and reviewed: thematic lenses
+supplement file coverage and never replace it. Use bounded exact-head
+`pull-files` batches, carrying the complete frozen manifest identity on every
+request. Fetch every declared page for each nonempty feedback kind with
+`pull-feedback`; do not infer page contents from manifest metadata. Preserve each
+returned `batchDigest` and `pageDigest` in `coverage.fileBatches` and
+`coverage.feedbackPages`. Those declarations must exactly partition all manifest
+paths and cover every manifest feedback page once. Attempt the snapshot's
+missing-patch recovery state; when recovery is unavailable, never guess from
+incomplete diff text. Reconcile a full ledger with exactly one entry per final
+path and acknowledge prior feedback using that exact `feedbackDigest`. Refuse
+posting on missing, duplicate, unknown, or otherwise unreconciled file, page, or
+ledger declarations. The posting tool reacquires these finite units and brackets
+them with compact manifests; any identity, digest, count, or ordering drift is a
+pre-POST refusal.
+
+Semantically reconcile findings with prior reviews and inline feedback. The tool
+suppresses deterministic exact inline duplicates only; semantic deduplication is
+not mechanically solved. Supply a short summary and structured findings and let
+the tool render findings and one bounded limitations section.
+
+Limited evidence always
 produces `COMMENT` with a generated warning. `APPROVE` requires complete snapshot
 evidence, complete review coverage, a clear conclusion, no declared blockers, an
 open non-draft PR, and an authenticated actor different from the PR author.
@@ -174,8 +198,8 @@ complete evidence, a blocking conclusion, and at least one finding that remains
 mechanically eligible after final validation: P0/P1, Critical/High, High
 confidence, on complete current-patch evidence. Failure of a formal-decision gate
 downgrades to `COMMENT`; an unpostable inventory or feedback-integrity failure is
-refused. Schema v2 remains supported only for complete-evidence `COMMENT`
-reviews.
+refused. V2/v3 are recognized only for legacy-marker compatibility and cannot
+create a new review.
 
 Make at most one GitHub POST attempt, not one tool invocation. A corrected tool
 call is allowed only when the preceding result explicitly reports
@@ -184,10 +208,16 @@ call is allowed only when the preceding result explicitly reports
 use another mechanism; report an unknown outcome as ambiguous. The tool remains
 orchestrator-only.
 
-Build `coverage.limitations` from what you genuinely could not check. In v3,
-declare `coverage.posture` as `limited` whenever review coverage or current patch
-evidence is incomplete; limitations are published in the review body. If edits or
-a push land afterward, that review is stale and needs a new explicit request.
+The tool derives coverage; never assert that it is complete. Limited posting
+requires explicit current-user language authorizing a **limited review**. Assert
+that current-message authorization as v4 `submissionMode: limited`, analogous to
+`submissionPolicy`; it must match derived limited evidence and always becomes
+`COMMENT`. Generic “post the review” does
+not authorize incomplete thematic coverage. A same-head limited→complete
+supersession is a new explicit submission, not a retry, and requires the confirmed
+v4 limited predecessor ID and digest. Legacy markers cannot be superseded. If
+edits or a push land afterward, the review is stale and needs a new explicit
+request.
 
 ## Isolated worktrees
 

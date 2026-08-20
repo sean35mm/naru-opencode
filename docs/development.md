@@ -68,8 +68,10 @@ Tools (`tools/`):
 
 - **`naru-git-read`** — bounded read-only git: `repository`, `status`, `diff`, `log`, `file`,
   `grep`, `merge-base`. Fixed argv arrays, `--no-pager`/`--no-color`, never mutates state.
-- **`naru-github-read`** — `resolve`, `issue`, `pull`, `source`. Pull snapshots are pinned to exact
-  40-hex SHAs so a review reasons about an immutable target.
+- **`naru-github-read`** — `resolve`, `issue`, `pull`, `pull-manifest`, `pull-files`,
+  `pull-feedback`, `source`. The compact manifest exposes every changed path and feedback page count
+  without bodies. File batches and 100-item feedback pages require full manifest identity, bracket
+  their body acquisition with compact manifests, and return `batchDigest`/`pageDigest` provenance.
 - **`naru-github-post-review`** — orchestrator-only; derives `COMMENT`, `APPROVE`, or
   `REQUEST_CHANGES` from the asserted current-message policy and final validated evidence. It
   accepts no raw event, makes one POST attempt with no retry, and carries freshness and dedupe
@@ -142,8 +144,25 @@ Concurrency and review:
 - One writer per logical scope; overlapping scopes serialize. A writer takes a Weaver claim before
   its first edit. A claim conflict is a scheduling signal, never a user prompt.
 - Pull-request review is dry-run by default. Posting requires explicit current-message policy;
-  generic posting language authorizes `COMMENT`, while formal decisions require complete evidence.
-  There is one POST attempt, never a retry when its outcome is ambiguous.
+  schema v4 is required for new mutations, while v2/v3 are historical/idempotency compatibility
+  only. Generic posting authorizes only a complete `COMMENT`; limited posting requires explicit
+  current-user limited-review language and always derives `COMMENT`. There is one POST attempt,
+  never a retry when its outcome is ambiguous.
+- V4 review acquisition is manifest-first. Coverage reconciles every changed path once in the
+  ledger and once across non-overlapping file-batch declarations, plus every advertised feedback
+  kind/page once. All batch/page digests are snapshot-bound, and acknowledgement is bound to the
+  prior-feedback digest. This is exhaustive provenance attestation, not proof of cognition or
+  semantic review quality. The tool derives complete/limited posture.
+- Per-file patch evidence is structurally classified as complete, limited, or unavailable. Missing
+  patches stay limited because central safe unified-diff recovery is deliberately not implemented.
+  Aggregate patch limits apply per bounded batch, allowing combined reviewed patches to exceed the
+  former global aggregate while per-file, batch, response, and feedback-body limits remain.
+  Mechanically derived limitations render once in one concise aggregated section.
+- V4 posting reacquires only declared bounded batches/pages between compact manifests for each
+  freshness pass; it does not use the legacy monolithic all-patch snapshot.
+- Current-head exact inline duplicates are omitted from posting but retained for formal decisions;
+  semantic dedupe remains agent-owned. Strict same-head limited-v4→complete-v4 supersession needs
+  the predecessor ID/digest and fresh explicit authorization. It is a new submission, never a retry.
 - Isolated worktrees require a clean repository. A dirty or unavailable workspace downgrades
   silently to shared mode instead of failing or prompting.
 
@@ -280,9 +299,9 @@ any of them only with a migration and a targeted test.
    (`naru-dispatch`), and an orchestrator `task` map that allows exactly the three subagents (the dispatch plugin extends it with generated class variants at config load).
 2. Review permission blocks for the `'*': deny` start, the writer-only edit boundary, the runner-only
    bash boundary, read-only `bash`/`external_directory` denials, and the secret path denials.
-3. Confirm the posting path is still orchestrator-only, derives review events only within schema v3
-   policy and final evidence gates, makes one POST attempt with no retry, and is deduped; v2 remains
-   complete-evidence `COMMENT`-only.
+3. Confirm the posting path is still orchestrator-only, requires schema v4 for every new mutation,
+   derives posture and review events from manifest-bound final evidence, makes one POST attempt with
+   no retry, and preserves strict dedupe/supersession rules; v2/v3 remain compatibility-only.
 4. Run the three suites plus `git diff --check`, and record any check that was not run. Run
    `npm run test:installer` whenever installed inventory, migration, or copy/symlink behavior
    changed.

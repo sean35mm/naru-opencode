@@ -213,8 +213,9 @@
         subagents it delegates to, four advisory skills, five bounded tools, and one plugin.
         The walls stand at the irreversible edges and are <strong>mechanical rather than
         advisory</strong> — exactly one role can edit files, read-only roles have no shell at all,
-        secrets are denied to every role, and the tool that posts a pull-request review can only
-        leave a comment. Inside those walls the orchestrator plans, splits the work, and fans out
+        secrets are denied to every role, and the tool that posts a pull-request review requires a
+        manifest-bound schema v4 payload and derives the allowed event from current authorization
+        and final evidence. Inside those walls the orchestrator plans, splits the work, and fans out
         on its own judgment. No modes, no protocols, no ceremony.
       </p>
       <div class="hero-meta">
@@ -504,7 +505,7 @@ Dispatched: 3× naru-reader-light, 1× naru-writer-standard</pre>
         <div class="card accent">
           <p class="meta">Layer 4 · construction</p>
           <h3>The posting tool</h3>
-          <p class="micro"><code>naru-github-post-review</code> accepts no event parameter. From schema v3 policy and final evidence it derives <code>COMMENT</code>, <code>APPROVE</code>, or <code>REQUEST_CHANGES</code>; generic posting language authorizes only <code>COMMENT</code>, and formal states require explicit current-message policy plus complete evidence. One POST attempt, no retry, orchestrator-only.</p>
+          <p class="micro"><code>naru-github-post-review</code> accepts no event parameter. Schema v4 is required for new mutations; v2/v3 are historical/idempotency compatibility only. From manifest-bound final evidence it derives posture and <code>COMMENT</code>, <code>APPROVE</code>, or <code>REQUEST_CHANGES</code>. Generic posting authorizes only a complete <code>COMMENT</code>; limited mode needs explicit current-user limited-review language and is always <code>COMMENT</code>. One POST attempt, no retry, orchestrator-only.</p>
         </div>
       </div>
 
@@ -529,7 +530,7 @@ Dispatched: 3× naru-reader-light, 1× naru-writer-standard</pre>
             </tr>
             <tr>
               <td class="deny" style="color:var(--text);font-weight:700">Mechanically impossible</td>
-              <td class="deny">Edits by any role but the writer. A shell for readers. Reading secret paths. Approving, requesting changes on, or merging a PR through Naru. Subagents spawning children.</td>
+              <td class="deny">Edits by any role but the writer. A shell for readers. Reading secret paths. Supplying a raw review event, posting a new v2/v3 review, or merging a PR through Naru. Subagents spawning children.</td>
             </tr>
           </tbody>
         </table>
@@ -544,7 +545,7 @@ Dispatched: 3× naru-reader-light, 1× naru-writer-standard</pre>
         <div class="card">
           <p class="meta">Review wall</p>
           <h3>Dry-run by default</h3>
-          <p class="micro">A review returns findings and posts nothing. Posting takes explicit current-message policy, a fresh review against the current head, and exactly one POST attempt. Generic posting language authorizes <code>COMMENT</code>; formal decisions require explicit policy and complete evidence. An ambiguous POST is reported as ambiguous — never retried, never worked around with another mechanism.</p>
+          <p class="micro">A review returns findings and posts nothing. Posting takes explicit current-message policy, a compact manifest, exact file-batch and feedback-page provenance, and exactly one POST attempt. The tool reacquires only those declared bounded units between compact manifests and derives complete/limited posture. Generic posting authorizes only a complete <code>COMMENT</code>; limited posting needs explicit limited-review language and is always <code>COMMENT</code>. An ambiguous POST is terminal.</p>
         </div>
       </div>
     </section>
@@ -566,12 +567,12 @@ Dispatched: 3× naru-reader-light, 1× naru-writer-standard</pre>
         <div class="card">
           <p class="meta">read-only · all roles</p>
           <h3>naru-github-read</h3>
-          <p class="micro">Read-only GitHub: <code>resolve</code>, <code>issue</code>, <code>pull</code>, <code>source</code>. Pull snapshots are pinned to exact 40-hex SHAs, so a review is of a specific state, not a moving head.</p>
+          <p class="micro">Read-only GitHub: <code>resolve</code>, <code>issue</code>, <code>pull</code>, <code>pull-manifest</code>, <code>pull-files</code>, <code>pull-feedback</code>, and <code>source</code>. The body-free manifest advertises all paths and feedback page counts; identity-bound batches/pages return digests and are bracketed by compact manifests.</p>
         </div>
         <div class="card accent">
           <p class="meta">orchestrator only</p>
           <h3>naru-github-post-review</h3>
-          <p class="micro">No raw event input: generic post/comment/submit wording authorizes <code>COMMENT</code>; explicit current-message policy can authorize evidence-gated <code>APPROVE</code> or <code>REQUEST_CHANGES</code>. Limited evidence stays <code>COMMENT</code>. One POST attempt, no retry, freshness and dedupe guards. Cannot merge; custom agents and subagents cannot post through Naru.</p>
+          <p class="micro">No raw event input: schema v4 reconciles every manifest path once in the ledger and file-batch provenance, plus every advertised 100-item feedback page once. Posting reacquires only those bounded units, not a monolithic all-patch snapshot. Per-batch patch limits allow the combined review to exceed the former global aggregate while per-file/body bounds remain. Provenance is snapshot-bound attestation, not proof of cognition or semantic quality. Generic posting does not authorize limited mode; explicit limited-review language does, always as <code>COMMENT</code>. Exact duplicates stay decision-relevant. One POST attempt, no retry.</p>
         </div>
         <div class="card accent">
           <p class="meta">orchestrator only</p>

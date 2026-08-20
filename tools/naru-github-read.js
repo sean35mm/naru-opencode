@@ -1,36 +1,74 @@
 // naru-github-read: read-only GitHub inspection for OpenCode custom tools.
 // The filename defines the OpenCode tool ID.
-import { parseReference, resolveBareNumber, fetchIssue, pullSnapshot, fetchSourceAtSha, } from './naru-lib/github.mjs';
+import { parseReference, resolveBareNumber, fetchIssue, pullSnapshot, pullManifest, pullFilesAtHead, pullFeedbackPage, fetchSourceAtSha, } from './naru-lib/github.mjs';
 import { okEnvelope, errEnvelope } from './naru-lib/output.mjs';
 import { assertPlainObject, validateAllowedKeys, validateStringEnum, isSafeOwner, isSafeRepo, isPositiveInteger, is40HexSha, isSafeRelativePath, isNonEmptyString, safeError, requireField, } from './naru-lib/validate.mjs';
-const OPERATIONS = ['resolve', 'issue', 'pull', 'source'];
+const OPERATIONS = ['resolve', 'issue', 'pull', 'pull-manifest', 'pull-files', 'pull-feedback', 'source'];
 function isOperationName(value) {
     return OPERATIONS.some(operation => operation === value);
 }
 function validateInput(raw) {
     assertPlainObject(raw, 'input');
-    validateAllowedKeys(raw, ['operation', 'reference', 'owner', 'repo', 'number', 'sha', 'path']);
+    validateAllowedKeys(raw, ['operation', 'reference', 'owner', 'repo', 'number', 'sha', 'path', 'baseSha', 'headSha', 'snapshotId', 'feedbackDigest', 'evidenceDigest', 'paths', 'kind', 'page']);
     validateStringEnum(raw.operation, OPERATIONS, 'operation');
     if (!isOperationName(raw.operation))
         throw new Error('unsupported operation');
     switch (raw.operation) {
         case 'resolve': {
+            validateAllowedKeys(raw, ['operation', 'reference']);
             const reference = requireField(raw, 'reference', (value) => isNonEmptyString(value, { max: 512 }));
             return { operation: 'resolve', reference };
         }
         case 'pull': {
+            validateAllowedKeys(raw, ['operation', 'owner', 'repo', 'number']);
             const owner = requireField(raw, 'owner', isSafeOwner);
             const repo = requireField(raw, 'repo', isSafeRepo);
             const number = requireField(raw, 'number', isPositiveInteger);
             return { operation: 'pull', owner, repo, number };
         }
+        case 'pull-manifest': {
+            validateAllowedKeys(raw, ['operation', 'owner', 'repo', 'number']);
+            const owner = requireField(raw, 'owner', isSafeOwner);
+            const repo = requireField(raw, 'repo', isSafeRepo);
+            const number = requireField(raw, 'number', isPositiveInteger);
+            return { operation: 'pull-manifest', owner, repo, number };
+        }
+        case 'pull-files': {
+            validateAllowedKeys(raw, ['operation', 'owner', 'repo', 'number', 'baseSha', 'headSha', 'snapshotId', 'feedbackDigest', 'evidenceDigest', 'paths']);
+            const owner = requireField(raw, 'owner', isSafeOwner);
+            const repo = requireField(raw, 'repo', isSafeRepo);
+            const number = requireField(raw, 'number', isPositiveInteger);
+            const baseSha = requireField(raw, 'baseSha', is40HexSha);
+            const headSha = requireField(raw, 'headSha', is40HexSha);
+            const snapshotId = requireField(raw, 'snapshotId', value => typeof value === 'string' && /^naru-snap-[0-9a-f]{64}$/.test(value));
+            const feedbackDigest = requireField(raw, 'feedbackDigest', value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value));
+            const evidenceDigest = requireField(raw, 'evidenceDigest', value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value));
+            const paths = requireField(raw, 'paths', value => Array.isArray(value));
+            return { operation: 'pull-files', owner, repo, number, baseSha, headSha, snapshotId, feedbackDigest, evidenceDigest, paths };
+        }
+        case 'pull-feedback': {
+            validateAllowedKeys(raw, ['operation', 'owner', 'repo', 'number', 'baseSha', 'headSha', 'snapshotId', 'feedbackDigest', 'evidenceDigest', 'kind', 'page']);
+            const identity = {
+                owner: requireField(raw, 'owner', isSafeOwner), repo: requireField(raw, 'repo', isSafeRepo),
+                number: requireField(raw, 'number', isPositiveInteger), baseSha: requireField(raw, 'baseSha', is40HexSha),
+                headSha: requireField(raw, 'headSha', is40HexSha),
+                snapshotId: requireField(raw, 'snapshotId', value => typeof value === 'string' && /^naru-snap-[0-9a-f]{64}$/.test(value)),
+                feedbackDigest: requireField(raw, 'feedbackDigest', value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)),
+                evidenceDigest: requireField(raw, 'evidenceDigest', value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)),
+            };
+            const kind = requireField(raw, 'kind', value => ['reviews', 'review-comments', 'issue-comments'].includes(value));
+            const page = requireField(raw, 'page', isPositiveInteger);
+            return { operation: 'pull-feedback', ...identity, kind, page };
+        }
         case 'issue': {
+            validateAllowedKeys(raw, ['operation', 'owner', 'repo', 'number']);
             const owner = requireField(raw, 'owner', isSafeOwner);
             const repo = requireField(raw, 'repo', isSafeRepo);
             const number = requireField(raw, 'number', isPositiveInteger);
             return { operation: 'issue', owner, repo, number };
         }
         case 'source': {
+            validateAllowedKeys(raw, ['operation', 'owner', 'repo', 'sha', 'path']);
             const owner = requireField(raw, 'owner', isSafeOwner);
             const repo = requireField(raw, 'repo', isSafeRepo);
             const sha = requireField(raw, 'sha', is40HexSha);
@@ -41,7 +79,7 @@ function validateInput(raw) {
 }
 const githubReadTool = {
     description: 'Read-only GitHub inspection. Resolve PR/issue references, read an issue, capture a ' +
-        'coherent pull snapshot, or fetch an exact source file at a 40-char SHA.',
+        'coherent pull snapshot/manifest, fetch an exact-head file batch or feedback page, or fetch an exact source file at a 40-char SHA.',
     args: {
         input: {
             type: 'object',
@@ -49,8 +87,8 @@ const githubReadTool = {
             properties: {
                 operation: {
                     type: 'string',
-                    enum: ['resolve', 'issue', 'pull', 'source'],
-                    description: 'Resolve a reference, read an issue, capture a pull snapshot, or read source at a SHA.',
+                    enum: ['resolve', 'issue', 'pull', 'pull-manifest', 'pull-files', 'pull-feedback', 'source'],
+                    description: 'Resolve a reference, read an issue, capture bounded pull evidence, or read source at a SHA.',
                 },
                 reference: {
                     type: 'string',
@@ -61,6 +99,14 @@ const githubReadTool = {
                 number: { type: 'number', description: 'Issue or pull request number.' },
                 sha: { type: 'string', description: '40-character hex commit SHA.' },
                 path: { type: 'string', description: 'Relative file path.' },
+                headSha: { type: 'string', description: 'Exact 40-character pull head SHA.' },
+                baseSha: { type: 'string', description: 'Exact 40-character pull base SHA.' },
+                snapshotId: { type: 'string', description: 'Originating compact manifest snapshot ID.' },
+                feedbackDigest: { type: 'string', description: 'Originating compact manifest feedback digest.' },
+                evidenceDigest: { type: 'string', description: 'Originating compact manifest evidence digest.' },
+                paths: { type: 'array', items: { type: 'string' }, maxItems: 100, description: 'Distinct manifest paths to retrieve.' },
+                kind: { type: 'string', enum: ['reviews', 'review-comments', 'issue-comments'] },
+                page: { type: 'number', minimum: 1 },
             },
             required: ['operation'],
             additionalProperties: false,
@@ -97,6 +143,20 @@ const githubReadTool = {
                         contentTruncated: snapshot.contentTruncated,
                         warnings: snapshot.warnings,
                     }), null, 2);
+                }
+                case 'pull-manifest': {
+                    const manifest = await pullManifest(input, { spawn: context?.spawn });
+                    return JSON.stringify(okEnvelope('naru-github-read', manifest, {
+                        complete: manifest.reviewability.inventoryComplete && manifest.reviewability.feedbackComplete,
+                        warnings: manifest.warnings,
+                    }), null, 2);
+                }
+                case 'pull-files': {
+                    const batch = await pullFilesAtHead(input, { spawn: context?.spawn });
+                    return JSON.stringify(okEnvelope('naru-github-read', batch), null, 2);
+                }
+                case 'pull-feedback': {
+                    return JSON.stringify(okEnvelope('naru-github-read', await pullFeedbackPage(input, { spawn: context?.spawn })), null, 2);
                 }
                 case 'issue': {
                     const issue = await fetchIssue({ owner: input.owner, repo: input.repo, number: input.number }, { spawn: context?.spawn });

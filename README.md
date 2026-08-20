@@ -1,8 +1,8 @@
 # Naru for OpenCode
 
-Naru is an extension layer for [OpenCode](https://opencode.ai): one orchestrating agent, four subagents it delegates to, four on-demand skills, a small set of bounded tools, and one plugin.
+Naru is an extension layer for [OpenCode](https://opencode.ai): one orchestrating agent, three subagents it delegates to, four on-demand skills, a small set of bounded tools, and one plugin.
 
-The design is a single idea — **thin hard walls, free interior.** The walls stand at the irreversible edges and are mechanical rather than advisory: exactly one role can edit files, read-only roles have no shell at all, secrets are denied to every role, and the review tool derives `COMMENT`, `APPROVE`, or `REQUEST_CHANGES` only from schema v3 policy plus final evidence gates. Generic posting language still authorizes only `COMMENT`; formal states need explicit current-message policy and complete evidence. Inside those walls the orchestrator is trusted to plan, split the work, and fan out on its own judgment. There are no modes to pick and no ceremony to perform. The walls do the safety work, so the interior can be free.
+The design is a single idea — **thin hard walls, free interior.** The walls stand at the irreversible edges and are mechanical rather than advisory: exactly one role can edit files, read-only roles have no shell at all, secrets are denied to every role, and the review tool derives `COMMENT`, `APPROVE`, or `REQUEST_CHANGES` only from the schema v4 review contract and final evidence gates. Generic posting language still authorizes only a complete `COMMENT`; formal states need explicit current-message policy and complete evidence, while a limited review needs separate explicit current-user limited-review language and is always `COMMENT`. Inside those walls the orchestrator is trusted to plan, split the work, and fan out on its own judgment. There are no modes to pick and no ceremony to perform. The walls do the safety work, so the interior can be free.
 
 Built by [Naru Labs](https://github.com/sean35mm).
 
@@ -95,12 +95,18 @@ Skill text is advisory guidance, never authorization. A skill cannot change an a
 | Tool | What it does |
 | --- | --- |
 | `naru-git-read` | Bounded read-only git: `repository`, `status`, `diff`, `log`, `file`, `grep`, `merge-base` |
-| `naru-github-read` | Read-only GitHub: `resolve`, `issue`, `pull`, `source`. Pull snapshots are pinned to exact 40-hex SHAs |
+| `naru-github-read` | Read-only GitHub: `resolve`, `issue`, `pull`, scalable `pull-manifest`/`pull-files`/`pull-feedback`, and `source`. Pull evidence is bound to one manifest identity |
 | `naru-github-post-review` | Orchestrator-only. Derives `COMMENT`, `APPROVE`, or `REQUEST_CHANGES` from explicit current-message policy and validated evidence; one POST attempt, no retry |
 | `naru-worktree` | Isolated writer worktrees: `prepare_run`, `recover_run`, `prepare_item`, `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run` |
 | `naru-doctor` | Provider-free local install and config health report |
 
-`naru-github-post-review` accepts no raw event. A generic current request to post, comment, or submit the review authorizes only `COMMENT`; explicit “approve if clear”, “request changes if blocked”, or “post with the appropriate review decision” wording enables the corresponding evidence-gated policy. Limited evidence always posts as `COMMENT`, and unpostable inventory or feedback failures are refused. It cannot merge. Only `naru-orchestrator` holds permission to call it, so custom agents and subagents cannot post through Naru at all.
+`naru-github-post-review` accepts no raw event and requires schema v4 for every new mutation; v2/v3 are recognized only for historical marker and idempotency compatibility and cannot create reviews. A generic current request to post, comment, or submit authorizes only a complete `COMMENT`; explicit “approve if clear”, “request changes if blocked”, or “post with the appropriate review decision” wording enables the corresponding evidence-gated policy. It does **not** authorize a limited review. `submissionMode: limited` is an orchestrator assertion derived only from explicit limited-review posting language in the current user message, must agree with the posture the tool derives, and limited v4 evidence always derives `COMMENT`.
+
+V4 starts from a compact manifest that binds target, base/head, snapshot, feedback, and evidence identity. It lists every changed file plus page counts for reviews, review comments, and issue comments, but carries neither patches nor feedback bodies. Each bounded `pull-files` request must repeat that full originating identity, is bracketed by compact-manifest checks, and returns a `batchDigest`; `pull-feedback` returns one advertised page of at most 100 items with a `pageDigest`. Coverage must reconcile every manifest file exactly once in both the file ledger and non-overlapping batch provenance, and every advertised feedback page exactly once. File batches alone are not sufficient.
+
+At posting time the tool reacquires only those declared bounded batches and pages between compact manifests instead of rebuilding one monolithic all-patch snapshot. Aggregate patch retention applies per batch, so the combined reviewed patches may exceed the former global aggregate while per-file, per-batch, response, and feedback-body limits remain. Patch evidence is capped at 1 MiB and 1,024 retained left/right line-map entries per file, 16 MiB and 16,384 retained line-map entries per declared batch, and 32 MiB per GitHub transport response. Crossing a line-map ceiling clears the file's partial map and patch digest and marks its evidence limited. Per-file `patchEvidence` still reports complete, limited, or unavailable evidence; missing patches remain limited because safe unified-diff recovery is deliberately not implemented. The tool derives complete/limited posture, renders one concise limitations section, and treats provenance as exhaustive snapshot-bound attestation—not proof of cognition, understanding of every line, or semantic review quality. Exact current-head duplicate findings are not posted again but remain relevant to approval or change-request decisions; semantic deduplication remains the reviewing agent's responsibility.
+
+A complete same-head review may supersede exactly one prior limited v4 `COMMENT` only with a fresh explicit posting authorization and the predecessor's review ID and digest. This is a new submission, never a retry. The tool still makes one POST attempt; an ambiguous outcome is terminal. It cannot merge, and only `naru-orchestrator` can call it.
 
 ### Per-dispatch models (naru-dispatch)
 
@@ -136,7 +142,7 @@ The MCP server is optional. Without it, investigation falls back to LSP and lite
 - **Local changes are the default stop.** Commit, push, PR create or update, and posting to GitHub happen only when the current request asks for them. That ask is the authorization; it is neither reconfirmed nor assumed.
 - **One checkpoint, naming the exact action**, before destructive or irreversible operations, migrations, persistent database writes, production deploys, secret access, billing or security-posture changes, dependency changes the user did not request, or material scope expansion. Routine reads and in-scope checks need no checkpoint.
 - **One writer per logical scope.** Overlapping scopes serialize, always. Writers claim their exact scope in Weaver before the first edit; a claim conflict is a scheduling signal to requeue, never a reason to prompt the user.
-- **Review is dry-run by default.** Posting requires explicit current-message policy, uses a fresh review against the current head, and makes exactly one POST attempt. Generic posting language authorizes `COMMENT`; formal decisions require explicit policy and complete evidence. An ambiguous POST is reported as ambiguous, never retried.
+- **Review is dry-run by default.** Posting requires schema v4 and explicit current-message policy, uses a manifest-first fresh review against the current head, and makes exactly one POST attempt. Generic posting language authorizes only a complete `COMMENT`; limited posting needs explicit current-user limited-review language and is always `COMMENT`. An ambiguous POST is reported as ambiguous, never retried.
 - **Isolated worktrees require a clean repository.** If the workspace is dirty or isolation is unavailable, writers silently fall back to shared mode rather than asking or faking isolation.
 
 Naru is not a sandbox, not a proof system, not durable across processes, and not a global capacity meter. It constrains Naru's own agents; it does not constrain the machine.
@@ -190,7 +196,7 @@ Copy the exact permission fragment and the full integration rules from the [agen
 ## Repository layout
 
 ```text
-agents/                     naru-orchestrator and its four subagents
+agents/                     naru-orchestrator and its three subagents
 skills/                     four skills, loaded on demand
 tools/                      custom OpenCode tools and their shared library
 plugins/                    the one plugin: naru-dispatch

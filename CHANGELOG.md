@@ -2,6 +2,27 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.6.0] - 2026-08-20
+
+### Added
+
+- Added schema v4 manifest-bound per-file coverage with bounded file-batch and feedback-page provenance.
+- Added read operations for `pull-manifest`, manifest-bound `pull-files`, and bounded `pull-feedback`.
+- Added limited-to-complete same-head review supersession under fresh authorization.
+
+### Changed
+
+- New review mutations now require schema v4; schemas v2 and v3 remain available only for compatibility and idempotency. Posting a limited review requires explicit current-message authorization.
+
+### Fixed
+
+- Prevented premature partial review posting and exact current-head duplicate reposting while retaining blockers for review decisions.
+- Corrected repeated or oversized limitation rendering, same-head stale deduplication, ambiguous supersession recovery, GitHub CLI projected-pagination compatibility, and fail-open behavior when `changed_files` inventory metadata is missing.
+
+### Limitations
+
+- Missing patches remain limited rather than guessed, and semantic deduplication remains agent-owned. Patch evidence is limited to 1 MiB and 1,024 retained line-map entries per file, 16 MiB and 16,384 retained line-map entries per declared batch, and 32 MiB per transport response; crossing a line-map ceiling clears the affected map and digest and marks that evidence limited.
+
 ## [0.5.0] - 2026-08-11
 
 ### Added
