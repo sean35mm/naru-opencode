@@ -11,7 +11,7 @@ Naru is maintained by one maintainer. Keep contributions focused, reviewable, lo
 
 ## Sources
 
-`agents/`, `skills/`, `tools/`, `scripts/`, and `install.sh` are the authoritative sources. There is no build step and no generated output: the `.js` and `.mjs` files under `tools/` and `scripts/` are edited directly. Runtime input validation is the only validation there is — keep it strict.
+`agents/`, `skills/`, the `.ts`/`.mts` files under `tools/`, `plugins/`, `scripts/`, and `tests/`, and `install.sh` are the authoritative sources. Run `npm ci && npm run build`, then use `./install.sh` normally; the checkout installer delegates to `.naru-build/install.sh`. Installs and tests execute emitted `.js`/`.mjs` files from the clean `.naru-build/` mirror, and release archives remain dependency-free by containing that runtime output plus copied non-code assets. Never edit `.naru-build/` directly. `scripts/copy-build-assets.mjs` is the minimal JavaScript bootstrap that runs after TypeScript emission to copy the shell installer and other runtime assets; it is excluded from the TypeScript project. The Astro project under `docs/` is separate. Runtime input validation remains authoritative — keep it strict.
 
 Prefer deleting a concept over documenting it. Naru's design rule is hard mechanical walls at irreversible edges and freedom everywhere else; a new prompt rule that no permission enforces is usually the wrong answer.
 
@@ -20,12 +20,15 @@ Prefer deleting a concept over documenting it. Naru's design rule is hard mechan
 The existing root checks are:
 
 ```sh
+npm ci
+npm run typecheck
+npm run build
 npm test
 npm run test:bun
 npm run test:installer
 ```
 
-For documentation changes, also run `npm --prefix docs run build`. To verify Naru still loads in a real OpenCode, run `node scripts/naru-compat-smoke.mjs --opencode "$(command -v opencode)" --source "$(pwd)" --json`; it installs into a disposable HOME and needs no provider credentials. Run `git diff --check` for every change. Inspect package scripts before running commands; do not add a dependency or run a mutation-capable workflow as an incidental check.
+The three test commands build first and execute only the generated tree. CI can build once and use the corresponding `*:built` scripts. For documentation changes, also run `npm --prefix docs run build`. To verify Naru still loads in a real OpenCode, run `npm run test:compat -- --opencode "$(command -v opencode)" --json`; it installs the built tree into a disposable HOME and needs no provider credentials. Run `git diff --check` for every change. Inspect package scripts before running commands; do not add a dependency or run a mutation-capable workflow as an incidental check.
 
 ## Boundaries
 

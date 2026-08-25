@@ -2,6 +2,21 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.6.1] - 2026-08-25
+
+### Added
+
+- Added a strict TypeScript checking and build pipeline for the authoritative runtime, tool, plugin, and test sources.
+
+### Changed
+
+- Migrated the authoritative JavaScript and MJS sources to TypeScript and MTS while continuing to emit the existing JS and MJS runtime entry points and contracts.
+- Routed CI, release packaging, compatibility checks, and installer tests through built artifacts, and updated the typed tests and documentation for the build-first workflow.
+
+### Limitations
+
+- Installing or running development commands from a source checkout requires `npm ci` and `npm run build` first; release archives already contain the built runtime artifacts.
+
 ## [0.6.0] - 2026-08-20
 
 ### Added

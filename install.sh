@@ -15,6 +15,17 @@ set -eu
 
 SRC_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 
+# A checkout is a build workspace, not an installable runtime tree. Release
+# archives do not contain tsconfig.json and continue directly without npm.
+if [ -f "${SRC_DIR}/tsconfig.json" ]; then
+  BUILT_INSTALLER="${SRC_DIR}/.naru-build/install.sh"
+  if [ ! -f "$BUILT_INSTALLER" ]; then
+    echo "install.sh: source checkout is not built; run 'npm ci && npm run build' first" >&2
+    exit 1
+  fi
+  exec sh "$BUILT_INSTALLER" "$@"
+fi
+
 MODE=symlink
 TARGET="${HOME}/.config/opencode"
 WITH_DASHBOARD=false

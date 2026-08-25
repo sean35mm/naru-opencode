@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { chmod, lstat, mkdir, mkdtemp, open, realpath, rm, symlink, } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -7,13 +8,57 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { classifyDashboardEvidence, COMPATIBILITY_POLICY, createCompatibilityEvidence, evaluatePlatformTarget, sanitizeObservedVersion, } from '../tools/naru-lib/compatibility.mjs';
-function errorCode(error) {
+import type { CompatibilityCheck, CompatibilityEvidence, CompatibilityCheckStatus } from '../tools/naru-lib/compatibility.mjs';
+
+interface CompatibilityCliOptions {
+    bunPath: string | null;
+    dashboard: boolean;
+    help?: boolean;
+    json: boolean;
+    opencodePath: string | null;
+    output: string | null;
+    sourcePath: string | null;
+}
+interface PlatformEvidence { platform?: unknown; arch?: unknown; osId?: unknown; wsl?: unknown }
+export interface CompatibilitySmokeOptions {
+    bunPath?: string | null;
+    dashboard?: boolean;
+    opencodePath: string;
+    sourcePath: string;
+    timeoutMs?: number;
+    platformEvidence?: PlatformEvidence;
+}
+interface CompatibilitySmokeHooks { onDisposableRoot?(root: string): void }
+type ProcessFailureReason = 'timeout' | 'output-limit' | 'spawn-failed' | 'nonzero-exit';
+interface BoundedProcessResult {
+    durationMs: number;
+    output: string;
+    status: 'passed' | 'failed';
+    reason: ProcessFailureReason | string | null;
+}
+interface ProcessOptions {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    maxOutputBytes?: number;
+    retainOutput?: boolean;
+    timeoutMs?: number;
+}
+interface StartupOptions { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }
+interface CommandResult { durationMs: number; status: 'passed' | 'failed'; reason: string | null }
+interface SafeCommand {
+    id: string;
+    args: readonly string[];
+    maxOutputBytes?: number;
+    retainOutput?: boolean;
+}
+
+function errorCode(error: unknown): string | undefined {
     return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
 }
-function errorMessage(error) {
+function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : 'unknown error';
 }
-function isRecord(value) {
+function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -21,7 +66,7 @@ const MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_AGENT_LIST_OUTPUT_BYTES = 1024 * 1024;
 const TERMINATION_GRACE_MS = 1_000;
 const CONFIG_MAX_BYTES = 64 * 1024;
-export const OPENCODE_SAFE_COMMANDS = Object.freeze([
+export const OPENCODE_SAFE_COMMANDS: readonly SafeCommand[] = Object.freeze([
     Object.freeze({ id: 'opencode-version', args: Object.freeze(['--version']) }),
     Object.freeze({ id: 'opencode-help', args: Object.freeze(['--help']) }),
     Object.freeze({ id: 'opencode-debug-paths', args: Object.freeze(['debug', 'paths']) }),
@@ -42,8 +87,8 @@ export const OPENCODE_SAFE_COMMANDS = Object.freeze([
 function usage() {
     return 'Usage: node scripts/naru-compat-smoke.mjs --opencode PATH --source PATH [--json] [--output PATH] [--dashboard --bun PATH]\n';
 }
-function parseArgs(argv) {
-    const options = { bunPath: null, dashboard: false, json: false, opencodePath: null, output: null, sourcePath: null };
+function parseArgs(argv: string[]): CompatibilityCliOptions {
+    const options: CompatibilityCliOptions = { bunPath: null, dashboard: false, json: false, opencodePath: null, output: null, sourcePath: null };
     for (let index = 0; index < argv.length; index += 1) {
         const argument = argv[index];
         if (argument === undefined)
@@ -77,7 +122,7 @@ function parseArgs(argv) {
         throw new Error('--dashboard and --bun PATH must be supplied together');
     return options;
 }
-async function executablePath(value, label) {
+async function executablePath(value: string, label: string): Promise<string> {
     if (typeof value !== 'string' || value.length === 0 || value.length > 4096 || /[\u0000-\u001f\u007f]/.test(value)) {
         throw new Error(`${label} path is invalid`);
     }
@@ -87,7 +132,7 @@ async function executablePath(value, label) {
         throw new Error(`${label} must be an executable file`);
     return resolved;
 }
-async function sourceRoot(value) {
+async function sourceRoot(value: string): Promise<string> {
     if (typeof value !== 'string' || value.length === 0 || value.length > 4096 || /[\u0000-\u001f\u007f]/.test(value)) {
         throw new Error('source path is invalid');
     }
@@ -100,19 +145,19 @@ async function sourceRoot(value) {
         throw new Error('source install.sh must be a regular file');
     return resolved;
 }
-function validateTimeout(value) {
+function validateTimeout(value: unknown): number {
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 50 || value > 30_000) {
         throw new Error('timeout must be from 50 to 30000 milliseconds');
     }
     return value;
 }
-function validateOutputLimit(value) {
+function validateOutputLimit(value: unknown): number {
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < MAX_OUTPUT_BYTES || value > MAX_AGENT_LIST_OUTPUT_BYTES) {
         throw new Error(`output limit must be from ${MAX_OUTPUT_BYTES} to ${MAX_AGENT_LIST_OUTPUT_BYTES} bytes`);
     }
     return value;
 }
-function isolatedEnvironment(root, privateBin) {
+function isolatedEnvironment(root: string, privateBin: string): NodeJS.ProcessEnv & Record<string, string> {
     const home = path.join(root, 'home');
     const tmp = path.join(root, 'tmp');
     return {
@@ -135,7 +180,7 @@ function isolatedEnvironment(root, privateBin) {
         XDG_STATE_HOME: path.join(root, 'state'),
     };
 }
-function waitForExit(child, timeoutMs) {
+function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
     if (child.exitCode !== null || child.signalCode !== null)
         return Promise.resolve(true);
     return new Promise(resolvePromise => {
@@ -150,7 +195,7 @@ function waitForExit(child, timeoutMs) {
         child.once('exit', onExit);
     });
 }
-function signalChild(child, signal) {
+function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
     try {
         if (child.pid === undefined)
             return;
@@ -165,7 +210,7 @@ function signalChild(child, signal) {
         }
     }
 }
-async function stopChild(child) {
+async function stopChild(child: ChildProcess): Promise<void> {
     if (child.exitCode !== null || child.signalCode !== null)
         return;
     signalChild(child, 'SIGTERM');
@@ -174,7 +219,7 @@ async function stopChild(child) {
     signalChild(child, 'SIGKILL');
     await waitForExit(child, 250);
 }
-export async function runBoundedProcess(executable, args, { cwd, env, maxOutputBytes = MAX_OUTPUT_BYTES, retainOutput = true, timeoutMs = DEFAULT_TIMEOUT_MS, }) {
+export async function runBoundedProcess(executable: string, args: readonly string[], { cwd, env, maxOutputBytes = MAX_OUTPUT_BYTES, retainOutput = true, timeoutMs = DEFAULT_TIMEOUT_MS, }: ProcessOptions): Promise<BoundedProcessResult> {
     validateTimeout(timeoutMs);
     validateOutputLimit(maxOutputBytes);
     const started = Date.now();
@@ -188,7 +233,7 @@ export async function runBoundedProcess(executable, args, { cwd, env, maxOutputB
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
     });
-    const append = (chunk) => {
+    const append = (chunk: Buffer) => {
         if (overflow)
             return;
         outputBytes += chunk.length;
@@ -231,7 +276,7 @@ export async function runBoundedProcess(executable, args, { cwd, env, maxOutputB
         reason: timedOut ? 'timeout' : overflow ? 'output-limit' : spawnError ? 'spawn-failed' : successful ? null : 'nonzero-exit',
     };
 }
-function commandCheck(id, result) {
+function commandCheck(id: string, result: CommandResult): CompatibilityCheck {
     return {
         id,
         status: result.status,
@@ -241,17 +286,17 @@ function commandCheck(id, result) {
 }
 async function availablePort() {
     const server = createServer();
-    await new Promise((resolvePromise, reject) => {
+    await new Promise<void>((resolvePromise, reject) => {
         server.once('error', reject);
         server.listen(0, '127.0.0.1', () => resolvePromise());
     });
     const address = server.address();
-    await new Promise(resolvePromise => server.close(() => resolvePromise()));
+    await new Promise<void>(resolvePromise => server.close(() => resolvePromise()));
     if (!address || typeof address === 'string')
         throw new Error('localhost port allocation failed');
     return address.port;
 }
-async function startupCheck(executable, { cwd, env, timeoutMs }) {
+async function startupCheck(executable: string, { cwd, env, timeoutMs }: StartupOptions): Promise<CommandResult> {
     const started = Date.now();
     const port = await availablePort();
     const args = ['serve', '--hostname', '127.0.0.1', '--port', String(port)];
@@ -259,7 +304,7 @@ async function startupCheck(executable, { cwd, env, timeoutMs }) {
     let overflow = false;
     let exited = false;
     const child = spawn(executable, args, { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    const count = (chunk) => {
+    const count = (chunk: Buffer) => {
         bytes += chunk.length;
         if (bytes > MAX_OUTPUT_BYTES) {
             overflow = true;
@@ -271,7 +316,7 @@ async function startupCheck(executable, { cwd, env, timeoutMs }) {
     child.once('error', () => { exited = true; });
     child.once('exit', () => { exited = true; });
     let passed = false;
-    let reason = 'startup-timeout';
+    let reason: string | null = 'startup-timeout';
     const deadline = Date.now() + timeoutMs;
     try {
         while (Date.now() < deadline && !exited && !overflow) {
@@ -302,7 +347,7 @@ async function startupCheck(executable, { cwd, env, timeoutMs }) {
     }
     return { durationMs: Date.now() - started, status: passed ? 'passed' : 'failed', reason };
 }
-async function boundedJson(file) {
+async function boundedJson(file: string): Promise<unknown> {
     const stats = await lstat(file);
     if (!stats.isFile() || stats.isSymbolicLink() || stats.size > CONFIG_MAX_BYTES)
         throw new Error('unsafe generated config');
@@ -317,7 +362,7 @@ async function boundedJson(file) {
         await handle.close();
     }
 }
-async function linuxIdentity() {
+async function linuxIdentity(): Promise<{ osId: string | null; wsl: boolean }> {
     if (process.platform !== 'linux')
         return { osId: null, wsl: false };
     try {
@@ -343,7 +388,7 @@ async function linuxIdentity() {
         return { osId: null, wsl: /microsoft/i.test(os.release()) };
     }
 }
-export async function runCompatibilitySmoke(options, hooks = {}) {
+export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, hooks: CompatibilitySmokeHooks = {}): Promise<CompatibilityEvidence> {
     const timeoutMs = validateTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     const opencode = await executablePath(options.opencodePath, 'OpenCode');
     const source = await sourceRoot(options.sourcePath);
@@ -352,15 +397,15 @@ export async function runCompatibilitySmoke(options, hooks = {}) {
         : null;
     const detected = options.platformEvidence ?? { platform: process.platform, arch: process.arch, ...(await linuxIdentity()) };
     const platform = evaluatePlatformTarget(detected);
-    const checks = [{
+    const checks: CompatibilityCheck[] = [{
             id: 'target-platform',
             status: platform.status === 'targeted' ? 'passed' : 'failed',
             durationMs: 0,
             diagnostic: platform.reason,
         }];
     const versions = { bun: '', gh: '', git: '', node: process.versions.node, opencode: '' };
-    let dashboardSyntax = 'omitted';
-    let dashboardRegistration = 'omitted';
+    let dashboardSyntax: CompatibilityCheckStatus = 'omitted';
+    let dashboardRegistration: CompatibilityCheckStatus = 'omitted';
     if (platform.status === 'targeted') {
         const root = await mkdtemp('/tmp/naru-compat-');
         const privateBin = path.join(root, 'bin');
@@ -372,6 +417,8 @@ export async function runCompatibilitySmoke(options, hooks = {}) {
             await chmod(root, 0o700);
             hooks.onDisposableRoot?.(root);
             for (const directory of [privateBin, home, project, env.TMPDIR, env.XDG_CACHE_HOME, env.XDG_CONFIG_HOME, env.XDG_DATA_HOME, env.XDG_STATE_HOME, env.GH_CONFIG_DIR]) {
+                if (directory === undefined)
+                    throw new Error('isolated environment directory is unavailable');
                 await mkdir(directory, { recursive: true, mode: 0o700 });
             }
             await symlink(opencode, path.join(privateBin, 'opencode'));
@@ -440,8 +487,8 @@ export async function runCompatibilitySmoke(options, hooks = {}) {
                 result = await runBoundedProcess(opencode, command.args, {
                     cwd: project,
                     env,
-                    maxOutputBytes: command.maxOutputBytes,
-                    retainOutput: command.retainOutput,
+                    ...(command.maxOutputBytes === undefined ? {} : { maxOutputBytes: command.maxOutputBytes }),
+                    ...(command.retainOutput === undefined ? {} : { retainOutput: command.retainOutput }),
                     timeoutMs,
                 });
                 checks.push(commandCheck(command.id, result));
@@ -505,7 +552,7 @@ export async function runCompatibilitySmoke(options, hooks = {}) {
     });
     return createCompatibilityEvidence({ platform, versions, checks, dashboard });
 }
-async function writeOutput(file, report) {
+async function writeOutput(file: string, report: CompatibilityEvidence): Promise<void> {
     const resolved = path.resolve(file);
     const parent = path.dirname(resolved);
     const stats = await lstat(parent);

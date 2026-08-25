@@ -1,7 +1,24 @@
 // naru-git-read: read-only git inspection for OpenCode custom tools.
 // The filename defines the OpenCode tool ID.
-import { runGit } from './naru-lib/git.mjs';
-const gitReadTool = {
+import { runGit, type GitContext } from './naru-lib/git.mjs';
+import type { Spawn } from './naru-lib/transport.mjs';
+
+type GitReadInput =
+    | { operation: 'repository' }
+    | { operation: 'status' }
+    | { operation: 'diff'; base?: string; head?: string; path?: string }
+    | { operation: 'log'; maxCount?: number; path?: string }
+    | { operation: 'file'; ref?: string; path?: string }
+    | { operation: 'grep'; pattern?: string; path?: string }
+    | { operation: 'merge-base'; refs?: string[] };
+interface GitReadArgs { input?: GitReadInput }
+interface GitReadContext extends GitContext { spawn?: Spawn }
+interface GitReadTool {
+    description: string;
+    args: Record<string, unknown>;
+    execute(args?: GitReadArgs, context?: GitReadContext): Promise<string>;
+}
+const gitReadTool: GitReadTool = {
     description: 'Run a read-only git operation in the current workspace. ' +
         'Supported operations: repository, status, diff, log, file, grep, merge-base. ' +
         'All commands use fixed argv arrays, --no-pager/--no-color, and never mutate state.',
@@ -32,7 +49,7 @@ const gitReadTool = {
         },
     },
     execute: async (args = {}, context = {}) => {
-        const input = args && typeof args === 'object' ? args.input : undefined;
+        const input = args.input;
         const result = await runGit(context, input, { spawn: context?.spawn });
         return JSON.stringify(result, null, 2);
     },

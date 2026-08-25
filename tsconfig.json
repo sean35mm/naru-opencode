@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "declaration": false,
+    "declarationMap": false,
+    "exactOptionalPropertyTypes": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmitOnError": true,
+    "noUncheckedIndexedAccess": true,
+    "outDir": ".naru-build",
+    "rootDir": ".",
+    "sourceMap": false,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node"]
+  },
+  "exclude": [
+    ".naru-build",
+    "docs",
+    "node_modules",
+    "scripts/copy-build-assets.mjs"
+  ],
+  "include": [
+    "plugins/**/*.ts",
+    "scripts/**/*.mts",
+    "tests/**/*.mts",
+    "tools/**/*.ts",
+    "tools/**/*.mts"
+  ]
+}

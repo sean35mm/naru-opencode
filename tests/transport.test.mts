@@ -2,10 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { run } from '../tools/naru-lib/transport.mjs';
+import type { ProcessResult, Spawn, SpawnOptions } from '../tools/naru-lib/transport.mjs';
+
+interface SpawnCall {
+  argv: string[];
+  options?: SpawnOptions | undefined;
+}
 
 test('run preserves injectable spawn options and result compatibility', async () => {
   const expected = { ok: true, code: 0, stdout: 'ok', stderr: '' };
-  const calls = [];
+  const calls: SpawnCall[] = [];
   const result = await run(['tool', '--flag'], {
     input: 'input',
     cwd: '/tmp',
@@ -33,8 +39,9 @@ test('run preserves injectable spawn options and result compatibility', async ()
 
 test('run rejects invalid deadline and capture options before spawning', async () => {
   let spawned = false;
-  const spawn = async () => {
+  const spawn: Spawn = async (): Promise<ProcessResult> => {
     spawned = true;
+    throw new Error('spawn should not be called');
   };
 
   await assert.rejects(run(['tool'], { spawn, timeout: 0 }), /run timeout must be from 1/);

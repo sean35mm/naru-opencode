@@ -127,7 +127,7 @@ Naru installs four custom OpenCode tools. Each returns the same JSON envelope:
   Final posting reacquires only the declared bounded file batches and feedback pages, bracketed by compact manifests, rather than relying on one monolithic all-patch snapshot. Patch aggregate limits reset per bounded batch, so combined reviewed patches can exceed the former global aggregate; per-file, per-batch, response, and feedback-body bounds remain. Exact findings already posted inline on the current head are suppressed from emitted comments but retained for formal-decision gates; semantic duplicate reconciliation remains agent-owned. A complete v4 review may supersede exactly one same-head limited v4 `COMMENT` only with its review ID and digest and fresh explicit posting authorization. Supersession is a new submission, never a retry. The hidden marker still provides whole-review idempotency. The tool makes one POST attempt and never retries; an ambiguous outcome is terminal. It cannot merge.
 - **`naru-worktree`** prepares isolated writer worktrees and serializes integration. It is restricted to `naru-orchestrator`, requires a clean repository, and downgrades silently to shared mode when the repository is dirty or worktrees are unavailable. It never pushes and never creates delivery commits.
 
-`tools/naru-doctor.js` is a local CLI, not an agent-callable tool. `node tools/naru-doctor.js --json` prints a schemaVersion 1 report on installation and configuration health. It reads local state only: no providers, credentials, or network calls.
+The installed `tools/naru-doctor.js` is a local CLI, not an agent-callable tool. From a source checkout, `npm run doctor -- --json` builds first and runs the emitted CLI; an installed copy can be invoked directly with Node. It prints a schemaVersion 1 report on installation and configuration health and reads local state only: no providers, credentials, or network calls.
 
 ### Model-class agent variants (the naru-dispatch plugin)
 
@@ -143,7 +143,7 @@ Integration rules:
 
 ## One plugin
 
-Naru ships exactly one plugin: `plugins/naru-dispatch.js`. It hooks only OpenCode's `config` hook to generate the model-class agent variants described above — no tool registration, no session creation, no event handling, no model aliases. If the plugin is absent or the `models` block is missing, no variants exist and children inherit the parent session model.
+Naru ships exactly one plugin: authoritative source `plugins/naru-dispatch.ts`, emitted and installed as `plugins/naru-dispatch.js`. It hooks only OpenCode's `config` hook to generate the model-class agent variants described above — no tool registration, no session creation, no event handling, no model aliases. If the plugin is absent or the `models` block is missing, no variants exist and children inherit the parent session model.
 
 This is not the old delegation plugin. Earlier versions exposed a scheduler tool and scheduler modes, a delegation plugin that mutated agent config to inject generated model aliases, and a dashboard plugin with TUI registration and telemetry. All of them were removed. They are not deprecated interfaces awaiting migration — they no longer exist, so do not integrate against them or reconstruct their inputs.
 

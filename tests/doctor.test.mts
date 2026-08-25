@@ -16,7 +16,33 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-async function copyInstallSource(destination) {
+interface DoctorScope {
+  id: string;
+  installed: boolean;
+  manifestStatus: string;
+  installMode: string;
+  issuePaths: string[];
+  assets: { total: number; installed: { healthy: number }; source: { matched: number } };
+  runtime: { status: string; workspaceMode: string };
+}
+
+interface DoctorReport {
+  schemaVersion: number;
+  diagnostic: string;
+  providerFree: boolean;
+  readOnly: boolean;
+  depth: { effective: number; source: string };
+  scopes: DoctorScope[];
+  issues: Array<{ code: string }>;
+}
+
+interface DoctorPaths {
+  home: string;
+  project: string;
+  source: string;
+}
+
+async function copyInstallSource(destination: string): Promise<void> {
   for (const directory of ['agents', 'plugins', 'skills', 'tools']) {
     await cp(path.join(root, directory), path.join(destination, directory), { recursive: true });
   }
@@ -24,7 +50,7 @@ async function copyInstallSource(destination) {
   await cp(path.join(root, 'naru-runtime.example.json'), path.join(destination, 'naru-runtime.example.json'));
 }
 
-function runDoctor(doctor, { home, project, source }) {
+function runDoctor(doctor: string, { home, project, source }: DoctorPaths): DoctorReport {
   const result = spawnSync(process.execPath, [
     doctor,
     '--json',
@@ -39,7 +65,7 @@ function runDoctor(doctor, { home, project, source }) {
   });
   assert.ok(result.status === 0 || result.status === 1, result.stderr || result.stdout);
   assert.equal(result.stderr, '');
-  return JSON.parse(result.stdout);
+  return JSON.parse(result.stdout) as DoctorReport;
 }
 
 test('CLI helper modules tolerate virtual Bun argv when imported as tools', async () => {
@@ -50,7 +76,8 @@ test('CLI helper modules tolerate virtual Bun argv when imported as tools', asyn
     await import(`${pathToFileURL(path.join(root, 'tools/naru-lib/install-manifest.mjs')).href}?virtual-bun-argv=${nonce}`);
     await import(`${pathToFileURL(path.join(root, 'tools/naru-doctor.js')).href}?virtual-bun-argv=${nonce}`);
   } finally {
-    process.argv[1] = previousArgv1;
+    if (previousArgv1 === undefined) delete process.argv[1];
+    else process.argv[1] = previousArgv1;
   }
 });
 
@@ -91,6 +118,7 @@ test('doctor is read-only and diagnoses scope, default depth, and source generat
     assert.equal(report.depth.source, 'opencode-default');
     assert.equal(report.scopes.filter(scope => scope.installed).length, 1);
     const globalScope = report.scopes.find(scope => scope.id === 'global');
+    assert.ok(globalScope);
     assert.equal(globalScope.manifestStatus, 'valid');
     assert.equal(globalScope.installMode, 'symlink');
     assert.equal(globalScope.assets.installed.healthy, globalScope.assets.total);
@@ -116,11 +144,11 @@ test('doctor is read-only and diagnoses scope, default depth, and source generat
     await appendFile(path.join(target, 'tools', 'naru-git-read.js'), '\n// local modification\n');
     report = runDoctor(doctor, { home, project, source });
     assert.ok(report.issues.some(issue => issue.code === 'managed-assets-modified'));
-    assert.ok(report.scopes.find(scope => scope.id === 'global').issuePaths.includes('tools/naru-git-read.js'));
+    assert.ok(report.scopes.find(scope => scope.id === 'global')?.issuePaths.includes('tools/naru-git-read.js'));
 
     await writeFile(manifestPath, '{ invalid\n');
     report = runDoctor(doctor, { home, project, source });
-    assert.equal(report.scopes.find(scope => scope.id === 'global').manifestStatus, 'invalid');
+    assert.equal(report.scopes.find(scope => scope.id === 'global')?.manifestStatus, 'invalid');
     assert.ok(report.issues.some(issue => issue.code === 'invalid-install-manifest'));
   } finally {
     await rm(temporary, { recursive: true, force: true });

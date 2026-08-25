@@ -20,14 +20,15 @@ OpenCode permission frontmatter and by tool code, not by prose.
 | `skills/` | Four native skills: `naru-plan`, `naru-impact`, `naru-triage`, `naru-review`. |
 | `tools/` | Five custom OpenCode tools. The filename defines the tool ID. |
 | `tools/naru-lib/` | Shared helper modules used by the tools. |
-| `scripts/` | `naru-compat-smoke.mjs`, the provider-free compatibility smoke run in CI. Not installed. |
-| `tests/` | Node test files plus the dependency-free installer test. |
+| `plugins/` | Authoritative TypeScript source for the one `naru-dispatch` OpenCode plugin. |
+| `scripts/` | `naru-compat-smoke.mts`, the provider-free compatibility smoke run in CI, plus the build asset-copy bootstrap. Not installed. |
+| `tests/` | TypeScript Node/Bun test sources plus the dependency-free installer test. |
 | `docs/` | This guide, the user guide, agent integration notes, and the Astro site under `docs/src/`. |
 | `install.sh` | The installer. Holds an explicit inventory of everything Naru installs. |
 | `naru-runtime.example.json` | Example runtime config. Copied on install, never activated. |
 
-There is no `plugins/` directory. Naru ships zero OpenCode plugins; everything runs as agents,
-skills, and custom tools.
+Naru ships one OpenCode plugin, `naru-dispatch`, which generates model-class agent variants through
+OpenCode's `config` hook. It registers no tool and creates no sessions.
 
 ## Architecture
 
@@ -93,29 +94,30 @@ Naru owns prompts, permission frontmatter, and the validated tool surface.
 | --- | --- |
 | Agent prompt, model, visibility, and permissions | `agents/naru-*.md` |
 | Skill guidance | `skills/naru-*/SKILL.md` |
-| Read-only git surface | `tools/naru-git-read.js`, `tools/naru-lib/git.mjs` |
-| GitHub reads and pinned pull snapshots | `tools/naru-github-read.js`, `tools/naru-lib/github.mjs` |
-| Review payload construction and posting | `tools/naru-github-post-review.js`, `tools/naru-lib/review.mjs` |
-| Worktree lifecycle and integration | `tools/naru-worktree.js`, `tools/naru-lib/worktree.mjs` |
-| Input validation and path rules | `tools/naru-lib/validate.mjs` |
-| Subprocess spawn, timeouts, output bounds | `tools/naru-lib/transport.mjs`, `tools/naru-lib/output.mjs` |
-| Runtime config schema and defaults | `tools/naru-lib/runtime-config.mjs`, `naru-runtime.example.json` |
-| Installed inventory, backups, retirement | `install.sh`, `tools/naru-lib/install-manifest.mjs` |
-| Supported OpenCode/Node versions | `tools/naru-lib/compatibility.mjs` |
-| Local health report | `tools/naru-doctor.js` |
+| Read-only git surface | `tools/naru-git-read.ts`, `tools/naru-lib/git.mts` |
+| GitHub reads and pinned pull snapshots | `tools/naru-github-read.ts`, `tools/naru-lib/github.mts` |
+| Review payload construction and posting | `tools/naru-github-post-review.ts`, `tools/naru-lib/review.mts` |
+| Worktree lifecycle and integration | `tools/naru-worktree.ts`, `tools/naru-lib/worktree.mts` |
+| Input validation and path rules | `tools/naru-lib/validate.mts` |
+| Subprocess spawn, timeouts, output bounds | `tools/naru-lib/transport.mts`, `tools/naru-lib/output.mts` |
+| Runtime config schema and defaults | `tools/naru-lib/runtime-config.mts`, `naru-runtime.example.json` |
+| Installed inventory, backups, retirement | `install.sh`, `tools/naru-lib/install-manifest.mts` |
+| Supported OpenCode/Node versions | `tools/naru-lib/compatibility.mts` |
+| Local health report | `tools/naru-doctor.ts` |
 
 Documentation describes these contracts but does not replace them.
 
-## Plain JavaScript, no build step
+## TypeScript source and emitted runtime
 
-Every runtime source is plain ESM `.js` or `.mjs` and runs exactly as written. There is no
-TypeScript tree, no bundler, and no transpile or emit step. What you edit in `tools/` is what runs
-and what the installer copies. `tools/package.json` exists only to mark the copied tool
-tree as `"type": "module"`.
+The authoritative runtime and test sources are `.ts` and `.mts`. `npm run build` type-checks and
+emits their installed `.js` and `.mjs` runtime names into a clean `.naru-build/` tree, then copies
+the shell installer and non-code assets. Installs, tests, and release archives use that emitted
+tree; never edit it directly. `scripts/copy-build-assets.mjs` remains JavaScript only so Node can
+run the asset-copy bootstrap immediately after emission, and it is excluded from TypeScript
+compilation. The Astro project under `docs/` has its own configuration and build.
 
-Because there is no static type checking, runtime validation is the only guard. Validate at the tool
-boundary, reject unknown fields, bound sizes, and build fixed argument arrays — never a shell
-string.
+Static checks complement but do not replace runtime validation. Validate at the tool boundary,
+reject unknown fields, bound sizes, and build fixed argument arrays — never a shell string.
 
 ## Invariants
 
@@ -194,31 +196,29 @@ and rejects secret-like filenames. The installer copies `naru-runtime.example.js
 
 ## Tests
 
-Three suites, all provider-free and dependency-free:
+The public checkout checks build a clean emitted tree before execution:
 
 ```sh
-npm test            # node --test --test-concurrency=1 tests/*.test.mjs
-npm run test:bun    # bun tests/bun-transport.test.mjs
-npm run test:installer  # sh tests/install.test.sh
+npm run typecheck
+npm test                # emitted Node test suite
+npm run test:bun        # emitted Bun transport test
+npm run test:installer  # emitted installer suite
 ```
 
 - `npm test` covers the tool library: `transport`, `compatibility`, `doctor`, `github-tools`,
-  `worktree`. `tests/bun-transport.test.mjs` self-skips when Bun is unavailable, so it is safe in
-  the Node run.
+  `worktree`, and dispatch behavior.
 - `npm run test:bun` re-runs the spawn transport under Bun, which is the runtime difference that has
   historically broken tools.
 - `npm run test:installer` builds a temporary fixture tree and exercises `install.sh` there. It
   never touches a real `~/.config/opencode`.
 
-Run the smallest relevant file while iterating:
+Use the public scripts from a checkout:
 
 ```sh
-node --test tests/worktree.test.mjs
-node --test tests/github-tools.test.mjs
-node --test tests/doctor.test.mjs
-node --test tests/transport.test.mjs
-node --test tests/compatibility.test.mjs
-sh tests/install.test.sh
+npm run typecheck
+npm test
+npm run test:bun
+npm run test:installer
 git diff --check
 ```
 
@@ -228,14 +228,16 @@ For documentation changes, build the site:
 npm --prefix docs run build
 ```
 
-CI additionally runs `node scripts/naru-compat-smoke.mjs` against a pinned OpenCode build. That
+CI additionally runs `npm run test:compat` against a pinned OpenCode build. That
 smoke is provider-free: it starts OpenCode with safe subcommands and an ephemeral local port and
 asserts the install is loadable.
 
 Local install health, at any time:
 
 ```sh
-node tools/naru-doctor.js --json
+npm ci
+npm run build
+npm run doctor -- --json
 ```
 
 ## Installer
@@ -243,6 +245,8 @@ node tools/naru-doctor.js --json
 `install.sh` is preview-first. Nothing is mutated until you re-run with `--apply`:
 
 ```sh
+npm ci
+npm run build
 sh install.sh --preview   # default; prints a bounded change summary
 sh install.sh --apply
 ```

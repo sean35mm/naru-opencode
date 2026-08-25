@@ -2,9 +2,21 @@
   "name": "naru-opencode",
   "private": true,
   "scripts": {
-    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
-    "test:bun": "bun tests/bun-transport.test.mjs",
-    "test:installer": "sh tests/install.test.sh"
+    "build": "npm run clean && tsc --project tsconfig.json && node scripts/copy-build-assets.mjs",
+    "clean": "node --eval \"require('node:fs').rmSync('.naru-build', { force: true, recursive: true })\"",
+    "doctor": "npm run build && node .naru-build/tools/naru-doctor.js",
+    "test": "npm run build && npm run test:node",
+    "test:bun": "npm run build && npm run test:bun:built",
+    "test:bun:built": "bun .naru-build/tests/bun-transport.test.mjs",
+    "test:compat": "npm run build && node .naru-build/scripts/naru-compat-smoke.mjs --source .naru-build",
+    "test:installer": "npm run build && npm run test:installer:built",
+    "test:installer:built": "sh .naru-build/tests/install.test.sh",
+    "test:node": "node --test --test-concurrency=1 .naru-build/tests/*.test.mjs",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
   },
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "7.0.2"
+  }
 }

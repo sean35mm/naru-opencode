@@ -18,7 +18,22 @@ const CLASSES = parseModelsConfig({
   crosscheck: { use: 'non-openai second opinion', chain: ['opencode-go/kimi-k2.5'] },
 });
 
-function fakeConfig() {
+interface TestAgent {
+  mode?: string;
+  hidden?: boolean;
+  description?: string;
+  prompt?: string;
+  model?: string;
+  variant?: string;
+  options?: { naruVariant?: boolean };
+  permission?: Record<string, string | Record<string, string>>;
+}
+
+interface TestConfig {
+  agent: Record<string, TestAgent>;
+}
+
+function fakeConfig(): TestConfig {
   return {
     agent: {
       'naru-orchestrator': {
@@ -52,6 +67,15 @@ function fakeConfig() {
   };
 }
 
+function requiredValue<T>(value: T | undefined, label: string): T {
+  if (value === undefined) throw new Error(`${label} is unavailable`);
+  return value;
+}
+
+function agent(config: TestConfig, name: string): TestAgent {
+  return requiredValue(config.agent[name], `agent ${name}`);
+}
+
 test('chain entries parse model and optional effort exactly', () => {
   assert.deepEqual(parseChainEntry('openai/gpt-5.6-sol@xhigh'), {
     providerID: 'openai',
@@ -78,9 +102,9 @@ test('models config validation rejects malformed classes and accepts absence', (
 });
 
 test('chain selection honors auth and falls to null when nothing is available', () => {
-  assert.equal(pickChainEntry(CLASSES.light, null).modelID, 'gpt-5.6-luna-fast');
-  assert.equal(pickChainEntry(CLASSES.light, new Set(['opencode-go'])).modelID, 'deepseek-v4-flash');
-  assert.equal(pickChainEntry(CLASSES.deep, new Set(['zai'])), null);
+  assert.equal(pickChainEntry(requiredValue(CLASSES.light, 'light class'), null)?.modelID, 'gpt-5.6-luna-fast');
+  assert.equal(pickChainEntry(requiredValue(CLASSES.light, 'light class'), new Set(['opencode-go']))?.modelID, 'deepseek-v4-flash');
+  assert.equal(pickChainEntry(requiredValue(CLASSES.deep, 'deep class'), new Set(['zai'])), null);
 });
 
 test('variants are exact permission clones with only model, effort, and description changed', () => {
@@ -95,39 +119,42 @@ test('variants are exact permission clones with only model, effort, and descript
     assert.equal(variant.variant, 'high');
     assert.equal(variant.hidden, true);
     assert.equal(variant.mode, 'subagent');
-    assert.equal(variant.options.naruVariant, true);
-    assert.deepEqual(variant.permission, config.agent[role].permission, `${role}-deep permissions identical`);
-    assert.match(variant.description, /Model class "deep" \(openai\/gpt-5\.6-sol-fast@high\)/);
+    assert.equal(variant.options?.naruVariant, true);
+    assert.deepEqual(variant.permission, agent(config, role).permission, `${role}-deep permissions identical`);
+    assert.match(variant.description ?? '', /Model class "deep" \(openai\/gpt-5\.6-sol-fast@high\)/);
   }
   // A chain entry without effort produces no variant field.
-  assert.equal('variant' in config.agent['naru-reader-crosscheck'], false);
-  assert.equal(config.agent['naru-reader-crosscheck'].model, 'opencode-go/kimi-k2.5');
+  assert.equal('variant' in agent(config, 'naru-reader-crosscheck'), false);
+  assert.equal(agent(config, 'naru-reader-crosscheck').model, 'opencode-go/kimi-k2.5');
   // Base agents remain model-less and untouched.
-  assert.equal('model' in config.agent['naru-reader'], false);
-  assert.equal(config.agent['naru-writer'].permission.edit, 'allow');
+  assert.equal('model' in agent(config, 'naru-reader'), false);
+  assert.equal(agent(config, 'naru-writer').permission?.edit, 'allow');
 });
 
 test('the orchestrator allowlist and prompt appendix are regenerated idempotently', () => {
   const config = fakeConfig();
   applyVariantsToConfig(config, CLASSES, null);
-  const task = config.agent['naru-orchestrator'].permission.task;
+  const taskValue = agent(config, 'naru-orchestrator').permission?.task;
+  assert.equal(typeof taskValue, 'object');
+  assert.ok(taskValue);
+  const task = taskValue as Record<string, string>;
   assert.equal(task['naru-reader-light'], 'allow');
   assert.equal(task['naru-writer-crosscheck'], 'allow');
   assert.equal(task['*'], 'deny');
-  assert.match(config.agent['naru-orchestrator'].prompt, /Model classes \(generated from naru-runtime\.json\)/);
-  assert.match(config.agent['naru-orchestrator'].prompt, /"deep" -> openai\/gpt-5\.6-sol-fast@high: high consequence/);
+  assert.match(agent(config, 'naru-orchestrator').prompt ?? '', /Model classes \(generated from naru-runtime\.json\)/);
+  assert.match(agent(config, 'naru-orchestrator').prompt ?? '', /"deep" -> openai\/gpt-5\.6-sol-fast@high: high consequence/);
 
   // Second application with fewer classes removes stale variants and keys.
   applyVariantsToConfig(config, parseModelsConfig({ light: { use: 'wide', chain: ['openai/gpt-5.6-luna-fast@high'] } }), null);
   assert.equal(config.agent['naru-reader-deep'], undefined);
   assert.equal(task['naru-reader-deep'], undefined);
   assert.equal(task['naru-reader-light'], 'allow');
-  assert.equal((config.agent['naru-orchestrator'].prompt.match(/Model classes/g) || []).length, 1);
+  assert.equal((agent(config, 'naru-orchestrator').prompt?.match(/Model classes/g) || []).length, 1);
 
   // Empty classes strips everything, restoring the base config shape.
   applyVariantsToConfig(config, {}, null);
   assert.equal(Object.keys(config.agent).filter((k) => /^naru-(reader|runner|writer)-/.test(k)).length, 0);
-  assert.equal(config.agent['naru-orchestrator'].prompt, 'You coordinate work.');
+  assert.equal(agent(config, 'naru-orchestrator').prompt, 'You coordinate work.');
 });
 
 test('classes whose providers are all unauthenticated are skipped, not broken', () => {
@@ -145,12 +172,15 @@ test('validation happens before mutation: a broken config is left untouched', ()
   assert.equal(JSON.stringify(config), before);
 
   const noTask = fakeConfig();
-  noTask.agent['naru-orchestrator'].permission.task['*'] = 'allow';
+  const noTaskPermission = agent(noTask, 'naru-orchestrator').permission?.task;
+  assert.equal(typeof noTaskPermission, 'object');
+  assert.ok(noTaskPermission);
+  (noTaskPermission as Record<string, string>)['*'] = 'allow';
   assert.throws(() => applyVariantsToConfig(noTask, CLASSES, null), /fail-closed/);
 });
 
 test('the plugin hooks config only and fails open on unusable configs', async () => {
-  const hooks = await NaruDispatchPlugin({});
+  const hooks = await NaruDispatchPlugin();
   assert.deepEqual(Object.keys(hooks), ['config']);
   const broken = { agent: {} };
   await hooks.config(broken);

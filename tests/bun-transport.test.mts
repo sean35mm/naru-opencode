@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 import { defaultSpawn } from '../tools/naru-lib/transport.mjs';
 
-if (typeof Bun === 'undefined') {
+if (!('Bun' in globalThis)) {
   console.log('SKIP bun transport (Bun unavailable)');
 } else {
   const result = await defaultSpawn(

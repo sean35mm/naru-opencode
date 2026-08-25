@@ -16,7 +16,24 @@ import {
   digestRawFileBatch,
   digestFeedbackPage,
 } from '../tools/naru-lib/github.mjs';
-import { postReview, validateReviewPayload } from '../tools/naru-lib/review.mjs';
+import type {
+  EvidencePageMetrics,
+  FeedbackKind,
+  FileEvidenceSummary,
+  NormalizedFeedback,
+  NormalizedPullFile,
+  NormalizedPullMetadata,
+  PullIdentity,
+} from '../tools/naru-lib/github.mjs';
+import { postReview as postReviewImpl, validateReviewPayload } from '../tools/naru-lib/review.mjs';
+import type {
+  CoverageLedgerEntry,
+  ReviewFinding,
+  ReviewPayloadV4,
+  SubmissionMode,
+  SubmissionPolicy,
+} from '../tools/naru-lib/review.mjs';
+import type { ProcessResult, Spawn, SpawnOptions } from '../tools/naru-lib/transport.mjs';
 import gitReadTool from '../tools/naru-git-read.js';
 import githubReadTool from '../tools/naru-github-read.js';
 import githubPostReviewTool from '../tools/naru-github-post-review.js';
@@ -33,7 +50,140 @@ const NON_POSTING_AGENTS = Object.freeze([
 const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
 
-function response(value, ok = true) {
+type JsonObject = Record<string, unknown>;
+
+interface RawPullFile extends NormalizedPullFile {
+  filename: string;
+  status: string;
+  sha: string;
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch_oversized: boolean;
+}
+
+interface PullMetadataFixture extends NormalizedPullMetadata {
+  number: number;
+  head: { sha: string; ref: string; repo: undefined };
+  base: { sha: string; ref: string; repo: undefined };
+  changed_files: number;
+}
+
+interface SpawnCall {
+  argv: string[];
+  options: SpawnOptions;
+}
+
+type SpawnReply = ProcessResult | ((argv: string[], options: SpawnOptions) => ProcessResult | Promise<ProcessResult>);
+interface SpawnHandler {
+  match(argv: string[], options: SpawnOptions): boolean;
+  reply: SpawnReply;
+}
+
+interface TestFinding {
+  body: string;
+  priority: string;
+  severity: string;
+  confidence: string;
+  path?: string;
+  line?: number;
+  side?: string;
+}
+
+interface TestCoverageEntry {
+  path: string;
+  status: string;
+  evidence: string;
+  note?: string;
+}
+
+interface TestReviewPayload {
+  schemaVersion: number;
+  target: { owner: string; repo: string; pullNumber: number; number?: number };
+  snapshot: {
+    id: string;
+    snapshotId?: string;
+    baseSha: string;
+    headSha: string;
+    feedbackDigest: string;
+    evidenceDigest: string;
+    warnings: string[];
+    [key: string]: unknown;
+  };
+  coverage: {
+    ledger: TestCoverageEntry[];
+    fileBatches: Array<{ paths: string[]; batchDigest: string }>;
+    feedbackPages: Array<{ kind: FeedbackKind; page: number; pageDigest: string }>;
+    feedbackAcknowledged: boolean;
+    feedbackDigest: string;
+    complete?: boolean;
+    [key: string]: unknown;
+  };
+  submissionMode: string;
+  summary: string;
+  submissionPolicy: string;
+  conclusion: string;
+  findings: TestFinding[];
+  supersedes?: { reviewId: number; digest: string };
+  [key: string]: unknown;
+}
+
+interface TestReviewInput {
+  reviewResult: TestReviewPayload;
+  [key: string]: unknown;
+}
+
+interface PostedReview {
+  event: string;
+  commit_id: string;
+  body: string;
+  comments: unknown[];
+}
+
+interface TestPostData {
+  posted: boolean;
+  reason: string;
+  event: string;
+  evidencePosture: string;
+  submissionPolicy: string;
+  limitations: string[];
+  recovered: unknown;
+  commentsPosted: number;
+  droppedComments: Array<Record<string, unknown>>;
+  droppedFindings: Array<{ reason: string; suppressedFromPosting?: boolean; retainedForDecision?: boolean; eligibleBlocker?: boolean }>;
+  [key: string]: unknown;
+}
+
+interface TestPostResult {
+  ok: boolean;
+  error: string;
+  data: TestPostData;
+  postAttempted: boolean;
+  correctable: boolean;
+  outcomeUnknown: boolean;
+}
+
+interface JsonSchemaNode {
+  type?: string;
+  description: string;
+  required?: string[];
+  additionalProperties?: boolean;
+  enum?: unknown[];
+  oneOf?: unknown;
+  properties: Record<string, JsonSchemaNode>;
+  items: JsonSchemaNode;
+}
+
+async function postReview(
+  input: unknown,
+  context?: Parameters<typeof postReviewImpl>[1],
+  options?: Parameters<typeof postReviewImpl>[2],
+): Promise<TestPostResult> {
+  const result = await postReviewImpl(input, context, options);
+  return result as unknown as TestPostResult;
+}
+
+function response(value: unknown, ok = true): ProcessResult {
   return {
     ok,
     code: ok ? 0 : 1,
@@ -44,9 +194,26 @@ function response(value, ok = true) {
   };
 }
 
-function fakeSpawn(handlers) {
-  const calls = [];
-  const spawn = async (argv, options = {}) => {
+function parsePostedReview(options: SpawnOptions): PostedReview {
+  if (typeof options.input !== 'string') throw new Error('expected POST input');
+  return JSON.parse(options.input) as PostedReview;
+}
+
+function reviewMarker(body: string): string {
+  const marker = body.match(/^<!-- naru-review:[^>]+-->/)?.[0];
+  assert.ok(marker);
+  return marker;
+}
+
+function markerDigest(marker: string): string {
+  const digest = marker.match(/digest=([0-9a-f]{64})/)?.[1];
+  assert.ok(digest);
+  return digest;
+}
+
+function fakeSpawn(handlers: SpawnHandler[]): { spawn: Spawn; calls: SpawnCall[] } {
+  const calls: SpawnCall[] = [];
+  const spawn: Spawn = async (argv, options = {}) => {
     calls.push({ argv, options });
     const handler = handlers.find((candidate) => candidate.match(argv, options));
     if (!handler) throw new Error(`unexpected spawn: ${argv.join(' ')}`);
@@ -55,32 +222,38 @@ function fakeSpawn(handlers) {
   return { spawn, calls };
 }
 
-function deferred() {
-  let resolve;
-  const promise = new Promise((done) => { resolve = done; });
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
   return { promise, resolve };
 }
 
-function has(argv, value) {
+function has(argv: string[], value: string): boolean {
   return argv.some((item) => item.includes(value));
 }
 
-function pullMeta(head = HEAD, base = BASE, changedFiles = 1, number = 42, overrides = {}) {
+function pullMeta(
+  head = HEAD,
+  base = BASE,
+  changedFiles = 1,
+  number = 42,
+  overrides: { title?: string; body?: string; state?: string; draft?: unknown; author?: string } = {},
+): PullMetadataFixture {
   return {
     number,
     title: overrides.title ?? 'Safe change',
     body: overrides.body ?? 'Description',
     state: overrides.state ?? 'open',
-    draft: Object.hasOwn(overrides, 'draft') ? overrides.draft : false,
+    draft: Object.hasOwn(overrides, 'draft') ? overrides.draft as boolean : false,
     html_url: `https://github.com/owner/repo/pull/${number}`,
     user: { login: overrides.author ?? 'author' },
-    head: { sha: head, ref: 'feature' },
-    base: { sha: base, ref: 'main' },
+    head: { sha: head, ref: 'feature', repo: undefined },
+    base: { sha: base, ref: 'main', repo: undefined },
     changed_files: changedFiles,
   };
 }
 
-function changedFile(filename = 'src/index.js', patch = '@@ -1,1 +1,1 @@\n-old\n+new') {
+function changedFile(filename = 'src/index.js', patch: string | undefined = '@@ -1,1 +1,1 @@\n-old\n+new'): RawPullFile {
   return {
     filename,
     status: 'modified',
@@ -89,10 +262,11 @@ function changedFile(filename = 'src/index.js', patch = '@@ -1,1 +1,1 @@\n-old\n
     deletions: 1,
     changes: 2,
     patch,
+    patch_oversized: false,
   };
 }
 
-function denseContextFile(filename, lines) {
+function denseContextFile(filename: string, lines: number): RawPullFile {
   return {
     ...changedFile(filename, `@@ -1,${lines} +1,${lines} @@\n${' x\n'.repeat(lines)}`),
     additions: 0,
@@ -101,7 +275,7 @@ function denseContextFile(filename, lines) {
   };
 }
 
-function evidenceFile(file) {
+function evidenceFile(file: RawPullFile): FileEvidenceSummary {
   const missing = typeof file.patch !== 'string' || file.patch.length === 0;
   const redacted = !validate.isSafeRelativePath(file.filename)
     || (file.previous_filename !== undefined && !validate.isSafeRelativePath(file.previous_filename));
@@ -113,6 +287,12 @@ function evidenceFile(file) {
     additions: file.additions,
     deletions: file.deletions,
     changes: file.changes,
+    patchAvailable: !missing && !redacted,
+    patchTruncated: false,
+    patchRedacted: redacted,
+    patchBytes: typeof file.patch === 'string' ? Buffer.byteLength(file.patch) : 0,
+    lineMap: { left: [], right: [], hunks: [] },
+    bytesUsed: typeof file.patch === 'string' ? Buffer.byteLength(file.patch) : 0,
     patch: missing || redacted ? undefined : file.patch,
     patchEvidence: redacted
       ? { status: 'unavailable', reason: 'redacted-path', retention: 'none', validation: { structural: false, metadata: false } }
@@ -122,7 +302,11 @@ function evidenceFile(file) {
   };
 }
 
-function coverageLedger(files, limited = false, limitation = 'review coverage is incomplete') {
+function coverageLedger(
+  files: RawPullFile[],
+  limited = false,
+  limitation = 'review coverage is incomplete',
+): TestCoverageEntry[] {
   return files.map((file, index) => {
     const patchComplete = typeof file.patch === 'string'
       && validate.isSafeRelativePath(file.filename)
@@ -136,20 +320,31 @@ function coverageLedger(files, limited = false, limitation = 'review coverage is
     };
   });
 }
-function provenance(identity, files, reviews, reviewComments, issueComments) {
-  const fileBatches = [];
+function provenance(
+  identity: PullIdentity,
+  files: RawPullFile[],
+  reviews: NormalizedFeedback[],
+  reviewComments: NormalizedFeedback[],
+  issueComments: NormalizedFeedback[],
+) {
+  const fileBatches: Array<{ paths: string[]; batchDigest: string }> = [];
   for (let index = 0; index < files.length; index += 100) {
     const chunk = files.slice(index, index + 100);
     const paths = chunk.map(file => file.filename);
     fileBatches.push({ paths, batchDigest: digestRawFileBatch(identity, paths, chunk) });
   }
-  const normalize = item => ({
+  const normalize = (item: NormalizedFeedback) => ({
     id: item.id, state: item.state, commitId: item.commit_id, body: item.body ?? '', author: item.user?.login,
     path: item.path, line: item.line, side: item.side, updatedAt: item.updated_at ?? item.submitted_at,
     url: item.html_url ?? item.url,
   });
-  const feedbackPages = [];
-  for (const [kind, items] of [['reviews', reviews], ['review-comments', reviewComments], ['issue-comments', issueComments]]) {
+  const feedbackPages: Array<{ kind: FeedbackKind; page: number; pageDigest: string }> = [];
+  const feedbackSets: Array<[FeedbackKind, NormalizedFeedback[]]> = [
+    ['reviews', reviews],
+    ['review-comments', reviewComments],
+    ['issue-comments', issueComments],
+  ];
+  for (const [kind, items] of feedbackSets) {
     for (let index = 0; index < items.length; index += 100) {
       const page = index / 100 + 1;
       feedbackPages.push({ kind, page, pageDigest: digestFeedbackPage(identity, kind, page, items.slice(index, index + 100).map(normalize)) });
@@ -157,14 +352,52 @@ function provenance(identity, files, reviews, reviewComments, issueComments) {
   }
   return { fileBatches, feedbackPages };
 }
-function fixtureIdentity(head, files, { base = BASE, reviews = [], reviewComments = [], issueComments = [] } = {}) {
+function fixtureIdentity(
+  head: string,
+  files: RawPullFile[],
+  { base = BASE, reviews = [], reviewComments = [], issueComments = [] }: {
+    base?: string;
+    reviews?: NormalizedFeedback[];
+    reviewComments?: NormalizedFeedback[];
+    issueComments?: NormalizedFeedback[];
+  } = {},
+): PullIdentity {
   const meta = pullMeta(head, base, files.length);
   return {
-    baseSha: base, headSha: head,
+    owner: 'owner', repo: 'repo', number: 42, baseSha: base, headSha: head,
     snapshotId: snapshotId('owner', 'repo', 42, head, base, files),
     feedbackDigest: digestSnapshot(meta, files, reviews, reviewComments, issueComments),
     evidenceDigest: digestEvidence(head, base, files.map(evidenceFile)),
   };
+}
+
+interface SnapshotFixtureOptions {
+  number?: number;
+  meta?: unknown;
+  files?: RawPullFile[];
+  reviews?: NormalizedFeedback[];
+  reviewComments?: NormalizedFeedback[];
+  issueComments?: NormalizedFeedback[];
+  metadataReply?: SpawnReply;
+  actor?: string | undefined;
+}
+
+function requiredAt<T>(values: readonly T[], index: number, label = 'array item'): T {
+  const value = values[index];
+  if (value === undefined) throw new Error(`${label} is unavailable`);
+  return value;
+}
+
+function requiredProperty<T>(properties: Record<string, T>, name: string): T {
+  const value = properties[name];
+  if (value === undefined) throw new Error(`property ${name} is unavailable`);
+  return value;
+}
+
+function argumentAfter(argv: string[], flag: string): string {
+  const index = argv.indexOf(flag);
+  if (index < 0) throw new Error(`${flag} argument is unavailable`);
+  return requiredAt(argv, index + 1, `${flag} value`);
 }
 
 function snapshotHandlers({
@@ -176,16 +409,16 @@ function snapshotHandlers({
   issueComments = [],
   metadataReply,
   actor = 'viewer',
-} = {}) {
-  const requestedPage = argv => {
+}: SnapshotFixtureOptions = {}): SpawnHandler[] {
+  const requestedPage = (argv: string[]) => {
     const endpoint = argv.find(value => typeof value === 'string' && /[?&]per_page=\d+&page=\d+/.test(value));
     const page = endpoint?.match(/[?&]page=(\d+)/)?.[1];
     const pageSize = endpoint?.match(/[?&]per_page=(\d+)/)?.[1];
     return page === undefined || pageSize === undefined ? undefined : { page: Number(page), pageSize: Number(pageSize) };
   };
-  const pageItems = (items, request) => request === undefined
+  const pageItems = <T,>(items: T[], request: { page: number; pageSize: number } | undefined): T[] => request === undefined
     ? items : items.slice((request.page - 1) * request.pageSize, request.page * request.pageSize);
-  const feedbackReply = items => argv => {
+  const feedbackReply = (items: NormalizedFeedback[]) => (argv: string[]) => {
     const page = requestedPage(argv);
     return page === undefined ? response([items]) : response(pageItems(items, page));
   };
@@ -198,7 +431,7 @@ function snapshotHandlers({
     { match: (argv) => argv[3] === 'GET' && has(argv, `pulls/${number}/files`), reply: (argv) => {
       const jqIndex = argv.indexOf('--jq');
       if (jqIndex === -1) return response([files]);
-      const jq = argv[jqIndex + 1];
+      const jq = requiredAt(argv, jqIndex + 1, '--jq value');
       const page = requestedPage(argv);
       const sourceFiles = pageItems(files, page);
       const projected = jq.includes('.filename as $filename')
@@ -239,6 +472,21 @@ function snapshotHandlers({
   ];
 }
 
+interface ReviewInputOptions {
+  number?: number;
+  head?: string;
+  base?: string;
+  files?: RawPullFile[];
+  reviews?: NormalizedFeedback[];
+  reviewComments?: NormalizedFeedback[];
+  issueComments?: NormalizedFeedback[];
+  status?: string;
+  degraded?: boolean;
+  snapshotComplete?: boolean;
+  comments?: TestFinding[];
+  body?: string;
+}
+
 function reviewInput({
   number = 42,
   head = HEAD,
@@ -252,7 +500,7 @@ function reviewInput({
   snapshotComplete = true,
   comments,
   body = '## Verdict\n\nNo actionable findings.',
-} = {}) {
+}: ReviewInputOptions = {}): TestReviewInput {
   const meta = pullMeta(head, base, files.length, number);
   const feedbackDigest = digestSnapshot(meta, files, reviews, reviewComments, issueComments);
   const identity = { owner: 'owner', repo: 'repo', number, baseSha: base, headSha: head,
@@ -295,6 +543,15 @@ function reviewInput({
   };
 }
 
+interface FormalReviewInputOptions extends Omit<ReviewInputOptions, 'comments' | 'status' | 'degraded'> {
+  posture?: SubmissionMode;
+  limitations?: string[];
+  snapshotWarnings?: string[];
+  submissionPolicy?: string;
+  conclusion?: string;
+  findings?: TestFinding[] | undefined;
+}
+
 function reviewInputV3({
   number = 42,
   head = HEAD,
@@ -311,7 +568,7 @@ function reviewInputV3({
   conclusion = 'informational',
   findings = [],
   body = '## Verdict\n\nReview findings are listed below.',
-} = {}) {
+}: FormalReviewInputOptions = {}): TestReviewInput {
   const meta = pullMeta(head, base, files.length, number);
   const feedbackDigest = digestSnapshot(meta, files, reviews, reviewComments, issueComments);
   const identity = { owner: 'owner', repo: 'repo', number, baseSha: base, headSha: head,
@@ -346,7 +603,7 @@ function reviewInputV3({
   };
 }
 
-function largeMatchingPatch(changes, targetBytes = 16 * 1024) {
+function largeMatchingPatch(changes: number, targetBytes = 16 * 1024) {
   const deletions = Math.floor(changes / 2);
   const additions = changes - deletions;
   const context = 2;
@@ -379,8 +636,8 @@ test('git status uses valid fixed argv', async () => {
   const expected = ['git', '--no-pager', '-c', 'color.ui=false', 'status', '--short', '--branch'];
   const { spawn, calls } = fakeSpawn([{ match: (argv) => JSON.stringify(argv) === JSON.stringify(expected), reply: response(' M src/index.js') }]);
   const result = await runGit({ directory: '/tmp/repo' }, { operation: 'status' }, { spawn });
-  assert.equal(result.ok, true, result.error);
-  assert.deepEqual(calls[0].argv, expected);
+  assert.equal(result.ok, true, result.error ?? undefined);
+  assert.deepEqual(requiredAt(calls, 0).argv, expected);
 });
 
 test('git diff keeps refs and paths as argv data', async () => {
@@ -393,13 +650,13 @@ test('git diff keeps refs and paths as argv data', async () => {
     { operation: 'diff', base: 'main', head: 'feature/topic', path: 'src/a b.js' },
     { spawn },
   );
-  assert.equal(result.ok, true, result.error);
-  assert.deepEqual(calls[0].argv.slice(0, 12), [
+  assert.equal(result.ok, true, result.error ?? undefined);
+  assert.deepEqual(requiredAt(calls, 0).argv.slice(0, 12), [
     'git', '--no-pager', '-c', 'color.ui=false', 'diff', '--no-ext-diff', '--no-textconv',
     '--no-renames', 'main', 'feature/topic', '--', 'src/a b.js',
   ]);
-  assert.ok(calls[0].argv.includes(':(exclude,glob)**/.env'));
-  assert.ok(calls[0].argv.includes(':(exclude,glob)**/*.pem'));
+  assert.ok(requiredAt(calls, 0).argv.includes(':(exclude,glob)**/.env'));
+  assert.ok(requiredAt(calls, 0).argv.includes(':(exclude,glob)**/*.pem'));
 });
 
 test('git file and grep use non-shell argv with option separators', async () => {
@@ -409,17 +666,19 @@ test('git file and grep use non-shell argv with option separators', async () => 
   ]);
   assert.equal((await runGit({ directory: '/tmp/repo' }, { operation: 'file', ref: 'main', path: 'src/a.js' }, { spawn })).ok, true);
   assert.equal((await runGit({ directory: '/tmp/repo' }, { operation: 'grep', pattern: 'needle', path: 'src' }, { spawn })).ok, true);
-  assert.equal(calls[0].argv.at(-1), 'main:src/a.js');
-  assert.deepEqual(calls[1].argv.slice(4, 9), ['grep', '-n', '-e', 'needle', '--']);
-  assert.equal(calls[1].argv[9], 'src');
-  assert.ok(calls[1].argv.includes(':(exclude,glob)**/secrets/**'));
+  assert.equal(requiredAt(calls, 0).argv.at(-1), 'main:src/a.js');
+  assert.deepEqual(requiredAt(calls, 1).argv.slice(4, 9), ['grep', '-n', '-e', 'needle', '--']);
+  assert.equal(requiredAt(requiredAt(calls, 1).argv, 9), 'src');
+  assert.ok(requiredAt(calls, 1).argv.includes(':(exclude,glob)**/secrets/**'));
 });
 
 test('GitHub references require exact github.com URLs', () => {
   assert.deepEqual(parseReference('https://github.com/owner/repo/pull/42'), {
     owner: 'owner', repo: 'repo', number: 42, kind: 'pull',
   });
-  assert.equal(parseReference('https://github.com/owner/repo/issues/7').kind, 'issue');
+  const issueReference = parseReference('https://github.com/owner/repo/issues/7');
+  assert.ok('kind' in issueReference);
+  assert.equal(issueReference.kind, 'issue');
   assert.throws(() => parseReference('https://evilgithub.com/owner/repo/pull/42'), /github\.com/);
   assert.throws(() => parseReference('https://github.com/owner/repo/pull/42?x=1'), /github\.com/);
 });
@@ -429,8 +688,8 @@ test('pull snapshots use GET, normalize pagination, and serialize line maps', as
   const snapshot = await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn });
   assert.equal(snapshot.complete, true);
   assert.equal(snapshot.headSha, HEAD);
-  assert.deepEqual(snapshot.files[0].lineMap.left, [1]);
-  assert.deepEqual(snapshot.files[0].lineMap.right, [1]);
+  assert.deepEqual(requiredAt(snapshot.files, 0).lineMap.left, [1]);
+  assert.deepEqual(requiredAt(snapshot.files, 0).lineMap.right, [1]);
   assert.doesNotThrow(() => JSON.stringify(snapshot));
   for (const call of calls) {
     assert.deepEqual(call.argv.slice(0, 4), ['gh', 'api', '--method', 'GET']);
@@ -463,8 +722,8 @@ test('pull snapshots flag API file limits and redact secret-like patches', async
   const { spawn } = fakeSpawn(snapshotHandlers({ meta: pullMeta(HEAD, BASE, 5000), files }));
   const snapshot = await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn });
   assert.equal(snapshot.complete, false);
-  assert.equal(snapshot.files[0].patchRedacted, true);
-  assert.equal(snapshot.files[0].patch, undefined);
+  assert.equal(requiredAt(snapshot.files, 0).patchRedacted, true);
+  assert.equal(requiredAt(snapshot.files, 0).patch, undefined);
 });
 
 test('large structurally complete patches below the line-map ceiling do not use changes count as a truncation heuristic', async () => {
@@ -475,11 +734,12 @@ test('large structurally complete patches below the line-map ceiling do not use 
     const { spawn } = fakeSpawn(snapshotHandlers({ files: [file] }));
     const snapshot = await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn });
     assert.equal(snapshot.reviewability.status, 'complete', String(changes));
-    assert.equal(snapshot.files[0].patchEvidence.status, 'complete', String(changes));
-    assert.equal(snapshot.files[0].patchTruncated, false, String(changes));
-    assert.equal(snapshot.files[0].lineMap.left.length > 0, true, String(changes));
-    assert.equal(snapshot.files[0].lineMap.right.length > 0, true, String(changes));
-    assert.equal(snapshot.files[0].patchBytes >= 16 * 1024, true, String(changes));
+    const snapshotFile = requiredAt(snapshot.files, 0);
+    assert.equal(snapshotFile.patchEvidence.status, 'complete', String(changes));
+    assert.equal(snapshotFile.patchTruncated, false, String(changes));
+    assert.equal(snapshotFile.lineMap.left.length > 0, true, String(changes));
+    assert.equal(snapshotFile.lineMap.right.length > 0, true, String(changes));
+    assert.equal(snapshotFile.patchBytes >= 16 * 1024, true, String(changes));
   }
 });
 
@@ -498,10 +758,10 @@ test('malformed, missing, metadata-mismatched, and redacted patches retain no tr
     assert.deepEqual(file.lineMap.left, []);
     assert.deepEqual(file.lineMap.right, []);
   }
-  assert.equal(snapshot.files[0].patchEvidence.retention, 'full');
-  assert.equal(snapshot.files[1].patchEvidence.reason, 'metadata-mismatch');
-  assert.equal(snapshot.files[2].patchEvidence.reason, 'missing-patch');
-  assert.equal(snapshot.files[3].patchEvidence.reason, 'redacted-path');
+  assert.equal(requiredAt(snapshot.files, 0).patchEvidence.retention, 'full');
+  assert.equal(requiredAt(snapshot.files, 1).patchEvidence.reason, 'metadata-mismatch');
+  assert.equal(requiredAt(snapshot.files, 2).patchEvidence.reason, 'missing-patch');
+  assert.equal(requiredAt(snapshot.files, 3).patchEvidence.reason, 'redacted-path');
 });
 
 test('per-file and aggregate patch byte limits are authoritative', async () => {
@@ -509,8 +769,8 @@ test('per-file and aggregate patch byte limits are authoritative', async () => {
   Object.assign(oversized, { additions: 0, deletions: 0, changes: 0 });
   const perFile = fakeSpawn(snapshotHandlers({ files: [oversized] }));
   const perFileSnapshot = await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: perFile.spawn });
-  assert.equal(perFileSnapshot.files[0].patchEvidence.reason, 'per-file-byte-limit');
-  assert.deepEqual(perFileSnapshot.files[0].lineMap.right, []);
+  assert.equal(requiredAt(perFileSnapshot.files, 0).patchEvidence.reason, 'per-file-byte-limit');
+  assert.deepEqual(requiredAt(perFileSnapshot.files, 0).lineMap.right, []);
 
   const files = Array.from({ length: 17 }, (_, index) => {
     const file = changedFile(`src/budget-${index}.js`, `@@ -1 +1 @@\n ${'x'.repeat(1024 * 1024 - 128)}`);
@@ -518,9 +778,9 @@ test('per-file and aggregate patch byte limits are authoritative', async () => {
   });
   const aggregate = fakeSpawn(snapshotHandlers({ meta: pullMeta(HEAD, BASE, files.length), files }));
   const aggregateSnapshot = await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: aggregate.spawn });
-  assert.equal(aggregateSnapshot.files.at(-1).patchEvidence.reason, 'aggregate-byte-limit');
-  assert.equal(aggregateSnapshot.files.at(-1).patch, undefined);
-  assert.deepEqual(aggregateSnapshot.files.at(-1).lineMap.left, []);
+  assert.equal(aggregateSnapshot.files.at(-1)?.patchEvidence.reason, 'aggregate-byte-limit');
+  assert.equal(aggregateSnapshot.files.at(-1)?.patch, undefined);
+  assert.deepEqual(aggregateSnapshot.files.at(-1)?.lineMap.left, []);
 });
 
 test('snapshot reviewability distinguishes complete, patch-limited, and integrity failures', async () => {
@@ -561,14 +821,15 @@ test('changed-file immutable metadata matrix fails compact and full reviewabilit
     { label: 'rename unsafe previous path', file: { ...changedFile(), status: 'renamed', previous_filename: '../old.js' } },
   ];
   for (const { label, file } of invalidFiles) {
-    const handlers = snapshotHandlers({ meta: pullMeta(head), files: [file] });
+    // Each case deliberately violates the otherwise required raw GitHub file shape.
+    const handlers = snapshotHandlers({ meta: pullMeta(head), files: [file as unknown as RawPullFile] });
     const manifest = await pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: fakeSpawn(handlers).spawn });
     assert.equal(manifest.reviewability.status, 'unpostable', label);
     assert.equal(manifest.reviewability.inventoryComplete, false, label);
     const snapshot = await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: fakeSpawn(handlers).spawn });
     assert.equal(snapshot.reviewability.status, 'unpostable', label);
     assert.equal(snapshot.reviewability.inventoryComplete, false, label);
-    assert.equal(snapshot.files[0].patchEvidence.validation.metadata, false, label);
+    assert.equal(requiredAt(snapshot.files, 0).patchEvidence.validation.metadata, false, label);
   }
 });
 
@@ -585,13 +846,13 @@ test('valid added, modified, renamed, removed, and binary files preserve legitim
   const manifest = await pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: fakeSpawn(handlers).spawn });
   assert.equal(manifest.reviewability.status, 'manifest');
   assert.equal(manifest.reviewability.inventoryComplete, true);
-  assert.equal(manifest.files[1].previousPath, null);
+  assert.equal(requiredAt(manifest.files, 1).previousPath, null);
   const snapshot = await pullSnapshot({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: fakeSpawn(handlers).spawn });
   assert.equal(snapshot.reviewability.status, 'limited-comment');
   assert.equal(snapshot.reviewability.inventoryComplete, true);
   assert.equal(snapshot.files.slice(0, 4).every(file => file.patchEvidence.status === 'complete'), true);
-  assert.equal(snapshot.files[4].patchEvidence.reason, 'missing-patch');
-  assert.match(snapshot.files[3].sha, /^[0-9a-f]{40}$/);
+  assert.equal(requiredAt(snapshot.files, 4).patchEvidence.reason, 'missing-patch');
+  assert.match(requiredAt(snapshot.files, 3).sha ?? '', /^[0-9a-f]{40}$/);
 });
 
 test('rename source path binds snapshot, feedback, evidence, and batch identities', async () => {
@@ -625,8 +886,8 @@ test('rename source path binds snapshot, feedback, evidence, and batch identitie
   const secondManifest = await pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, {
     spawn: fakeSpawn(snapshotHandlers({ meta, files: [second] })).spawn,
   });
-  assert.equal(firstManifest.files[0].previousPath, 'src/old-a.js');
-  assert.equal(secondManifest.files[0].previousPath, 'src/old-b.js');
+  assert.equal(requiredAt(firstManifest.files, 0).previousPath, 'src/old-a.js');
+  assert.equal(requiredAt(secondManifest.files, 0).previousPath, 'src/old-b.js');
   assert.notEqual(firstManifest.snapshotId, secondManifest.snapshotId);
   assert.notEqual(firstManifest.feedbackDigest, secondManifest.feedbackDigest);
   assert.notEqual(firstManifest.evidenceDigest, secondManifest.evidenceDigest);
@@ -651,10 +912,10 @@ test('formal v4 posting cannot derive complete evidence from malformed file meta
   const head = '43'.repeat(20);
   const files = [{ ...changedFile(), sha: undefined }];
   const fake = fakeSpawn([
-    ...snapshotHandlers({ meta: pullMeta(head), files }),
+    ...snapshotHandlers({ meta: pullMeta(head), files: files as unknown as RawPullFile[] }),
     { match: argv => argv.includes('POST'), reply: response({ id: 430 }) },
   ]);
-  const result = await postReview(reviewInput({ head, files, comments: [] }), { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(reviewInput({ head, files: files as unknown as RawPullFile[], comments: [] }), { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
   assert.equal(result.ok, false);
   assert.match(result.error, /unpostable/);
   assert.equal(fake.calls.some(call => call.argv.includes('POST')), false);
@@ -708,9 +969,9 @@ test('v4 payload validation enforces version-specific findings and rejects calle
 test('review payload accepts aliases but rejects dual canonical and alias keys', () => {
   const aliased = structuredClone(reviewInput());
   aliased.reviewResult.target.number = aliased.reviewResult.target.pullNumber;
-  delete aliased.reviewResult.target.pullNumber;
+  delete (aliased.reviewResult.target as { pullNumber?: number }).pullNumber;
   aliased.reviewResult.snapshot.snapshotId = aliased.reviewResult.snapshot.id;
-  delete aliased.reviewResult.snapshot.id;
+  delete (aliased.reviewResult.snapshot as { id?: string }).id;
   assert.equal(validateReviewPayload(aliased).target.number, 42);
 
   const dualTarget = structuredClone(reviewInput());
@@ -795,13 +1056,13 @@ test('post tool rejects initial submissionMode for limited coverage before POST'
 });
 
 test('post tool preserves body, hard-codes COMMENT and commit_id, and posts once', async () => {
-  let posted;
-  const handlers = [
+  let posted = {} as PostedReview;
+  const handlers: SpawnHandler[] = [
     ...snapshotHandlers(),
     {
       match: (argv) => argv.includes('POST'),
       reply: (_argv, options) => {
-        posted = JSON.parse(options.input);
+        posted = parsePostedReview(options);
         return response({ id: 99, html_url: 'https://github.com/owner/repo/pull/42#pullrequestreview-99' });
       },
     },
@@ -822,11 +1083,11 @@ test('post tool preserves body, hard-codes COMMENT and commit_id, and posts once
 test('v3 limited patch evidence posts one COMMENT with a generated banner and no inline comment', async () => {
   const head = '01'.repeat(20);
   const files = [{ ...changedFile(), patch: undefined }];
-  let posted;
+  let posted = {} as PostedReview;
   const { spawn, calls } = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(head), files }),
     { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-      posted = JSON.parse(options.input);
+      posted = parsePostedReview(options);
       return response({ id: 401 });
     } },
   ]);
@@ -853,11 +1114,11 @@ test('payload-incomplete evidence forces every formal policy to one visible limi
   ];
   for (const item of cases) {
     const head = item.seed.repeat(20);
-    let posted;
+    let posted = {} as PostedReview;
     const { spawn, calls } = fakeSpawn([
       ...snapshotHandlers({ meta: pullMeta(head) }),
       { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-        posted = JSON.parse(options.input);
+        posted = parsePostedReview(options);
         return response({ id: Number.parseInt(item.seed, 16) });
       } },
     ]);
@@ -901,11 +1162,11 @@ test('payload-incomplete evidence requires limited posture before any POST', asy
 
 test('complete v3 evidence with honest non-material limitations remains formally eligible', async () => {
   const head = '8e'.repeat(20);
-  let posted;
+  let posted = {} as PostedReview;
   const { spawn, calls } = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(head) }),
     { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-      posted = JSON.parse(options.input);
+      posted = parsePostedReview(options);
       return response({ id: 814 });
     } },
   ]);
@@ -962,12 +1223,12 @@ test('APPROVE is derived only for complete clear non-draft non-self reviews with
   ];
   for (const item of cases) {
     const head = item.seed.repeat(20);
-    let posted;
+    let posted = {} as PostedReview;
     const meta = pullMeta(head, BASE, 1, 42, Object.hasOwn(item, 'draft') ? { draft: item.draft } : {});
     const { spawn } = fakeSpawn([
       ...snapshotHandlers({ meta, actor: item.actor }),
       { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-        posted = JSON.parse(options.input);
+        posted = parsePostedReview(options);
         return response({ id: Number(item.seed) });
       } },
     ]);
@@ -1026,12 +1287,12 @@ test('REQUEST_CHANGES requires a final eligible blocker and otherwise falls back
   ];
   for (const item of cases) {
     const head = item.seed.repeat(20);
-    let posted;
+    let posted = {} as PostedReview;
     const meta = pullMeta(head, BASE, 1, 42, Object.hasOwn(item, 'draft') ? { draft: item.draft } : {});
     const { spawn } = fakeSpawn([
       ...snapshotHandlers({ meta }),
       { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-        posted = JSON.parse(options.input);
+        posted = parsePostedReview(options);
         return response({ id: Number.parseInt(item.seed, 16) });
       } },
     ]);
@@ -1056,11 +1317,11 @@ test('REQUEST_CHANGES requires a final eligible blocker and otherwise falls back
 
 test('v4 renders every non-inline finding safely and refuses redacted paths', async () => {
   const head = '35'.repeat(20);
-  let posted;
+  let posted = {} as PostedReview;
   const { spawn } = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(head) }),
     { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-      posted = JSON.parse(options.input);
+      posted = parsePostedReview(options);
       return response({ id: 435 });
     } },
   ]);
@@ -1101,11 +1362,11 @@ test('v4 renders every non-inline finding safely and refuses redacted paths', as
 test('comment-only and informational select-state policies stay COMMENT', async () => {
   for (const [index, submissionPolicy] of ['comment-only', 'select-state'].entries()) {
     const head = `4${index}`.repeat(20);
-    let posted;
+    let posted = {} as PostedReview;
     const { spawn } = fakeSpawn([
       ...snapshotHandlers({ meta: pullMeta(head) }),
       { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-        posted = JSON.parse(options.input);
+        posted = parsePostedReview(options);
         return response({ id: 440 + index });
       } },
     ]);
@@ -1128,7 +1389,7 @@ test('each submission authorization policy derives only events in its exact allo
     { seed: '85', policy: 'select-state', conclusion: 'clear', findings: [], expected: 'APPROVE' },
     { seed: '86', policy: 'select-state', conclusion: 'blocking', findings: [blocker], expected: 'REQUEST_CHANGES' },
   ];
-  const allowed = {
+  const allowed: Record<string, Set<string>> = {
     'comment-only': new Set(['COMMENT']),
     'approve-if-clear': new Set(['COMMENT', 'APPROVE']),
     'request-changes-if-blocked': new Set(['COMMENT', 'REQUEST_CHANGES']),
@@ -1136,11 +1397,11 @@ test('each submission authorization policy derives only events in its exact allo
   };
   for (const item of cases) {
     const head = item.seed.repeat(20);
-    let posted;
+    let posted = {} as PostedReview;
     const { spawn } = fakeSpawn([
       ...snapshotHandlers({ meta: pullMeta(head) }),
       { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-        posted = JSON.parse(options.input);
+        posted = parsePostedReview(options);
         return response({ id: Number(item.seed) });
       } },
     ]);
@@ -1149,7 +1410,7 @@ test('each submission authorization policy derives only events in its exact allo
     }), { agent: 'naru-orchestrator' }, { spawn });
     assert.equal(result.ok, true, result.error);
     assert.equal(posted.event, item.expected);
-    assert.equal(allowed[item.policy].has(posted.event), true);
+    assert.equal(requiredProperty(allowed, item.policy).has(posted.event), true);
     assert.equal(result.data.submissionPolicy, item.policy);
   }
 });
@@ -1398,11 +1659,11 @@ test('post tool refuses final patch-evidence and pull-state drift without POST',
 
 test('post tool drops invalid inline locations', async () => {
   const head = '2'.repeat(40);
-  let posted;
+  let posted = {} as PostedReview;
   const { spawn } = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(head) }),
     { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-      posted = JSON.parse(options.input);
+      posted = parsePostedReview(options);
       return response({ id: 5 });
     } },
   ]);
@@ -1418,17 +1679,17 @@ test('post tool drops invalid inline locations', async () => {
 
 test('post tool refuses a prior marker after same-head feedback identity changes', async () => {
   const head = '3'.repeat(40);
-  let firstPost;
+  let firstPost = {} as PostedReview;
   const first = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(head) }),
     { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-      firstPost = JSON.parse(options.input);
+      firstPost = parsePostedReview(options);
       return response({ id: 8 });
     } },
   ]);
   const firstResult = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn: first.spawn });
   assert.equal(firstResult.ok, true, firstResult.error);
-  const marker = firstPost.body.match(/^<!-- naru-review:[^>]+-->/)[0];
+  const marker = reviewMarker(firstPost.body);
   const existingReview = [{ id: 8, commit_id: head, body: marker, html_url: 'review-url', user: { login: 'viewer' } }];
   const same = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), reviews: existingReview }));
   const sameInput = reviewInput({ head, reviews: existingReview });
@@ -1451,7 +1712,7 @@ test('post tool refuses a prior marker after same-head feedback identity changes
 });
 
 test('v4 dedupe binds same-head reviews to base and evidence identities', async () => {
-  for (const [seed, changedInput, changedHandlers] of [
+  const cases: Array<[string, (head: string) => TestReviewInput, (head: string) => SpawnHandler[]]> = [
     ['35', head => reviewInput({ head, base: 'a1'.repeat(20) }), head => snapshotHandlers({ meta: pullMeta(head, 'a1'.repeat(20)) })],
     ['36', head => {
       const files = [changedFile('src/index.js', '@@ -1 +1 @@\n-before\n+after')];
@@ -1460,7 +1721,8 @@ test('v4 dedupe binds same-head reviews to base and evidence identities', async 
       const files = [changedFile('src/index.js', '@@ -1 +1 @@\n-before\n+after')];
       return snapshotHandlers({ meta: pullMeta(head), files });
     }],
-  ]) {
+  ];
+  for (const [seed, changedInput, changedHandlers] of cases) {
     const head = seed.repeat(20);
     const initial = fakeSpawn([
       ...snapshotHandlers({ meta: pullMeta(head) }),
@@ -1541,23 +1803,24 @@ test('v4 dedupe binds coverage ledger status, evidence, and reason', async () =>
   const head = '39'.repeat(20);
   const files = [changedFile('src/index.js')];
   const input = reviewInput({ head, files, comments: [] });
-  input.reviewResult.coverage.ledger[0].note = 'initial review rationale';
+  requiredAt(input.reviewResult.coverage.ledger, 0).note = 'initial review rationale';
   const initial = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(head), files }),
     { match: argv => argv.includes('POST'), reply: response({ id: 75 }) },
   ]);
   assert.equal((await postReview(input, { agent: 'naru-orchestrator' }, { spawn: initial.spawn })).ok, true);
 
-  const variants = [
+  const variants: Array<(ledger: TestCoverageEntry) => void> = [
     ledger => { ledger.status = 'blocked'; },
     ledger => { ledger.evidence = 'alternate'; },
     ledger => { ledger.note = 'materially changed rationale'; },
   ];
   for (const mutate of variants) {
     const changedInput = structuredClone(input);
-    mutate(changedInput.reviewResult.coverage.ledger[0]);
-    if (changedInput.reviewResult.coverage.ledger[0].status !== 'reviewed'
-      || changedInput.reviewResult.coverage.ledger[0].evidence !== 'current-patch') {
+    const changedLedger = requiredAt(changedInput.reviewResult.coverage.ledger, 0);
+    mutate(changedLedger);
+    if (changedLedger.status !== 'reviewed'
+      || changedLedger.evidence !== 'current-patch') {
       changedInput.reviewResult.submissionMode = 'limited';
     }
     const changed = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), files }));
@@ -1631,7 +1894,7 @@ test('ambiguous formal review POSTs are attempted exactly once and remain termin
       ...snapshotHandlers({ meta: pullMeta(item.head) }),
       { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
         postCalls += 1;
-        postedEvent = JSON.parse(options.input).event;
+        postedEvent = parsePostedReview(options).event;
         return response('ambiguous failure', false);
       } },
     ]);
@@ -1652,56 +1915,66 @@ test('ambiguous formal review POSTs are attempted exactly once and remain termin
 test('OpenCode wrappers expose one input schema and return JSON text', async () => {
   for (const tool of [gitReadTool, githubReadTool, githubPostReviewTool]) {
     assert.deepEqual(Object.keys(tool.args), ['input']);
-    assert.equal(tool.args.input.type, 'object');
+    assert.equal((tool.args.input as JsonSchemaNode).type, 'object');
     assert.equal(typeof tool.execute, 'function');
   }
   const gitResult = await gitReadTool.execute(
-    { input: { operation: 'status', unknown: true } },
+    { input: { operation: 'status', unknown: true } } as unknown as Parameters<typeof gitReadTool.execute>[0],
     { directory: '/tmp/repo' },
   );
   assert.equal(typeof gitResult, 'string');
   assert.equal(JSON.parse(gitResult).ok, false);
-  const postResult = await githubPostReviewTool.execute({ input: reviewInput() }, { agent: 'wrong' });
+  const postResult = await githubPostReviewTool.execute(
+    { input: reviewInput() } as unknown as Parameters<typeof githubPostReviewTool.execute>[0],
+    { agent: 'wrong' },
+  );
   assert.equal(typeof postResult, 'string');
   assert.match(JSON.parse(postResult).error, /identity/);
 });
 
 test('post tool schema exposes the exact nested review contract and aliases', () => {
-  const reviewSchema = githubPostReviewTool.args.input.properties.reviewResult;
+  const reviewSchema = (githubPostReviewTool.args.input as JsonSchemaNode).properties.reviewResult;
+  assert.ok(reviewSchema);
   assert.deepEqual(reviewSchema.required, [
     'schemaVersion', 'target', 'snapshot', 'coverage', 'submissionMode', 'summary', 'submissionPolicy', 'conclusion', 'findings',
   ]);
   assert.equal(reviewSchema.additionalProperties, false);
-  assert.deepEqual(Object.keys(reviewSchema.properties.target.properties), ['owner', 'repo', 'pullNumber', 'number']);
-  assert.deepEqual(reviewSchema.properties.target.required, ['owner', 'repo']);
-  assert.deepEqual(Object.keys(reviewSchema.properties.snapshot.properties), [
+  const targetSchema = requiredProperty(reviewSchema.properties, 'target');
+  const snapshotSchema = requiredProperty(reviewSchema.properties, 'snapshot');
+  const coverageSchema = requiredProperty(reviewSchema.properties, 'coverage');
+  const findingsSchema = requiredProperty(reviewSchema.properties, 'findings');
+  const submissionPolicySchema = requiredProperty(reviewSchema.properties, 'submissionPolicy');
+  const submissionModeSchema = requiredProperty(reviewSchema.properties, 'submissionMode');
+  assert.deepEqual(Object.keys(targetSchema.properties), ['owner', 'repo', 'pullNumber', 'number']);
+  assert.deepEqual(targetSchema.required, ['owner', 'repo']);
+  assert.deepEqual(Object.keys(snapshotSchema.properties), [
     'id', 'snapshotId', 'baseSha', 'headSha', 'feedbackDigest', 'evidenceDigest', 'warnings',
   ]);
-  assert.deepEqual(reviewSchema.properties.snapshot.required, [
+  assert.deepEqual(snapshotSchema.required, [
     'baseSha', 'headSha', 'feedbackDigest', 'evidenceDigest', 'warnings',
   ]);
-  assert.match(reviewSchema.properties.target.description, /exactly one of pullNumber or number/);
-  assert.match(reviewSchema.properties.target.properties.pullNumber.description, /exactly one/);
-  assert.match(reviewSchema.properties.target.properties.number.description, /exactly one/);
-  assert.match(reviewSchema.properties.snapshot.description, /exactly one of id or snapshotId/);
-  assert.match(reviewSchema.properties.snapshot.properties.id.description, /exactly one/);
-  assert.match(reviewSchema.properties.snapshot.properties.snapshotId.description, /exactly one/);
-  assert.equal(reviewSchema.properties.target.oneOf, undefined);
-  assert.equal(reviewSchema.properties.snapshot.oneOf, undefined);
-  assert.deepEqual(reviewSchema.properties.coverage.required, [
+  assert.match(targetSchema.description, /exactly one of pullNumber or number/);
+  assert.match(requiredProperty(targetSchema.properties, 'pullNumber').description, /exactly one/);
+  assert.match(requiredProperty(targetSchema.properties, 'number').description, /exactly one/);
+  assert.match(snapshotSchema.description, /exactly one of id or snapshotId/);
+  assert.match(requiredProperty(snapshotSchema.properties, 'id').description, /exactly one/);
+  assert.match(requiredProperty(snapshotSchema.properties, 'snapshotId').description, /exactly one/);
+  assert.equal(targetSchema.oneOf, undefined);
+  assert.equal(snapshotSchema.oneOf, undefined);
+  assert.deepEqual(coverageSchema.required, [
     'ledger', 'fileBatches', 'feedbackPages', 'feedbackAcknowledged', 'feedbackDigest',
   ]);
-  assert.deepEqual(reviewSchema.properties.coverage.properties.ledger.items.required, ['path', 'status', 'evidence']);
-  assert.deepEqual(reviewSchema.properties.coverage.properties.fileBatches.items.required, ['paths', 'batchDigest']);
-  assert.deepEqual(reviewSchema.properties.coverage.properties.feedbackPages.items.required, ['kind', 'page', 'pageDigest']);
-  assert.deepEqual(reviewSchema.properties.schemaVersion.enum, [4]);
-  assert.deepEqual(reviewSchema.properties.findings.items.required, ['body', 'priority', 'severity', 'confidence']);
-  assert.match(reviewSchema.properties.findings.description, /path-level/);
-  assert.match(reviewSchema.properties.submissionPolicy.description, /current-message authorization/);
-  assert.match(reviewSchema.properties.submissionPolicy.description, /comment-only allows COMMENT/);
-  assert.match(reviewSchema.properties.submissionMode.description, /derived only from the current user request/);
+  assert.deepEqual(requiredProperty(coverageSchema.properties, 'ledger').items.required, ['path', 'status', 'evidence']);
+  assert.deepEqual(requiredProperty(coverageSchema.properties, 'fileBatches').items.required, ['paths', 'batchDigest']);
+  assert.deepEqual(requiredProperty(coverageSchema.properties, 'feedbackPages').items.required, ['kind', 'page', 'pageDigest']);
+  assert.deepEqual(requiredProperty(reviewSchema.properties, 'schemaVersion').enum, [4]);
+  assert.deepEqual(findingsSchema.items.required, ['body', 'priority', 'severity', 'confidence']);
+  assert.match(findingsSchema.description, /path-level/);
+  assert.match(submissionPolicySchema.description, /current-message authorization/);
+  assert.match(submissionPolicySchema.description, /comment-only allows COMMENT/);
+  assert.match(submissionModeSchema.description, /derived only from the current user request/);
   assert.equal(reviewSchema.properties.event, undefined);
-  const visit = (value) => {
+  const visit = (value: unknown): void => {
     if (!value || typeof value !== 'object') return;
     assert.equal(Object.hasOwn(value, 'oneOf'), false);
     assert.equal(Object.hasOwn(value, 'not'), false);
@@ -1730,7 +2003,6 @@ test('a pull snapshot from naru-github-read feeds the posting tool without renam
       schemaVersion: 2,
       target: { owner: snapshotShaped.owner, repo: snapshotShaped.repo, number: snapshotShaped.number },
       snapshot: {
-        id: undefined,
         snapshotId: snapshotShaped.snapshotId,
         baseSha: snapshotShaped.baseSha,
         headSha: snapshotShaped.headSha,
@@ -1744,7 +2016,6 @@ test('a pull snapshot from naru-github-read feeds the posting tool without renam
       skippedInlineComments: [],
     },
   };
-  delete payload.reviewResult.snapshot.id;
   const validated = validateReviewPayload(payload);
   assert.equal(validated.target.number, 42);
   assert.equal(validated.snapshot.id, snapshotShaped.snapshotId);
@@ -1753,13 +2024,13 @@ test('a pull snapshot from naru-github-read feeds the posting tool without renam
 test('honest non-material limitations in the bounded summary do not imply incomplete file coverage', async () => {
   // Regression: any non-empty limitations array blocked posting outright, so an
   // honest "did not run the browser suite" note silently killed the review.
-  let posted;
+  let posted = {} as PostedReview;
   const { spawn } = fakeSpawn([
     ...snapshotHandlers(),
     {
       match: (argv) => argv.includes('POST'),
       reply: (_argv, options) => {
-        posted = JSON.parse(options.input);
+        posted = parsePostedReview(options);
         return response({ id: 7, html_url: 'https://github.com/owner/repo/pull/42#pullrequestreview-7' });
       },
     },
@@ -1775,11 +2046,11 @@ test('honest non-material limitations in the bounded summary do not imply incomp
 
 test('bounded summary changes alter the dedupe digest', async () => {
   const head = 'b'.repeat(40);
-  let posted;
+  let posted = {} as PostedReview;
   const first = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(head) }),
     { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-      posted = JSON.parse(options.input);
+      posted = parsePostedReview(options);
       return response({ id: 302 });
     } },
   ]);
@@ -1787,7 +2058,7 @@ test('bounded summary changes alter the dedupe digest', async () => {
   initial.reviewResult.summary = 'Browser suite not run';
   assert.equal((await postReview(initial, { agent: 'naru-orchestrator' }, { spawn: first.spawn })).ok, true);
 
-  const marker = posted.body.match(/^<!-- naru-review:[^>]+-->/)[0];
+  const marker = reviewMarker(posted.body);
   const reviews = [{ id: 302, commit_id: head, body: marker, user: { login: 'viewer' } }];
   const changed = reviewInput({ head, reviews });
   changed.reviewResult.summary = 'Native build not run';
@@ -1801,17 +2072,17 @@ test('bounded summary changes alter the dedupe digest', async () => {
 
 test('v3 derived event and evidence limitations alter same-head dedupe', async () => {
   const eventHead = '71'.repeat(20);
-  let eventPost;
+  let eventPost = {} as PostedReview;
   const firstEvent = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(eventHead) }),
     { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-      eventPost = JSON.parse(options.input);
+      eventPost = parsePostedReview(options);
       return response({ id: 701 });
     } },
   ]);
   const approve = reviewInputV3({ head: eventHead, submissionPolicy: 'approve-if-clear', conclusion: 'clear' });
   assert.equal((await postReview(approve, { agent: 'naru-orchestrator' }, { spawn: firstEvent.spawn })).data.event, 'APPROVE');
-  const eventMarker = eventPost.body.match(/^<!-- naru-review:[^>]+-->/)[0];
+  const eventMarker = reviewMarker(eventPost.body);
   const eventReviews = [{ id: 701, commit_id: eventHead, body: eventMarker, user: { login: 'viewer' } }];
   const secondEvent = fakeSpawn(snapshotHandlers({ meta: pullMeta(eventHead), reviews: eventReviews }));
   const comment = reviewInputV3({ head: eventHead, reviews: eventReviews, submissionPolicy: 'comment-only', conclusion: 'clear' });
@@ -1819,17 +2090,17 @@ test('v3 derived event and evidence limitations alter same-head dedupe', async (
   assert.match(eventConflict.error, /different Naru review/);
 
   const limitationHead = '72'.repeat(20);
-  let limitationPost;
+  let limitationPost = {} as PostedReview;
   const firstLimitation = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(limitationHead) }),
     { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-      limitationPost = JSON.parse(options.input);
+      limitationPost = parsePostedReview(options);
       return response({ id: 702 });
     } },
   ]);
   const limited = reviewInputV3({ head: limitationHead, posture: 'limited', limitations: ['Browser suite not run'] });
   assert.equal((await postReview(limited, { agent: 'naru-orchestrator' }, { spawn: firstLimitation.spawn })).ok, true);
-  const limitationMarker = limitationPost.body.match(/^<!-- naru-review:[^>]+-->/)[0];
+  const limitationMarker = reviewMarker(limitationPost.body);
   const limitationReviews = [{ id: 702, commit_id: limitationHead, body: limitationMarker, user: { login: 'viewer' } }];
   const changed = reviewInputV3({
     head: limitationHead, reviews: limitationReviews, posture: 'limited', limitations: ['Native build not run'],
@@ -1839,16 +2110,16 @@ test('v3 derived event and evidence limitations alter same-head dedupe', async (
   assert.match(limitationConflict.error, /different Naru review/);
 
   const postureHead = '73'.repeat(20);
-  let posturePost;
+  let posturePost = {} as PostedReview;
   const firstPosture = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(postureHead) }),
     { match: (argv) => argv.includes('POST'), reply: (_argv, options) => {
-      posturePost = JSON.parse(options.input);
+      posturePost = parsePostedReview(options);
       return response({ id: 703 });
     } },
   ]);
   assert.equal((await postReview(reviewInputV3({ head: postureHead }), { agent: 'naru-orchestrator' }, { spawn: firstPosture.spawn })).data.evidencePosture, 'complete');
-  const postureMarker = posturePost.body.match(/^<!-- naru-review:[^>]+-->/)[0];
+  const postureMarker = reviewMarker(posturePost.body);
   const postureReviews = [{ id: 703, commit_id: postureHead, body: postureMarker, user: { login: 'viewer' } }];
   const secondPosture = fakeSpawn(snapshotHandlers({ meta: pullMeta(postureHead), reviews: postureReviews }));
   const postureConflict = await postReview(
@@ -1862,7 +2133,7 @@ test('oversized summary is a correctable pre-POST failure with no I/O', async ()
   let ioCalls = 0;
   const input = reviewInput({ body: 'x'.repeat(8193) });
   const result = await postReview(input, { agent: 'naru-orchestrator' }, {
-    spawn: async () => { ioCalls += 1; },
+    spawn: async () => { ioCalls += 1; throw new Error('unexpected I/O'); },
   });
   assert.match(result.error, /invalid value for summary/);
   assert.equal(result.postAttempted, false);
@@ -1967,11 +2238,11 @@ test('streamed 3000-file near-limit evidence retains no raw patches across 16-fi
   const declarations = Array.from({ length: 30 }, (_, index) => ({
     paths: files.slice(index * 100, index * 100 + 100).map(file => file.filename),
   }));
-  const pageMetrics = [];
+  const pageMetrics: EvidencePageMetrics[] = [];
   const fake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }));
   const acquired = await pullFileBatchesAtManifest(manifest, declarations, {
     spawn: fake.spawn,
-    onEvidencePage: metric => pageMetrics.push(metric),
+    onEvidencePage: metric => { pageMetrics.push(metric); },
   });
   assert.equal(pageMetrics.length, 188);
   assert.equal(Math.max(...pageMetrics.map(metric => metric.files)), 16);
@@ -1980,16 +2251,17 @@ test('streamed 3000-file near-limit evidence retains no raw patches across 16-fi
   assert.equal(pageMetrics.every(metric => metric.retainedPatchBytes === 0), true);
   assert.equal(acquired.batches.length, 30);
   for (let index = 0; index < acquired.batches.length; index += 1) {
-    const batch = acquired.batches[index];
+    const batch = requiredAt(acquired.batches, index);
+    const declaration = requiredAt(declarations, index);
     const rawBatch = files.slice(index * 100, index * 100 + 100);
-    assert.deepEqual(batch.files.map(file => file.filename), declarations[index].paths);
+    assert.deepEqual(batch.files.map(file => file.filename), declaration.paths);
     assert.equal(batch.files.every(file => file.patch === undefined), true);
     assert.equal(batch.files.filter(file => file.patchEvidence.reason === 'complete').length, 16);
     assert.equal(batch.files.filter(file => file.patchEvidence.reason === 'aggregate-byte-limit').length, 84);
-    assert.equal(batch.batchDigest, digestRawFileBatch(manifest, declarations[index].paths, rawBatch));
+    assert.equal(batch.batchDigest, digestRawFileBatch(manifest, declaration.paths, rawBatch));
   }
   const evidenceCalls = fake.calls.filter(call => call.argv.includes('--jq')
-    && call.argv[call.argv.indexOf('--jq') + 1].includes('patch_base64'));
+    && argumentAfter(call.argv, '--jq').includes('patch_base64'));
   assert.equal(evidenceCalls.length, 188);
 });
 
@@ -1999,7 +2271,7 @@ test('midstream evidence failure stops later pages and prevents POST', async () 
   const truncated = { ...response('[{"filename":"partial"}'), stdoutTruncated: true };
   const fake = fakeSpawn([
     { match: argv => argv.includes('--jq')
-      && argv[argv.indexOf('--jq') + 1].includes('patch_base64')
+      && argumentAfter(argv, '--jq').includes('patch_base64')
       && has(argv, 'per_page=16&page=2'), reply: truncated },
     ...snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }),
     { match: argv => argv.includes('POST'), reply: response({ id: 810 }) },
@@ -2048,7 +2320,7 @@ test('v4 posting reconstructs scattered declared batches from one ordered eviden
   const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
   assert.equal(result.ok, true, result.error);
   const evidenceReads = fake.calls.filter(call => call.argv.includes('--jq')
-    && call.argv[call.argv.indexOf('--jq') + 1].includes('patch_base64'));
+    && argumentAfter(call.argv, '--jq').includes('patch_base64'));
   assert.equal(evidenceReads.length, 6);
 });
 
@@ -2060,7 +2332,7 @@ test('internal v4 evidence reapplies the 16 MiB aggregate limit per declared bat
   }));
   const input = reviewInput({ head, files, comments: [] });
   input.reviewResult.coverage.ledger[16] = {
-    path: files[16].filename, status: 'blocked', evidence: 'none', note: 'aggregate patch evidence limit',
+    path: requiredAt(files, 16).filename, status: 'blocked', evidence: 'none', note: 'aggregate patch evidence limit',
   };
   input.reviewResult.submissionMode = 'limited';
   const fake = fakeSpawn([
@@ -2081,22 +2353,24 @@ test('line-map parsing accepts the exact 1024-entry boundary and stops at bounda
     spawn: fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files })).spawn,
   });
   const paths = files.map(file => file.filename);
-  const metrics = [];
+  const metrics: EvidencePageMetrics[] = [];
   const batch = await pullFilesAtHead({ ...target, baseSha: manifest.baseSha, headSha: manifest.headSha,
     snapshotId: manifest.snapshotId, feedbackDigest: manifest.feedbackDigest,
     evidenceDigest: manifest.evidenceDigest, paths }, {
     spawn: fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files })).spawn,
-    onEvidencePage: metric => metrics.push(metric),
+    onEvidencePage: metric => { metrics.push(metric); },
   });
-  assert.equal(batch.files[0].patchEvidence.reason, 'complete');
-  assert.equal(batch.files[0].lineMap.left.length + batch.files[0].lineMap.right.length, 1024);
-  assert.equal(batch.files[1].patchEvidence.reason, 'per-file-line-map-limit');
-  assert.deepEqual(batch.files[1].lineMap, { left: [], right: [], hunks: [] });
-  assert.equal(batch.files[1].patch, undefined);
+  const exactFile = requiredAt(batch.files, 0);
+  const overFile = requiredAt(batch.files, 1);
+  assert.equal(exactFile.patchEvidence.reason, 'complete');
+  assert.equal(exactFile.lineMap.left.length + exactFile.lineMap.right.length, 1024);
+  assert.equal(overFile.patchEvidence.reason, 'per-file-line-map-limit');
+  assert.deepEqual(overFile.lineMap, { left: [], right: [], hunks: [] });
+  assert.equal(overFile.patch, undefined);
   assert.equal(metrics.length, 1);
-  assert.equal(metrics[0].visitedPatchLines, 513 + 514);
-  assert.equal(metrics[0].retainedLineMapEntries, 1024);
-  assert.equal(metrics[0].retainedLineMapHunkObjects, 0);
+  assert.equal(requiredAt(metrics, 0).visitedPatchLines, 513 + 514);
+  assert.equal(requiredAt(metrics, 0).retainedLineMapEntries, 1024);
+  assert.equal(requiredAt(metrics, 0).retainedLineMapHunkObjects, 0);
   assert.equal(batch.batchDigest, digestRawFileBatch(manifest, paths, files));
 
   const source = await readFile(new URL('../tools/naru-lib/github.mjs', import.meta.url), 'utf8');
@@ -2112,34 +2386,36 @@ test('the 16384-entry batch ceiling follows requested order with public/internal
   const manifest = await pullManifest(target, {
     spawn: fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files })).spawn,
   });
-  const publicMetrics = [];
+  const publicMetrics: EvidencePageMetrics[] = [];
   const publicBatch = await pullFilesAtHead({ ...target, baseSha: manifest.baseSha, headSha: manifest.headSha,
     snapshotId: manifest.snapshotId, feedbackDigest: manifest.feedbackDigest,
     evidenceDigest: manifest.evidenceDigest, paths }, {
     spawn: fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files })).spawn,
-    onEvidencePage: metric => publicMetrics.push(metric),
+    onEvidencePage: metric => { publicMetrics.push(metric); },
   });
-  const internalMetrics = [];
+  const internalMetrics: EvidencePageMetrics[] = [];
   const internal = await pullFileBatchesAtManifest(manifest, [{ paths }], {
     spawn: fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files })).spawn,
-    onEvidencePage: metric => internalMetrics.push(metric),
+    onEvidencePage: metric => { internalMetrics.push(metric); },
   });
-  assert.equal(publicBatch.batchDigest, internal.batches[0].batchDigest);
+  const internalBatch = requiredAt(internal.batches, 0);
+  assert.equal(publicBatch.batchDigest, internalBatch.batchDigest);
   assert.deepEqual(
     publicBatch.files.map(({ patch: _patch, ...file }) => file),
-    internal.batches[0].files.map(({ patch: _patch, ...file }) => file),
+    internalBatch.files.map(({ patch: _patch, ...file }) => file),
   );
   assert.equal(publicBatch.files.slice(0, 16).every(file => file.patchEvidence.reason === 'complete'), true);
   assert.equal(publicBatch.files.slice(0, 16).reduce((total, file) => total
     + file.lineMap.left.length + file.lineMap.right.length, 0), 16_384);
-  assert.equal(publicBatch.files[16].filename, paths[16]);
-  assert.equal(publicBatch.files[16].patchEvidence.reason, 'batch-line-map-limit');
-  assert.deepEqual(publicBatch.files[16].lineMap, { left: [], right: [], hunks: [] });
-  assert.equal(publicBatch.files[16].patch, undefined);
+  const overflowFile = requiredAt(publicBatch.files, 16);
+  assert.equal(overflowFile.filename, requiredAt(paths, 16));
+  assert.equal(overflowFile.patchEvidence.reason, 'batch-line-map-limit');
+  assert.deepEqual(overflowFile.lineMap, { left: [], right: [], hunks: [] });
+  assert.equal(overflowFile.patch, undefined);
   assert.equal(publicMetrics.every(metric => metric.retainedLineMapHunkObjects === 0), true);
   assert.equal(internalMetrics.every(metric => metric.retainedLineMapHunkObjects === 0), true);
-  assert.equal(publicMetrics.at(-1).retainedLineMapEntries, 17 * 1024);
-  assert.equal(internalMetrics.at(-1).retainedLineMapEntries, 17 * 1024);
+  assert.equal(publicMetrics.at(-1)?.retainedLineMapEntries, 17 * 1024);
+  assert.equal(internalMetrics.at(-1)?.retainedLineMapEntries, 17 * 1024);
 });
 
 test('3000 dense files retain only capped flat numeric line entries and zero hunk objects', async () => {
@@ -2156,16 +2432,16 @@ test('3000 dense files retain only capped flat numeric line entries and zero hun
   const declarations = Array.from({ length: 30 }, (_, index) => ({
     paths: files.slice(index * 100, index * 100 + 100).map(file => file.filename),
   }));
-  const metrics = [];
+  const metrics: EvidencePageMetrics[] = [];
   const acquired = await pullFileBatchesAtManifest(manifest, declarations, {
     spawn: fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files })).spawn,
-    onEvidencePage: metric => metrics.push(metric),
+    onEvidencePage: metric => { metrics.push(metric); },
   });
   assert.equal(metrics.length, 188);
   assert.equal(metrics.every(metric => metric.retainedPatchBytes === 0), true);
   assert.equal(metrics.every(metric => metric.retainedBase64Bytes === 0), true);
   assert.equal(metrics.every(metric => metric.retainedLineMapHunkObjects === 0), true);
-  assert.equal(metrics.at(-1).retainedLineMapEntries, 3000 * 1024);
+  assert.equal(metrics.at(-1)?.retainedLineMapEntries, 3000 * 1024);
   assert.ok(Math.max(...metrics.map(metric => metric.retainedLineMapEntries)) <= 3000 * 1024);
   assert.ok(Math.max(...metrics.map(metric => metric.visitedPatchLines)) <= 16 * 513);
   for (const batch of acquired.batches) {
@@ -2199,33 +2475,34 @@ test('v4 pull-files batches are exact-head, safe, distinct, bounded, and invento
   const identity = fixtureIdentity(head, files);
   const good = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, 2), files }));
   const result = JSON.parse(await githubReadTool.execute({ input: {
-    operation: 'pull-files', owner: 'owner', repo: 'repo', number: 42, ...identity, paths: ['src/b.js'],
+    ...identity, operation: 'pull-files', paths: ['src/b.js'],
   } }, { spawn: good.spawn }));
-  assert.deepEqual(result.data.files.map(file => file.filename), ['src/b.js']);
-  const selectedCall = good.calls.find(call => call.argv.includes('--jq') && call.argv[call.argv.indexOf('--jq') + 1].includes('.filename as $filename'));
+  assert.deepEqual(result.data.files.map((file: { filename: string }) => file.filename), ['src/b.js']);
+  const selectedCall = good.calls.find(call => call.argv.includes('--jq') && argumentAfter(call.argv, '--jq').includes('.filename as $filename'));
   assert.ok(selectedCall);
-  const selectedJq = selectedCall.argv[selectedCall.argv.indexOf('--jq') + 1];
+  const selectedJq = selectedCall.argv[selectedCall.argv.indexOf('--jq') + 1] ?? '';
   assert.match(selectedJq, /"src\/b\.js"/);
   assert.doesNotMatch(selectedJq, /"src\/a\.js"/);
 
-  for (const [paths, expected] of [
+  const invalidSelections: Array<[string[], RegExp]> = [
     [['src/a.js', 'src/a.js'], /duplicate/],
     [['src/unknown.js'], /not members/],
     [['../unsafe'], /safe relative/],
-  ]) {
+  ];
+  for (const [paths, expected] of invalidSelections) {
     const fake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, 2), files }));
     const parsed = JSON.parse(await githubReadTool.execute({ input: {
-      operation: 'pull-files', owner: 'owner', repo: 'repo', number: 42, ...identity, paths,
+      ...identity, operation: 'pull-files', paths,
     } }, { spawn: fake.spawn }));
     assert.match(parsed.error, expected);
   }
   const drift = fakeSpawn(snapshotHandlers({ meta: pullMeta('93'.repeat(20), BASE, 2), files }));
   assert.match(JSON.parse(await githubReadTool.execute({ input: {
-    operation: 'pull-files', owner: 'owner', repo: 'repo', number: 42, ...identity, paths: ['src/a.js'],
+    ...identity, operation: 'pull-files', paths: ['src/a.js'],
   } }, { spawn: drift.spawn })).error, /manifest identity mismatch/);
   const tooMany = Array.from({ length: 101 }, (_, index) => `src/${index}.js`);
   assert.match(JSON.parse(await githubReadTool.execute({ input: {
-    operation: 'pull-files', owner: 'owner', repo: 'repo', number: 42, ...identity, paths: tooMany,
+    ...identity, operation: 'pull-files', paths: tooMany,
   } })).error, /1-100/);
 });
 
@@ -2243,9 +2520,10 @@ test('internal one-pass evidence produces the same declared batch digest as publ
   }, { spawn: publicFake.spawn });
   const internalFake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }));
   const internal = await pullFileBatchesAtManifest(manifest, [{ paths }], { spawn: internalFake.spawn });
-  assert.equal(internal.batches[0].batchDigest, publicBatch.batchDigest);
+  const internalBatch = requiredAt(internal.batches, 0);
+  assert.equal(internalBatch.batchDigest, publicBatch.batchDigest);
   assert.deepEqual(
-    internal.batches[0].files.map(({ patch: _patch, ...file }) => file),
+    internalBatch.files.map(({ patch: _patch, ...file }) => file),
     publicBatch.files.map(({ patch: _patch, ...file }) => file),
   );
 });
@@ -2258,13 +2536,13 @@ test('public pull-files bounds 100 near-limit paths into fixed 16-file evidence 
   }));
   const identity = fixtureIdentity(head, files);
   const fake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }));
-  const batch = await pullFilesAtHead({ owner: 'owner', repo: 'repo', number: 42, ...identity,
+  const batch = await pullFilesAtHead({ ...identity,
     paths: files.map(file => file.filename) }, { spawn: fake.spawn });
   assert.equal(batch.files.length, 100);
   assert.equal(batch.files.filter(file => file.patchEvidence.reason === 'complete').length, 16);
   assert.equal(batch.files.filter(file => file.patchEvidence.reason === 'aggregate-byte-limit').length, 84);
   const selectedCalls = fake.calls.filter(call => call.argv.includes('--jq')
-    && call.argv[call.argv.indexOf('--jq') + 1].includes('.filename as $filename'));
+    && argumentAfter(call.argv, '--jq').includes('.filename as $filename'));
   assert.equal(selectedCalls.length, 7);
   assert.equal(selectedCalls.every(call => has(call.argv, 'per_page=16')), true);
   assert.equal(selectedCalls.every(call => !call.argv.includes('--slurp')), true);
@@ -2286,14 +2564,15 @@ test('reversed 17-file near-limit batch has identical public/internal aggregate 
   { spawn: publicFake.spawn });
   const internalFake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }));
   const internal = await pullFileBatchesAtManifest(manifest, [{ paths }], { spawn: internalFake.spawn });
-  assert.equal(publicBatch.batchDigest, internal.batches[0].batchDigest);
+  const internalBatch = requiredAt(internal.batches, 0);
+  assert.equal(publicBatch.batchDigest, internalBatch.batchDigest);
   assert.deepEqual(
     publicBatch.files.map(({ patch: _patch, ...file }) => file),
-    internal.batches[0].files.map(({ patch: _patch, ...file }) => file),
+    internalBatch.files.map(({ patch: _patch, ...file }) => file),
   );
   assert.deepEqual(publicBatch.files.map(file => file.filename), paths);
-  assert.equal(publicBatch.files.at(-1).filename, 'src/reversed-0.js');
-  assert.equal(publicBatch.files.at(-1).patchEvidence.reason, 'aggregate-byte-limit');
+  assert.equal(publicBatch.files.at(-1)?.filename, 'src/reversed-0.js');
+  assert.equal(publicBatch.files.at(-1)?.patchEvidence.reason, 'aggregate-byte-limit');
   assert.equal(publicBatch.files.slice(0, -1).every(file => file.patchEvidence.reason === 'complete'), true);
 });
 
@@ -2301,17 +2580,17 @@ test('public pull-files rejects selected immutable metadata mismatches', async (
   const head = '8f'.repeat(20);
   const files = [changedFile('src/metadata.js')];
   const identity = fixtureIdentity(head, files);
-  const patch = files[0].patch;
+  const patch = requiredAt(files, 0).patch ?? '';
   const mismatch = {
-    ...files[0], sha: 'd'.repeat(40), patch_bytes: Buffer.byteLength(patch), patch_oversized: false,
+    ...requiredAt(files, 0), sha: 'd'.repeat(40), patch_bytes: Buffer.byteLength(patch), patch_oversized: false,
     patch_base64: Buffer.from(patch).toString('base64'),
   };
   const fake = fakeSpawn([
-    { match: argv => argv.includes('--jq') && argv[argv.indexOf('--jq') + 1].includes('.filename as $filename'),
+    { match: argv => argv.includes('--jq') && argumentAfter(argv, '--jq').includes('.filename as $filename'),
       reply: response([mismatch]) },
     ...snapshotHandlers({ meta: pullMeta(head), files }),
   ]);
-  await assert.rejects(pullFilesAtHead({ owner: 'owner', repo: 'repo', number: 42, ...identity,
+  await assert.rejects(pullFilesAtHead({ ...identity,
     paths: ['src/metadata.js'] }, { spawn: fake.spawn }), /metadata changed/);
 });
 
@@ -2336,8 +2615,7 @@ test('v4 pull-feedback reads one advertised page with manifest-bound metadata an
     ...snapshotHandlers({ meta: pullMeta(head), files, reviews }),
   ]);
   const result = JSON.parse(await githubReadTool.execute({ input: {
-    operation: 'pull-feedback', owner: 'owner', repo: 'repo', number: 42,
-    ...identity, kind: 'reviews', page: 2,
+    ...identity, operation: 'pull-feedback', kind: 'reviews', page: 2,
   } }, { spawn: fake.spawn }));
   assert.equal(result.ok, true, result.error);
   assert.equal(result.data.pages, 2);
@@ -2364,9 +2642,9 @@ test('compact manifest excludes huge patches at the gh boundary and shares full-
   assert.equal(projectedCalls.some(call => call.argv.includes('--slurp') || call.argv.includes('--template')), false);
   const fileProjection = projectedCalls.find(call => has(call.argv, 'pulls/42/files'));
   assert.ok(fileProjection);
-  assert.doesNotMatch(fileProjection.argv[fileProjection.argv.indexOf('--jq') + 1], /patch/);
+  assert.doesNotMatch(argumentAfter(fileProjection.argv, '--jq'), /patch/);
   for (const call of projectedCalls.filter(item => !has(item.argv, 'pulls/42/files'))) {
-    assert.doesNotMatch(call.argv[call.argv.indexOf('--jq') + 1], /body/);
+    assert.doesNotMatch(argumentAfter(call.argv, '--jq'), /body/);
   }
 
   const fullFake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), files }));
@@ -2386,7 +2664,7 @@ test('compact pagination preserves manifest order while batches return requested
     operation: 'pull-manifest', owner: 'owner', repo: 'repo', number: 42,
   } }, { spawn: manifestFake.spawn }));
   assert.equal(manifest.ok, true, manifest.error);
-  assert.deepEqual(manifest.data.files.map(file => file.path), files.map(file => file.filename));
+  assert.deepEqual(manifest.data.files.map((file: { path: string }) => file.path), files.map(file => file.filename));
   const manifestFileCalls = manifestFake.calls.filter(call => call.argv.includes('--jq') && has(call.argv, 'pulls/42/files'));
   assert.deepEqual(manifestFileCalls.map(call => call.argv.find(arg => arg.includes('pulls/42/files?'))), [
     'repos/owner/repo/pulls/42/files?per_page=100&page=1',
@@ -2396,13 +2674,12 @@ test('compact pagination preserves manifest order while batches return requested
 
   const batchFake = fakeSpawn(handlers);
   const batch = JSON.parse(await githubReadTool.execute({ input: {
-    operation: 'pull-files', owner: 'owner', repo: 'repo', number: 42,
-    ...identity, paths: ['src/file-100.js', 'src/file-0.js'],
+    ...identity, operation: 'pull-files', paths: ['src/file-100.js', 'src/file-0.js'],
   } }, { spawn: batchFake.spawn }));
   assert.equal(batch.ok, true, batch.error);
-  assert.deepEqual(batch.data.files.map(file => file.filename), ['src/file-100.js', 'src/file-0.js']);
+  assert.deepEqual(batch.data.files.map((file: { filename: string }) => file.filename), ['src/file-100.js', 'src/file-0.js']);
   const selectedCalls = batchFake.calls.filter(call => call.argv.includes('--jq')
-    && call.argv[call.argv.indexOf('--jq') + 1].includes('.filename as $filename'));
+    && argumentAfter(call.argv, '--jq').includes('.filename as $filename'));
   assert.deepEqual(selectedCalls.map(call => call.argv.find(arg => arg.includes('pulls/42/files?'))),
     Array.from({ length: 7 }, (_, index) => `repos/owner/repo/pulls/42/files?per_page=16&page=${index + 1}`));
 });
@@ -2411,22 +2688,22 @@ test('multi-page selected projections reject missing and duplicate response memb
   const head = 'a2'.repeat(20);
   const files = Array.from({ length: 101 }, (_, index) => changedFile(`src/member-${index}.js`));
   const identity = fixtureIdentity(head, files);
-  const selectedProjection = argv => argv.includes('--jq')
-    && argv[argv.indexOf('--jq') + 1].includes('.filename as $filename');
+  const selectedProjection = (argv: string[]) => argv.includes('--jq')
+    && argumentAfter(argv, '--jq').includes('.filename as $filename');
 
   const missing = fakeSpawn([
     { match: selectedProjection, reply: response([]) },
     ...snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }),
   ]);
   const missingResult = JSON.parse(await githubReadTool.execute({ input: {
-    operation: 'pull-files', owner: 'owner', repo: 'repo', number: 42,
-    ...identity, paths: ['src/member-100.js'],
+    ...identity, operation: 'pull-files', paths: ['src/member-100.js'],
   } }, { spawn: missing.spawn }));
   assert.match(missingResult.error, /omitted requested paths/);
 
-  const duplicatePatch = files[100].patch;
+  const duplicateFile = requiredAt(files, 100);
+  const duplicatePatch = duplicateFile.patch ?? '';
   const duplicateProjection = {
-    ...files[100], patch_bytes: Buffer.byteLength(duplicatePatch), patch_oversized: false,
+    ...duplicateFile, patch_bytes: Buffer.byteLength(duplicatePatch), patch_oversized: false,
     patch_base64: Buffer.from(duplicatePatch).toString('base64'),
   };
   const duplicate = fakeSpawn([
@@ -2434,8 +2711,7 @@ test('multi-page selected projections reject missing and duplicate response memb
     ...snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }),
   ]);
   const duplicateResult = JSON.parse(await githubReadTool.execute({ input: {
-    operation: 'pull-files', owner: 'owner', repo: 'repo', number: 42,
-    ...identity, paths: ['src/member-100.js'],
+    ...identity, operation: 'pull-files', paths: ['src/member-100.js'],
   } }, { spawn: duplicate.spawn }));
   assert.match(duplicateResult.error, /duplicated path/);
 });
@@ -2448,12 +2724,14 @@ test('selected-file jq embeds validated paths only as a JSON value', async () =>
   const identity = fixtureIdentity(head, files);
   const fake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), files }));
   const result = JSON.parse(await githubReadTool.execute({ input: {
-    operation: 'pull-files', owner: 'owner', repo: 'repo', number: 42, ...identity, paths: [path],
+    ...identity, operation: 'pull-files', paths: [path],
   } }, { spawn: fake.spawn }));
   assert.equal(result.ok, true, result.error);
-  const selectedCall = fake.calls.find(call => call.argv.includes('--jq') && call.argv[call.argv.indexOf('--jq') + 1].includes('.filename as $filename'));
-  const jq = selectedCall.argv[selectedCall.argv.indexOf('--jq') + 1];
-  const encoded = jq.match(/\$filename \| (.+) \| index\(\$filename\)/)[1];
+  const selectedCall = fake.calls.find(call => call.argv.includes('--jq') && argumentAfter(call.argv, '--jq').includes('.filename as $filename'));
+  assert.ok(selectedCall);
+  const jq = selectedCall.argv[selectedCall.argv.indexOf('--jq') + 1] ?? '';
+  const encoded = jq.match(/\$filename \| (.+) \| index\(\$filename\)/)?.[1];
+  assert.ok(encoded);
   assert.deepEqual(JSON.parse(encoded), [path]);
   assert.equal(selectedCall.argv.includes('--paginate'), false);
   assert.equal(selectedCall.argv.includes('--slurp'), false);
@@ -2471,7 +2749,7 @@ test('projected compact file pagination enforces the 3000-file page ceiling', as
   assert.equal(result.data.reviewability.inventoryComplete, false);
   const fileCalls = fake.calls.filter(call => call.argv.includes('--jq') && has(call.argv, 'pulls/42/files?'));
   assert.equal(fileCalls.length, 30);
-  assert.ok(has(fileCalls.at(-1).argv, 'pulls/42/files?per_page=100&page=30'));
+  assert.ok(has(fileCalls.at(-1)?.argv ?? [], 'pulls/42/files?per_page=100&page=30'));
   assert.equal(fake.calls.some(call => has(call.argv, 'pulls/42/files?per_page=100&page=31')), false);
 });
 
@@ -2544,9 +2822,9 @@ test('v4 ledger and feedback acknowledgement are exact and caller completeness i
   assert.throws(() => validateReviewPayload(asserted), /unknown fields/);
 
   const cases = [
-    { ledger: [baseInput.reviewResult.coverage.ledger[0]], error: /missing 1/ },
-    { ledger: [baseInput.reviewResult.coverage.ledger[0], baseInput.reviewResult.coverage.ledger[0]], error: /duplicate path/ },
-    { ledger: [baseInput.reviewResult.coverage.ledger[0], { path: 'src/no.js', status: 'reviewed', evidence: 'current-patch' }], error: /unknown path/ },
+    { ledger: [requiredAt(baseInput.reviewResult.coverage.ledger, 0)], error: /missing 1/ },
+    { ledger: [requiredAt(baseInput.reviewResult.coverage.ledger, 0), requiredAt(baseInput.reviewResult.coverage.ledger, 0)], error: /duplicate path/ },
+    { ledger: [requiredAt(baseInput.reviewResult.coverage.ledger, 0), { path: 'src/no.js', status: 'reviewed', evidence: 'current-patch' }], error: /unknown path/ },
   ];
   for (const item of cases) {
     const input = structuredClone(baseInput);
@@ -2579,7 +2857,9 @@ test('legacy v2 and v3 payloads are recognized but cannot create reviews', async
   for (const input of [v2, v3]) {
     assert.ok([2, 3].includes(validateReviewPayload(input).schemaVersion));
     let io = 0;
-    const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: async () => { io += 1; } });
+    const result = await postReview(input, { agent: 'naru-orchestrator' }, {
+      spawn: async () => { io += 1; throw new Error('unexpected I/O'); },
+    });
     assert.match(result.error, /schema v2\/v3/);
     assert.equal(result.correctable, true);
     assert.equal(result.postAttempted, false);
@@ -2598,10 +2878,10 @@ test('current-head duplicate blockers are suppressed only from posting and retai
   for (const item of cases) {
     const head = item.seed.repeat(20);
     const reviewComments = [{ id: 10, path: finding.path, line: finding.line, side: finding.side, body: finding.body, commit_id: item.commentHead === 'same' ? head : '0'.repeat(40) }];
-    let posted;
+    let posted = {} as PostedReview;
     const fake = fakeSpawn([
       ...snapshotHandlers({ meta: pullMeta(head), reviewComments }),
-      { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = JSON.parse(options.input); return response({ id: Number.parseInt(item.seed, 16) }); } },
+      { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = parsePostedReview(options); return response({ id: Number.parseInt(item.seed, 16) }); } },
     ]);
     const result = await postReview(reviewInputV3({
       head, reviewComments, submissionPolicy: item.policy, conclusion: item.conclusion, findings: [finding],
@@ -2611,10 +2891,11 @@ test('current-head duplicate blockers are suppressed only from posting and retai
     assert.equal(posted.comments.length, item.comments);
     assert.equal(result.data.droppedFindings.length, item.dropped);
     if (item.dropped) {
+      const droppedFinding = requiredAt(result.data.droppedFindings, 0);
       assert.deepEqual({
-        suppressedFromPosting: result.data.droppedFindings[0].suppressedFromPosting,
-        retainedForDecision: result.data.droppedFindings[0].retainedForDecision,
-        eligibleBlocker: result.data.droppedFindings[0].eligibleBlocker,
+        suppressedFromPosting: droppedFinding.suppressedFromPosting,
+        retainedForDecision: droppedFinding.retainedForDecision,
+        eligibleBlocker: droppedFinding.eligibleBlocker,
       }, { suppressedFromPosting: true, retainedForDecision: true, eligibleBlocker: true });
     }
   }
@@ -2637,14 +2918,14 @@ test('redacted changed paths are unpostable and never reach POST', async () => {
 test('supersession ambiguous outcomes are terminal for identical and altered follow-ups', async () => {
   const head = '98'.repeat(20);
   const missingFiles = [{ ...changedFile(), patch: undefined }];
-  let firstBody;
+  let firstBody = '';
   const first = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(head), files: missingFiles }),
-    { match: argv => argv.includes('POST'), reply: (_argv, options) => { firstBody = JSON.parse(options.input).body; return response({ id: 801 }); } },
+    { match: argv => argv.includes('POST'), reply: (_argv, options) => { firstBody = parsePostedReview(options).body; return response({ id: 801 }); } },
   ]);
   assert.equal((await postReview(reviewInputV3({ head, files: missingFiles, posture: 'limited' }), { agent: 'naru-orchestrator' }, { spawn: first.spawn })).ok, true);
-  const marker = firstBody.match(/^<!-- naru-review:[^>]+-->/)[0];
-  const digest = marker.match(/digest=([0-9a-f]{64})/)[1];
+  const marker = reviewMarker(firstBody);
+  const digest = markerDigest(marker);
   const predecessor = { id: 801, state: 'COMMENTED', commit_id: head, body: marker, user: { login: 'viewer' } };
   let posts = 0;
   const ambiguous = fakeSpawn([
@@ -2668,7 +2949,8 @@ test('supersession ambiguous outcomes are terminal for identical and altered fol
 });
 
 test('ambiguous supersession recovery finds the expected successor in either marker order', async () => {
-  for (const [seed, successorFirst] of [['9d', false], ['9e', true]]) {
+  const orders: Array<[string, boolean]> = [['9d', false], ['9e', true]];
+  for (const [seed, successorFirst] of orders) {
     const head = seed.repeat(20);
     const predecessorDigest = seed.repeat(32);
     const predecessor = {
@@ -2678,10 +2960,10 @@ test('ambiguous supersession recovery finds the expected successor in either mar
       body: `<!-- naru-review:owner/repo#42 head=${head} digest=${predecessorDigest} v=4 posture=limited -->`,
       user: { login: 'viewer' },
     };
-    let postedBody;
-    const dynamicReviews = {
-      match: argv => argv[3] === 'GET' && has(argv, 'pulls/42/reviews'),
-      reply: (argv) => {
+    let postedBody = '';
+    const dynamicReviews: SpawnHandler = {
+      match: (argv: string[]) => argv[3] === 'GET' && has(argv, 'pulls/42/reviews'),
+      reply: (argv: string[]) => {
         if (!postedBody) return has(argv, '?per_page=100&page=') ? response([predecessor]) : response([[predecessor]]);
         const successor = {
           id: predecessor.id + 1000,
@@ -2698,7 +2980,7 @@ test('ambiguous supersession recovery finds the expected successor in either mar
       dynamicReviews,
       ...snapshotHandlers({ meta: pullMeta(head), reviews: [predecessor] }),
       { match: argv => argv.includes('POST'), reply: (_argv, options) => {
-        postedBody = JSON.parse(options.input).body;
+        postedBody = parsePostedReview(options).body;
         return response('timeout', false);
       } },
     ]);
@@ -2713,7 +2995,8 @@ test('ambiguous supersession recovery finds the expected successor in either mar
 });
 
 test('ambiguous supersession recovery stays unknown without one conflict-free expected successor', async () => {
-  for (const [seed, recoveryKind] of [['9f', 'missing'], ['a0', 'conflict']]) {
+  const recoveryCases: Array<[string, string]> = [['9f', 'missing'], ['a0', 'conflict']];
+  for (const [seed, recoveryKind] of recoveryCases) {
     const head = seed.repeat(20);
     const predecessorDigest = seed.repeat(32);
     const predecessor = {
@@ -2723,10 +3006,10 @@ test('ambiguous supersession recovery stays unknown without one conflict-free ex
       body: `<!-- naru-review:owner/repo#42 head=${head} digest=${predecessorDigest} v=4 posture=limited -->`,
       user: { login: 'viewer' },
     };
-    let postedBody;
-    const dynamicReviews = {
-      match: argv => argv[3] === 'GET' && has(argv, 'pulls/42/reviews'),
-      reply: (argv) => {
+    let postedBody = '';
+    const dynamicReviews: SpawnHandler = {
+      match: (argv: string[]) => argv[3] === 'GET' && has(argv, 'pulls/42/reviews'),
+      reply: (argv: string[]) => {
         if (!postedBody || recoveryKind === 'missing') return has(argv, '?per_page=100&page=') ? response([predecessor]) : response([[predecessor]]);
         const expected = { id: predecessor.id + 1000, state: 'APPROVED', commit_id: head, body: postedBody, user: { login: 'viewer' } };
         const conflicting = {
@@ -2744,7 +3027,7 @@ test('ambiguous supersession recovery stays unknown without one conflict-free ex
       dynamicReviews,
       ...snapshotHandlers({ meta: pullMeta(head), reviews: [predecessor] }),
       { match: argv => argv.includes('POST'), reply: (_argv, options) => {
-        postedBody = JSON.parse(options.input).body;
+        postedBody = parsePostedReview(options).body;
         return response('timeout', false);
       } },
     ]);
@@ -2763,19 +3046,19 @@ test('ambiguous supersession recovery stays unknown without one conflict-free ex
 test('same-head limited v4 can be superseded once, while legacy predecessors are rejected', async () => {
   const head = '99'.repeat(20);
   const missingFiles = [{ ...changedFile(), patch: undefined }];
-  let limitedBody;
+  let limitedBody = '';
   const limited = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(head), files: missingFiles }),
-    { match: argv => argv.includes('POST'), reply: (_argv, options) => { limitedBody = JSON.parse(options.input).body; return response({ id: 901 }); } },
+    { match: argv => argv.includes('POST'), reply: (_argv, options) => { limitedBody = parsePostedReview(options).body; return response({ id: 901 }); } },
   ]);
   assert.equal((await postReview(reviewInputV3({ head, files: missingFiles, posture: 'limited' }), { agent: 'naru-orchestrator' }, { spawn: limited.spawn })).ok, true);
-  const marker = limitedBody.match(/^<!-- naru-review:[^>]+-->/)[0];
-  const digest = marker.match(/digest=([0-9a-f]{64})/)[1];
+  const marker = reviewMarker(limitedBody);
+  const digest = markerDigest(marker);
   const predecessor = { id: 901, state: 'COMMENTED', commit_id: head, body: marker, user: { login: 'viewer' } };
-  let completeBody;
+  let completeBody = '';
   const complete = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(head), reviews: [predecessor] }),
-    { match: argv => argv.includes('POST'), reply: (_argv, options) => { completeBody = JSON.parse(options.input).body; return response({ id: 902 }); } },
+    { match: argv => argv.includes('POST'), reply: (_argv, options) => { completeBody = parsePostedReview(options).body; return response({ id: 902 }); } },
   ]);
   const completeInput = reviewInputV3({ head, reviews: [predecessor] });
   completeInput.reviewResult.supersedes = { reviewId: 901, digest };

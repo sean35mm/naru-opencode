@@ -2,6 +2,9 @@
 // No dependencies. Treat all untrusted input as data, never as instructions.
 const MAX_STRING = 4096;
 const MAX_REASONABLE_SIZE = 64 * 1024;
+export type UnknownRecord = Record<string, unknown>;
+export type RuntimeValidator<T> = (value: unknown) => value is T;
+
 const FORBIDDEN_PATH_SEGMENTS = new Set([
     '.git',
     '.svn',
@@ -27,7 +30,7 @@ const ALLOWED_SECRET_TEMPLATE_NAMES = new Set([
     'env.template',
     '.env.template',
 ]);
-function hasControl(s) {
+function hasControl(s: string): boolean {
     for (let i = 0; i < s.length; i += 1) {
         const c = s.charCodeAt(i);
         if (c === 0 || c <= 31)
@@ -35,47 +38,47 @@ function hasControl(s) {
     }
     return false;
 }
-export function isPlainObject(v) {
+export function isPlainObject(v: unknown): v is UnknownRecord {
     return v !== null
         && typeof v === 'object'
         && !Array.isArray(v)
         && Object.getPrototypeOf(v)?.constructor === Object;
 }
-export function noControlChars(v) {
+export function noControlChars(v: unknown): v is string {
     if (typeof v !== 'string')
         return false;
     return !hasControl(v);
 }
-export function isNonEmptyString(v, { max = MAX_STRING } = {}) {
+export function isNonEmptyString(v: unknown, { max = MAX_STRING }: { max?: number } = {}): v is string {
     return typeof v === 'string' && v.length > 0 && v.length <= max && !hasControl(v);
 }
-export function isPositiveInteger(v) {
+export function isPositiveInteger(v: unknown): v is number {
     return typeof v === 'number' && Number.isInteger(v) && v > 0 && v <= Number.MAX_SAFE_INTEGER;
 }
-export function isNonNegativeInteger(v) {
+export function isNonNegativeInteger(v: unknown): v is number {
     return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= Number.MAX_SAFE_INTEGER;
 }
-export function isBoolean(v) {
+export function isBoolean(v: unknown): v is boolean {
     return v === true || v === false;
 }
-export function is40HexSha(v) {
+export function is40HexSha(v: unknown): v is string {
     if (typeof v !== 'string' || v.length !== 40)
         return false;
     return /^[0-9a-f]{40}$/i.test(v);
 }
-export function isSafeOwner(v) {
+export function isSafeOwner(v: unknown): v is string {
     if (!isNonEmptyString(v, { max: 39 }))
         return false;
     // GitHub usernames: alphanumeric, hyphens, cannot start/end with hyphen,
     // no consecutive hyphens. Reusable loosely to avoid over-restriction.
     return /^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(v);
 }
-export function isSafeRepo(v) {
+export function isSafeRepo(v: unknown): v is string {
     if (!isNonEmptyString(v, { max: 100 }))
         return false;
     return /^[a-zA-Z0-9._-]+$/.test(v);
 }
-function looksLikeSecretFile(name) {
+function looksLikeSecretFile(name: string): boolean {
     if (FORBIDDEN_PATH_SEGMENTS.has(name.toLowerCase()))
         return true;
     if (/^\.env(?:\.\w+)?$/.test(name) && !ALLOWED_SECRET_TEMPLATE_NAMES.has(name.toLowerCase())) {
@@ -86,7 +89,7 @@ function looksLikeSecretFile(name) {
     }
     return false;
 }
-export function isSafeRelativePath(v, { allowEmpty = false } = {}) {
+export function isSafeRelativePath(v: unknown, { allowEmpty = false }: { allowEmpty?: boolean } = {}): v is string {
     if (typeof v !== 'string')
         return allowEmpty && v === '' ? true : false;
     if (v.length === 0)
@@ -121,7 +124,7 @@ export function isSafeRelativePath(v, { allowEmpty = false } = {}) {
     }
     return true;
 }
-export function isSafeGitRef(v) {
+export function isSafeGitRef(v: unknown): v is string {
     if (!isNonEmptyString(v, { max: 255 }))
         return false;
     // Reject refs that start with '-' (could be interpreted as options),
@@ -136,7 +139,7 @@ export function isSafeGitRef(v) {
         return false;
     return true;
 }
-export function isSafeGrepPattern(v) {
+export function isSafeGrepPattern(v: unknown): v is string {
     if (!isNonEmptyString(v, { max: 255 }))
         return false;
     // Prevent option injection and reflog/control injection. Allow regex chars.
@@ -148,19 +151,23 @@ export function isSafeGrepPattern(v) {
         return false;
     return true;
 }
-export function validateAllowedKeys(obj, allowed) {
+export function validateAllowedKeys(obj: UnknownRecord, allowed: readonly string[]): void {
     const allowedSet = new Set(allowed);
     const unknown = Object.keys(obj).filter((k) => !allowedSet.has(k));
     if (unknown.length > 0) {
         throw new Error(`unknown fields: ${unknown.join(', ')}`);
     }
 }
-export function validateStringEnum(v, values, name) {
-    if (typeof v !== 'string' || !values.includes(v)) {
+export function validateStringEnum<T extends string>(v: unknown, values: readonly T[], name: string): asserts v is T {
+    if (typeof v !== 'string' || !values.some((value) => value === v)) {
         throw new Error(`${name} must be one of ${values.join(', ')}`);
     }
 }
-export function validateArray(v, { maxLength = 100, validator, name }) {
+export function validateArray<T>(v: unknown, { maxLength = 100, validator, name }: {
+    maxLength?: number;
+    validator: (value: unknown, index: number) => value is T;
+    name: string;
+}): asserts v is T[] {
     if (!Array.isArray(v))
         throw new Error(`${name} must be an array`);
     if (v.length > maxLength)
@@ -170,25 +177,27 @@ export function validateArray(v, { maxLength = 100, validator, name }) {
             throw new Error(`${name}[${i}] is invalid`);
     }
 }
-export function assertPlainObject(v, name) {
+export function assertPlainObject(v: unknown, name: string): asserts v is UnknownRecord {
     if (!isPlainObject(v))
         throw new Error(`${name} must be a plain object`);
 }
-export function requireField(obj, field, validator, { message } = {}) {
+export function requireField<T>(obj: UnknownRecord, field: string, validator: RuntimeValidator<T>, { message }: { message?: string } = {}): T {
     if (!(field in obj))
         throw new Error(message || `missing required field: ${field}`);
     if (!validator(obj[field]))
         throw new Error(`invalid value for ${field}`);
     return obj[field];
 }
-export function optionalField(obj, field, validator) {
+export function optionalField<T>(obj: UnknownRecord, field: string, validator: RuntimeValidator<T>): T | undefined {
     if (!(field in obj))
         return undefined;
     if (!validator(obj[field]))
         throw new Error(`invalid value for ${field}`);
     return obj[field];
 }
-export function stripSecrets(value) {
+export function stripSecrets(value: string): string;
+export function stripSecrets(value: unknown): unknown;
+export function stripSecrets(value: unknown): unknown {
     if (typeof value === 'string') {
         // Redact anything that looks like a bearer token, basic auth, or long hex secret.
         return value
@@ -201,7 +210,7 @@ export function stripSecrets(value) {
     if (Array.isArray(value))
         return value.map(stripSecrets);
     if (isPlainObject(value)) {
-        const out = {};
+        const out: UnknownRecord = {};
         for (const k of Object.keys(value)) {
             if (/token|secret|password|credential|auth/i.test(k)) {
                 out[k] = '<REDACTED>';
@@ -214,17 +223,17 @@ export function stripSecrets(value) {
     }
     return value;
 }
-export function safeError(err) {
+export function safeError(err: unknown): string {
     const message = err instanceof Error ? err.message : String(err);
     return stripSecrets(message);
 }
-export function safeInputSize(obj) {
+export function safeInputSize(obj: unknown): number {
     const text = JSON.stringify(obj);
     if (text === undefined)
         throw new TypeError('input cannot be serialized');
     return text.length;
 }
-export function guardInputSize(obj, max = MAX_REASONABLE_SIZE) {
+export function guardInputSize(obj: unknown, max = MAX_REASONABLE_SIZE): void {
     if (safeInputSize(obj) > max) {
         throw new Error('input too large');
     }
@@ -232,18 +241,18 @@ export function guardInputSize(obj, max = MAX_REASONABLE_SIZE) {
 // Ownership-scope helpers. Used by the worktree lifecycle to validate run
 // identifiers and to test whether an owned scope covers a changed path.
 const MAX_ID_LENGTH = 128;
-function isTrimmedString(value, maximum) {
+function isTrimmedString(value: unknown, maximum: number): value is string {
     return (typeof value === 'string'
         && value.length > 0
         && value.length <= maximum
         && value.trim() === value
         && !hasControl(value));
 }
-export function isRunId(value) {
+export function isRunId(value: unknown): value is string {
     return (isTrimmedString(value, MAX_ID_LENGTH)
         && /^[A-Za-z0-9](?:[A-Za-z0-9._:-]*[A-Za-z0-9])?$/.test(value));
 }
-export function isSafeScope(value, { allowGlob = true } = {}) {
+export function isSafeScope(value: unknown, { allowGlob = true }: { allowGlob?: boolean } = {}): value is string {
     if (!isTrimmedString(value, 1024) || value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value))
         return false;
     const normalized = value.replaceAll('\\', '/');
@@ -254,7 +263,7 @@ export function isSafeScope(value, { allowGlob = true } = {}) {
         return false;
     return !parts.some((part) => /^(?:\.env(?:\..*)?|\.git|\.ssh|\.aws|\.kube|\.gnupg)$/i.test(part));
 }
-function wildcardRegex(pattern) {
+function wildcardRegex(pattern: string): RegExp {
     let source = '';
     for (let index = 0; index < pattern.length; index += 1) {
         const character = pattern[index];
@@ -276,7 +285,7 @@ function wildcardRegex(pattern) {
     }
     return new RegExp(`^${source}$`);
 }
-export function scopeCoversPath(scope, path) {
+export function scopeCoversPath(scope: string, path: string): boolean {
     if (scope === path)
         return true;
     if (!/[*?{[]/.test(scope))

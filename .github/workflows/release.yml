@@ -33,11 +33,17 @@ jobs:
           fi
           echo "version=${version}" >> "$GITHUB_ENV"
 
-      - name: Run tests
-        run: npm test
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Build runtime and test artifacts
+        run: npm run build
+
+      - name: Run Node tests
+        run: npm run test:node
 
       - name: Run installer tests
-        run: npm run test:installer
+        run: npm run test:installer:built
 
       - name: Build release tarball
         shell: bash
@@ -45,8 +51,9 @@ jobs:
           set -euo pipefail
           stage="naru-${version}"
           mkdir -p "dist/${stage}"
-          cp -R agents skills tools plugins bin install.sh bootstrap.sh \
+          cp -R agents skills bin install.sh bootstrap.sh \
                 naru-runtime.example.json VERSION LICENSE README.md "dist/${stage}/"
+          cp -R .naru-build/tools .naru-build/plugins "dist/${stage}/"
           chmod 755 "dist/${stage}/bin/naru" "dist/${stage}/install.sh" "dist/${stage}/bootstrap.sh"
           tar -czf "dist/naru-${version}.tar.gz" -C dist "${stage}"
           cd dist

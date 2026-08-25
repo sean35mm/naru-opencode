@@ -1,26 +1,98 @@
 export const COMPATIBILITY_SCHEMA_VERSION = 1;
-const COMPATIBILITY_COMPONENTS = ['opencode', 'node', 'bun', 'git', 'gh'];
-const CHECK_STATUSES = ['passed', 'failed', 'omitted'];
+const COMPATIBILITY_COMPONENTS = ['opencode', 'node', 'bun', 'git', 'gh'] as const;
+const CHECK_STATUSES = ['passed', 'failed', 'omitted'] as const;
+type UnknownRecord = Record<string, unknown>;
+export type CompatibilityComponent = typeof COMPATIBILITY_COMPONENTS[number];
+export type CompatibilityCheckStatus = typeof CHECK_STATUSES[number];
+export type ObservedVersionStatus = 'unrecognized' | 'recorded' | 'supported' | 'unsupported' | 'targeted' | 'non-target';
+
+export interface ParsedSemver {
+    major: number;
+    minor: number;
+    patch: number;
+    prerelease: string[];
+    build: string[];
+    normalized: string;
+}
+
+export interface CompatibilityRequirement {
+    kind: 'minimum' | 'major-target' | 'exact-target' | 'feature-prerequisite';
+    version: string | null;
+}
+
+export interface ObservedVersionEvaluation {
+    component: CompatibilityComponent;
+    observed: string | null;
+    status: ObservedVersionStatus;
+    requirement: CompatibilityRequirement;
+    exactCurrent?: boolean;
+}
+
+export interface PlatformEvaluation {
+    id: string;
+    status: 'targeted' | 'unverified' | 'unsupported';
+    reason: string | null;
+}
+
+export interface DashboardEvidence {
+    requested: boolean;
+    status: 'omitted' | 'partial' | 'failed';
+    bun: { status: ObservedVersionStatus | 'omitted'; observed: string | null };
+    syntax: CompatibilityCheckStatus;
+    registration: CompatibilityCheckStatus;
+    nativeTuiLoad: 'omitted';
+    limitation: string;
+}
+
+export interface CompatibilityCheck {
+    id: string;
+    status: CompatibilityCheckStatus;
+    durationMs: number;
+    diagnostic: string | null;
+}
+
+export interface CompatibilityVersionEvaluations {
+    opencode: ObservedVersionEvaluation;
+    node: ObservedVersionEvaluation;
+    bun: ObservedVersionEvaluation;
+    git: ObservedVersionEvaluation;
+    gh: ObservedVersionEvaluation;
+}
+
+export interface CompatibilityEvidence {
+    schemaVersion: 1;
+    kind: 'naru-compatibility-evidence';
+    policyVersion: 1;
+    providerFree: true;
+    releaseQualification: 'not-established';
+    candidateIdentity: 'unverified';
+    status: 'passed-local-smoke' | 'failed-local-smoke';
+    platform: PlatformEvaluation | undefined;
+    versions: CompatibilityVersionEvaluations;
+    checks: CompatibilityCheck[];
+    capabilities: { dashboard: DashboardEvidence };
+}
 export const COMPATIBILITY_LIMITS = Object.freeze({
     maxChecks: 24,
     maxDiagnosticChars: 160,
     maxResultBytes: 32 * 1024,
     maxVersionInputChars: 256,
 });
-function deepFreeze(value) {
+function deepFreeze<const T>(value: T): T;
+function deepFreeze(value: unknown): unknown {
     if (value === null || typeof value !== 'object' || Object.isFrozen(value))
         return value;
     for (const child of Object.values(value))
         deepFreeze(child);
     return Object.freeze(value);
 }
-function isCompatibilityComponent(value) {
-    return typeof value === 'string' && COMPATIBILITY_COMPONENTS.includes(value);
+function isCompatibilityComponent(value: unknown): value is CompatibilityComponent {
+    return typeof value === 'string' && COMPATIBILITY_COMPONENTS.some((component) => component === value);
 }
-function isCheckStatus(value) {
-    return typeof value === 'string' && CHECK_STATUSES.includes(value);
+function isCheckStatus(value: unknown): value is CompatibilityCheckStatus {
+    return typeof value === 'string' && CHECK_STATUSES.some((status) => status === value);
 }
-function isRecord(value) {
+function isRecord(value: unknown): value is UnknownRecord {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 export const COMPATIBILITY_POLICY = deepFreeze({
@@ -67,9 +139,9 @@ export const COMPATIBILITY_POLICY = deepFreeze({
         localSmokeQualifiesReleaseMatrix: false,
         exactImmutableCandidateRequired: true,
     },
-});
+} as const);
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
-export function parseSemver(value) {
+export function parseSemver(value: unknown): ParsedSemver | null {
     if (typeof value !== 'string' || value.length === 0 || value.length > 128)
         return null;
     const match = value.match(SEMVER);
@@ -95,7 +167,7 @@ export function parseSemver(value) {
         normalized: `${numbers.join('.')}${match[4] ? `-${match[4]}` : ''}${match[5] ? `+${match[5]}` : ''}`,
     };
 }
-function compareIdentifier(left, right) {
+function compareIdentifier(left: string, right: string): number {
     const leftNumeric = /^\d+$/.test(left);
     const rightNumeric = /^\d+$/.test(right);
     if (leftNumeric && rightNumeric) {
@@ -107,12 +179,12 @@ function compareIdentifier(left, right) {
         return leftNumeric ? -1 : 1;
     return left === right ? 0 : left < right ? -1 : 1;
 }
-export function compareSemver(left, right) {
+export function compareSemver(left: string | ParsedSemver, right: string | ParsedSemver): number {
     const a = typeof left === 'string' ? parseSemver(left) : left;
     const b = typeof right === 'string' ? parseSemver(right) : right;
     if (a === null || b === null)
         throw new TypeError('compareSemver requires valid semantic versions');
-    for (const field of ['major', 'minor', 'patch']) {
+    for (const field of ['major', 'minor', 'patch'] as const) {
         if (a[field] !== b[field])
             return Math.sign(a[field] - b[field]);
     }
@@ -134,7 +206,7 @@ export function compareSemver(left, right) {
     }
     return 0;
 }
-export function sanitizeObservedVersion(value) {
+export function sanitizeObservedVersion(value: unknown): string | null {
     if (typeof value !== 'string')
         return null;
     const bounded = value.slice(0, COMPATIBILITY_LIMITS.maxVersionInputChars);
@@ -142,7 +214,7 @@ export function sanitizeObservedVersion(value) {
     const parsed = match === null ? null : parseSemver(match[1]);
     return parsed?.normalized ?? null;
 }
-export function evaluateObservedVersion(component, output) {
+export function evaluateObservedVersion(component: unknown, output: unknown): ObservedVersionEvaluation {
     if (!isCompatibilityComponent(component)) {
         throw new TypeError('unknown compatibility component');
     }
@@ -151,7 +223,7 @@ export function evaluateObservedVersion(component, output) {
     if (observed === null) {
         return { component: typedComponent, observed: null, status: 'unrecognized', requirement: requirementFor(typedComponent) };
     }
-    let status = 'recorded';
+    let status: ObservedVersionStatus = 'recorded';
     if (typedComponent === 'opencode') {
         status = compareSemver(observed, COMPATIBILITY_POLICY.release.opencode.floor) >= 0 ? 'supported' : 'unsupported';
     }
@@ -172,7 +244,7 @@ export function evaluateObservedVersion(component, output) {
         } : {}),
     };
 }
-function requirementFor(component) {
+function requirementFor(component: CompatibilityComponent): CompatibilityRequirement {
     if (component === 'opencode')
         return { kind: 'minimum', version: COMPATIBILITY_POLICY.release.opencode.floor };
     if (component === 'node')
@@ -181,7 +253,12 @@ function requirementFor(component) {
         return { kind: 'exact-target', version: COMPATIBILITY_POLICY.targets.runtimes.bun.exact };
     return { kind: 'feature-prerequisite', version: null };
 }
-export function evaluatePlatformTarget({ platform, arch, osId = null, wsl = false }) {
+export function evaluatePlatformTarget({ platform, arch, osId = null, wsl = false }: {
+    platform?: unknown;
+    arch?: unknown;
+    osId?: unknown;
+    wsl?: unknown;
+}): PlatformEvaluation {
     if (wsl)
         return { id: 'wsl', status: 'unsupported', reason: 'wsl-unclaimed' };
     if (platform === 'win32')
@@ -194,7 +271,12 @@ export function evaluatePlatformTarget({ platform, arch, osId = null, wsl = fals
     }
     return { id: target.id, status: 'targeted', reason: null };
 }
-export function classifyDashboardEvidence({ requested, bun, syntax, registration }) {
+export function classifyDashboardEvidence({ requested, bun, syntax, registration }: {
+    requested?: unknown;
+    bun?: unknown;
+    syntax?: unknown;
+    registration?: unknown;
+}): DashboardEvidence {
     if (!requested) {
         return deepFreeze({
             requested: false,
@@ -218,7 +300,7 @@ export function classifyDashboardEvidence({ requested, bun, syntax, registration
         limitation: 'native-full-tui-load-not-proven',
     });
 }
-function boundedCheck(value) {
+function boundedCheck(value: unknown): CompatibilityCheck {
     if (!isRecord(value))
         throw new TypeError('check must be an object');
     const check = value;
@@ -235,17 +317,23 @@ function boundedCheck(value) {
         : null;
     return { id: check.id, status: check.status, durationMs, diagnostic: diagnostic || null };
 }
-export function createCompatibilityEvidence({ platform, versions, checks, dashboard }) {
+export function createCompatibilityEvidence({ platform, versions, checks, dashboard }: {
+    platform?: PlatformEvaluation;
+    versions?: unknown;
+    checks: unknown;
+    dashboard?: DashboardEvidence;
+}): CompatibilityEvidence {
     if (!Array.isArray(checks) || checks.length > COMPATIBILITY_LIMITS.maxChecks) {
         throw new TypeError(`checks must contain at most ${COMPATIBILITY_LIMITS.maxChecks} entries`);
     }
     const boundedChecks = checks.map(boundedCheck);
-    const evaluatedVersions = {
-        opencode: evaluateObservedVersion('opencode', versions?.opencode ?? ''),
-        node: evaluateObservedVersion('node', versions?.node ?? ''),
-        bun: evaluateObservedVersion('bun', versions?.bun ?? ''),
-        git: evaluateObservedVersion('git', versions?.git ?? ''),
-        gh: evaluateObservedVersion('gh', versions?.gh ?? ''),
+    const versionRecord = isRecord(versions) ? versions : undefined;
+    const evaluatedVersions: CompatibilityVersionEvaluations = {
+        opencode: evaluateObservedVersion('opencode', versionRecord?.opencode ?? ''),
+        node: evaluateObservedVersion('node', versionRecord?.node ?? ''),
+        bun: evaluateObservedVersion('bun', versionRecord?.bun ?? ''),
+        git: evaluateObservedVersion('git', versionRecord?.git ?? ''),
+        gh: evaluateObservedVersion('gh', versionRecord?.gh ?? ''),
     };
     const dashboardEvidence = dashboard ?? classifyDashboardEvidence({ requested: false });
     const successful = platform?.status === 'targeted'
@@ -253,7 +341,7 @@ export function createCompatibilityEvidence({ platform, versions, checks, dashbo
         && evaluatedVersions.node.status === 'targeted'
         && boundedChecks.every(check => check.status !== 'failed')
         && dashboardEvidence.status !== 'failed';
-    const result = {
+    const result: CompatibilityEvidence = {
         schemaVersion: COMPATIBILITY_SCHEMA_VERSION,
         kind: 'naru-compatibility-evidence',
         policyVersion: COMPATIBILITY_POLICY.policyVersion,

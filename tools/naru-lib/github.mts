@@ -1,7 +1,7 @@
 // Read-only GitHub operations for naru-github-read. All gh calls use fixed argv
 // with `gh api --method GET`. No arbitrary endpoints, methods, headers, or tokens.
 import { createHash } from 'node:crypto';
-import { run } from './transport.mjs';
+import { run, type Spawn } from './transport.mjs';
 import { isSafeOwner, isSafeRepo, isPositiveInteger, is40HexSha, isSafeRelativePath, isNonEmptyString, stripSecrets, } from './validate.mjs';
 const MAX_GH_BYTES = 32 * 1024 * 1024;
 const MAX_CHANGED_FILES = 3000;
@@ -17,41 +17,155 @@ const MAX_PULL_FILE_BATCH = 100;
 const FEEDBACK_PAGE_SIZE = 100;
 const EVIDENCE_FILE_PAGE_SIZE = 16;
 const PULL_FILE_STATUSES = new Set(['added', 'removed', 'modified', 'renamed', 'copied', 'changed', 'unchanged']);
+export type RawGitHubValue = unknown;
+export type FeedbackKind = 'reviews' | 'review-comments' | 'issue-comments';
+export type PullFileStatus = 'added' | 'removed' | 'modified' | 'renamed' | 'copied' | 'changed' | 'unchanged';
+export interface PullTarget { owner: string; repo: string; number: number }
+export interface PullIdentity extends PullTarget {
+    baseSha: string;
+    headSha: string;
+    snapshotId: string;
+    feedbackDigest: string;
+    evidenceDigest: string;
+}
+export interface NormalizedLogin { login: string | undefined }
+export interface NormalizedRepository { name: string | undefined; owner: NormalizedLogin | undefined }
+export interface NormalizedPullRef { sha: string | undefined; ref: string | undefined; repo: NormalizedRepository | undefined }
+export interface NormalizedPullMetadata {
+    title?: string | undefined; body?: string | undefined; state?: string | undefined; draft?: boolean | undefined; html_url?: string | undefined;
+    user?: NormalizedLogin | undefined; base?: NormalizedPullRef | undefined; head?: NormalizedPullRef | undefined;
+    changed_files?: number | undefined; updated_at?: string | undefined; updatedAt?: string | undefined;
+}
+export interface NormalizedPullFile {
+    filename?: string | undefined; previous_filename?: string | undefined; status?: string | undefined; sha?: string | undefined;
+    additions?: number | undefined; deletions?: number | undefined; changes?: number | undefined; patch?: string | undefined;
+    patch_bytes?: number | undefined; patch_oversized: boolean;
+}
+interface ManifestFileRecord extends NormalizedPullFile {
+    filename: string; status: string; sha: string; additions: number; deletions: number; changes: number;
+}
+export interface ManifestFile {
+    path?: string | undefined; previousPath: string | null; status?: string | undefined; sha?: string | undefined;
+    additions?: number | undefined; deletions?: number | undefined; changes?: number | undefined;
+}
+interface ValidatedManifestFile extends ManifestFile { path: string; status: string; sha: string; additions: number; deletions: number; changes: number }
+export interface NormalizedFeedback {
+    id: unknown; state?: string | undefined; commit_id?: string | undefined; commitId?: string | undefined; body?: string | undefined;
+    user?: NormalizedLogin | undefined; author?: string | undefined; path?: string | undefined; line?: number | undefined; side?: string | undefined;
+    created_at?: string | undefined; createdAt?: string | undefined; updated_at?: string | undefined; updatedAt?: string | undefined;
+    submitted_at?: string | undefined; submittedAt?: string | undefined; html_url?: string | undefined; url?: string | undefined;
+}
+export interface DiffHunk { oldStart: number; oldCount: number; newStart: number; newCount: number }
+export interface LineMap { left: number[]; right: number[]; hunks: DiffHunk[] }
+interface MutableLineMap { left: Set<number>; right: Set<number>; hunks: DiffHunk[] }
+export type PatchEvidenceReason = 'redacted-path' | 'metadata-mismatch' | 'missing-patch' | 'per-file-byte-limit' | 'aggregate-byte-limit' | 'malformed-patch' | 'per-file-line-map-limit' | 'batch-line-map-limit' | 'complete';
+export interface PatchEvidence {
+    status: 'complete' | 'limited' | 'unavailable'; reason: PatchEvidenceReason;
+    retention: 'full' | 'none'; validation: { structural: boolean; metadata: boolean };
+}
+interface PatchAssessment {
+    available: boolean; patchBytes: number; patch?: string | undefined; bytesUsed: number;
+    map: MutableLineMap; complete: boolean; visitedPatchLines?: number; evidence: PatchEvidence;
+}
+export interface FileEvidenceSummary {
+    filename?: string | undefined; previousFilename: string | null; status?: string | undefined; sha?: string | undefined;
+    additions?: number | undefined; deletions?: number | undefined; changes?: number | undefined; patchAvailable: boolean;
+    patchTruncated: boolean; patchRedacted: boolean; patchBytes: number; lineMap: LineMap;
+    patch?: string | undefined; patchEvidence: PatchEvidence; bytesUsed: number;
+    recoveryEvidence?: { status?: string };
+    [SUMMARY_PATCH_HASH]?: string | null;
+    [SUMMARY_PATCH_VISITED_LINES]?: number;
+    [SUMMARY_LINE_MAP_ENTRIES]?: number;
+}
+export type ReviewabilityStatus = 'complete' | 'limited-comment' | 'manifest' | 'unpostable';
+export interface Reviewability {
+    status: ReviewabilityStatus; inventoryComplete: boolean; feedbackComplete: boolean;
+    patchesComplete: boolean; limitations: string[];
+}
+export interface EvidenceRecovery {
+    status: 'not-needed' | 'unavailable' | 'not-attempted'; attempted: boolean;
+    recovered: number; unavailable: number; reason?: string | undefined;
+}
+export interface EvidencePageMetrics {
+    page: number; files: number; inFlightPatchBytes: number; inFlightBase64Bytes: number;
+    retainedPatchBytes: number; retainedBase64Bytes: number; retainedLineMapEntries: number;
+    retainedLineMapHunkObjects: number; visitedPatchLines: number;
+}
+export interface NormalizedReviewItem {
+    id: unknown; state?: string | undefined; commitId?: string | undefined; commit_id?: string | undefined; body: string; author?: string | undefined; submittedAt?: string | undefined; url?: string | undefined; html_url?: string | undefined;
+}
+export interface NormalizedCommentItem {
+    id: unknown; body: string; author?: string | undefined; path?: string | undefined; line?: number | undefined; side?: string | undefined;
+    state?: string | undefined; commitId?: string | undefined; commit_id?: string | undefined; updatedAt?: string | undefined; url?: string | undefined; html_url?: string | undefined;
+}
+export interface PullSnapshot extends PullIdentity {
+    pull: { title?: string | undefined; body?: string | undefined; state?: string | undefined; draft?: boolean | undefined; url?: string | undefined; author?: string | undefined; baseRef?: string | undefined; headRef?: string | undefined; contentDigest: string };
+    files: FileEvidenceSummary[]; reviews: NormalizedReviewItem[]; reviewComments: NormalizedCommentItem[];
+    issueComments: NormalizedCommentItem[]; complete: boolean; warnings: string[]; reviewability: Reviewability;
+    completeness: { headCoherent?: boolean; allFilesIncluded: boolean; feedbackComplete: boolean; patchesComplete: boolean; patchesMayBeTruncated?: boolean };
+    headChangedDuringAcquisition: boolean; changedFiles: number; fetchedFiles: number; filesCapped: boolean;
+    evidenceSummary: { total: number; complete: number; limited: number; reasons: Record<string, number> };
+    recovery: EvidenceRecovery; contentTruncated: boolean;
+}
+export interface PullManifest extends PullIdentity {
+    changedFiles?: number | undefined; fetchedFiles: number; files: ManifestFile[]; reviewability: Reviewability;
+    pull: { state?: string | undefined; draft?: boolean | undefined; author?: string | undefined; contentDigest: string };
+    feedback: Record<FeedbackKind, { items: number; pages: number }>;
+    warnings: string[]; inventoryComplete?: boolean;
+    [key: string]: unknown;
+}
+interface CompactAcquisition extends PullIdentity {
+    changedFiles?: number | undefined; fetchedFiles: number; files: NormalizedPullFile[];
+    inventoryComplete: boolean; feedbackComplete: boolean; pathsSafe: boolean;
+    feedback: Record<FeedbackKind, NormalizedFeedback[]>;
+    pull: { state?: string | undefined; draft?: boolean | undefined; author?: string | undefined; contentDigest: string };
+    warnings: string[];
+}
+export interface FileEvidenceBatch { paths: string[]; batchDigest: string; files: FileEvidenceSummary[] }
+export interface FileBatchDeclaration { paths: string[]; batchDigest?: string }
+export interface ExactHeadFileBatch extends PullIdentity { batchDigest: string; files: FileEvidenceSummary[] }
+export interface FeedbackPage extends PullIdentity { kind: FeedbackKind; page: number; pages: number; items: NormalizedCommentItem[]; pageDigest: string }
+export interface GitHubOptions { spawn?: Spawn | undefined }
+interface EvidenceOptions extends GitHubOptions { retainPatches?: boolean; onEvidencePage?: ((metrics: EvidencePageMetrics) => void | Promise<void>) | undefined }
+interface GhApiOptions extends GitHubOptions { paginate?: boolean; jq?: string }
+interface ProjectedPageOptions extends GitHubOptions { jq: string; totalItems?: number | undefined; itemCeiling: number; pageSize?: number }
+interface PullFileAliases { previous_filename?: unknown; previousFilename?: unknown; previousPath?: unknown }
+interface HunkCursor extends DiffHunk { oldConsumed: number; newConsumed: number }
 const COMPACT_FILES_JQ = 'map({filename,previous_filename,status,sha,additions,deletions,changes})';
 const COMPACT_FEEDBACK_JQ = 'map({id,state,commit_id,path,line,side,created_at,updated_at,submitted_at})';
 const BOUNDED_FEEDBACK_JQ = 'map({id,state,commit_id,path,line,side,created_at,updated_at,submitted_at,html_url,url,body,user:{login:.user.login}})';
 const EVIDENCE_FILE_JQ = `(.patch // null) as $patch | (($patch // "") | utf8bytelength) as $patch_bytes | {filename,previous_filename,status,sha,additions,deletions,changes,patch_bytes:$patch_bytes,patch_oversized:($patch_bytes > ${MAX_PATCH_BYTES_PER_FILE}),patch_base64:(if $patch != null and $patch_bytes <= ${MAX_PATCH_BYTES_PER_FILE} then ($patch | @base64) else null end)}`;
 const EVIDENCE_FILES_JQ = `map(${EVIDENCE_FILE_JQ})`;
-const FEEDBACK_KINDS = Object.freeze({
+const FEEDBACK_KINDS: Readonly<Record<FeedbackKind, (target: PullTarget) => string>> = Object.freeze({
     reviews: target => `repos/${target.owner}/${target.repo}/pulls/${target.number}/reviews`,
     'review-comments': target => `repos/${target.owner}/${target.repo}/pulls/${target.number}/comments`,
     'issue-comments': target => `repos/${target.owner}/${target.repo}/issues/${target.number}/comments`,
 });
-function isRecord(value) {
+function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-function record(value, label) {
+function record(value: unknown, label: string): Record<string, unknown> {
     if (!isRecord(value))
         throw new Error(`${label} must be an object`);
     return value;
 }
-function stringField(value) {
+function stringField(value: unknown): string | undefined {
     return typeof value === 'string' ? value : undefined;
 }
-function numberField(value) {
+function numberField(value: unknown): number | undefined {
     return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
-function loginField(value) {
+function loginField(value: unknown): NormalizedLogin | undefined {
     if (!isRecord(value))
         return undefined;
     return { login: stringField(value.login) };
 }
-function repositoryField(value) {
+function repositoryField(value: unknown): NormalizedRepository | undefined {
     if (!isRecord(value))
         return undefined;
     return { name: stringField(value.name), owner: loginField(value.owner) };
 }
-function pullRefField(value) {
+function pullRefField(value: unknown): NormalizedPullRef | undefined {
     if (!isRecord(value))
         return undefined;
     return {
@@ -60,7 +174,7 @@ function pullRefField(value) {
         repo: repositoryField(value.repo),
     };
 }
-function normalizePullMetadata(value) {
+function normalizePullMetadata(value: unknown): NormalizedPullMetadata {
     const item = record(value, 'pull metadata');
     return {
         title: stringField(item.title),
@@ -75,7 +189,7 @@ function normalizePullMetadata(value) {
         updated_at: stringField(item.updated_at),
     };
 }
-function normalizePullFile(value) {
+function normalizePullFile(value: unknown): NormalizedPullFile {
     const item = record(value, 'pull file');
     return {
         filename: stringField(item.filename),
@@ -90,7 +204,7 @@ function normalizePullFile(value) {
         patch_oversized: item.patch_oversized === true,
     };
 }
-function normalizeFeedback(value) {
+function normalizeFeedback(value: unknown): NormalizedFeedback {
     const item = record(value, 'GitHub feedback item');
     return {
         id: item.id,
@@ -108,23 +222,23 @@ function normalizeFeedback(value) {
         url: stringField(item.url),
     };
 }
-function normalizeFeedbackArray(value, label) {
+function normalizeFeedbackArray(value: unknown, label: string): NormalizedFeedback[] {
     if (!Array.isArray(value))
         throw new Error(`${label} must be an array`);
     return value.map(normalizeFeedback);
 }
-function normalizeFileArray(value) {
+function normalizeFileArray(value: unknown): NormalizedPullFile[] {
     if (!Array.isArray(value))
         throw new Error('pull files response must be an array');
     return value.map(normalizePullFile);
 }
-function normalizeEvidenceFileArray(value) {
+function normalizeEvidenceFileArray(value: unknown): NormalizedPullFile[] {
     if (!Array.isArray(value))
         throw new Error('projected evidence files response must be an array');
     return value.map(raw => {
         const item = record(raw, 'projected evidence file');
         const patchBytes = numberField(item.patch_bytes);
-        if (!Number.isSafeInteger(patchBytes) || patchBytes < 0 || typeof item.patch_oversized !== 'boolean')
+        if (patchBytes === undefined || !Number.isSafeInteger(patchBytes) || patchBytes < 0 || typeof item.patch_oversized !== 'boolean')
             throw new Error('projected evidence file has invalid patch bounds');
         let patch;
         if (item.patch_base64 !== null && item.patch_base64 !== undefined) {
@@ -144,14 +258,14 @@ function normalizeEvidenceFileArray(value) {
         return normalizePullFile({ ...item, patch, patch_bytes: patchBytes });
     });
 }
-export function hashString(s) {
+export function hashString(s: string): string {
     return createHash('sha256').update(s).digest('hex');
 }
-function normalizedPreviousPath(file) {
+function normalizedPreviousPath(file: PullFileAliases): string | null {
     const value = file.previous_filename ?? file.previousFilename ?? file.previousPath;
     return typeof value === 'string' ? value : null;
 }
-function fileDigest(files) {
+function fileDigest(files: readonly NormalizedPullFile[]): string {
     return hashString(JSON.stringify(files.map(file => ({
         filename: file.filename,
         previousFilename: normalizedPreviousPath(file),
@@ -162,7 +276,7 @@ function fileDigest(files) {
         changes: file.changes,
     })).sort((a, b) => String(a.filename ?? '').localeCompare(String(b.filename ?? '')))));
 }
-function identityFields(value) {
+function identityFields(value: PullIdentity): PullIdentity {
     return {
         owner: value.owner,
         repo: value.repo,
@@ -174,7 +288,7 @@ function identityFields(value) {
         evidenceDigest: value.evidenceDigest,
     };
 }
-function assertManifestIdentity(expected, actual, label = 'manifest') {
+function assertManifestIdentity(expected: PullIdentity, actual: PullIdentity, label = 'manifest'): void {
     const a = identityFields(expected);
     const b = identityFields(actual);
     if (a.owner.toLowerCase() !== b.owner.toLowerCase() || a.repo.toLowerCase() !== b.repo.toLowerCase()
@@ -183,7 +297,7 @@ function assertManifestIdentity(expected, actual, label = 'manifest') {
         || a.evidenceDigest !== b.evidenceDigest)
         throw new Error(`${label} identity mismatch`);
 }
-export function snapshotId(owner, repo, number, headSha, baseSha = '', files = []) {
+export function snapshotId(owner: string, repo: string, number: number, headSha: string, baseSha = '', files: readonly NormalizedPullFile[] = []): string {
     return `naru-snap-${hashString(JSON.stringify({
         owner,
         repo,
@@ -193,8 +307,8 @@ export function snapshotId(owner, repo, number, headSha, baseSha = '', files = [
         files: fileDigest(files),
     }))}`;
 }
-export function digestSnapshot(meta, files, reviews, reviewComments, issueComments) {
-    const normalize = (items) => items.map(item => ({
+export function digestSnapshot(meta: NormalizedPullMetadata, files: readonly NormalizedPullFile[], reviews: readonly NormalizedFeedback[], reviewComments: readonly NormalizedFeedback[], issueComments: readonly NormalizedFeedback[]): string {
+    const normalize = (items: readonly NormalizedFeedback[]) => items.map(item => ({
         id: item.id,
         state: item.state,
         commitId: item.commit_id ?? item.commitId,
@@ -215,7 +329,7 @@ export function digestSnapshot(meta, files, reviews, reviewComments, issueCommen
         issueComments: normalize(issueComments),
     }));
 }
-export function digestEvidence(headSha, baseSha, files) {
+export function digestEvidence(headSha: string, baseSha: string, files: readonly (NormalizedPullFile | FileEvidenceSummary)[]): string {
     return hashString(JSON.stringify({
         headSha,
         baseSha,
@@ -230,20 +344,20 @@ export function digestEvidence(headSha, baseSha, files) {
         })).sort((a, b) => String(a.path ?? '').localeCompare(String(b.path ?? ''))),
     }));
 }
-function boundText(value, max) {
+function boundText(value: unknown, max: number): string {
     if (typeof value !== 'string')
         return '';
     if (value.length <= max)
         return value;
     return value.slice(0, max) + '\n…[truncated]';
 }
-function boundItems(arr, max, warnings) {
+function boundItems<T>(arr: T[], max: number, warnings: string[]): T[] {
     if (arr.length <= max)
         return arr;
     warnings.push(`capped item list at ${max}`);
     return arr.slice(0, max);
 }
-export function parseReference(reference) {
+export function parseReference(reference: unknown): ({ owner: string; repo: string; number: number; kind: 'issue' | 'pull' } | { number: number; bare: true }) {
     if (!isNonEmptyString(reference, { max: 512 })) {
         throw new Error('reference must be a non-empty string');
     }
@@ -300,7 +414,7 @@ export function parseReference(reference) {
     }
     throw new Error('could not parse reference');
 }
-export async function resolveBareNumber(number, context, { spawn } = {}) {
+export async function resolveBareNumber(number: number, context: { worktree?: string; directory?: string } | null | undefined, { spawn }: GitHubOptions = {}): Promise<PullTarget> {
     const cwd = context?.worktree || context?.directory;
     if (typeof cwd !== 'string' || !cwd.startsWith('/')) {
         throw new Error('context worktree/directory required to resolve bare number');
@@ -326,7 +440,7 @@ export async function resolveBareNumber(number, context, { spawn } = {}) {
     }
     return { owner, repo, number };
 }
-async function ghApi(path, { spawn, paginate = false, jq } = {}) {
+async function ghApi(path: string, { spawn, paginate = false, jq }: GhApiOptions = {}): Promise<unknown> {
     if (paginate && jq !== undefined)
         throw new Error('projected GitHub pagination must use explicit bounded pages');
     const argv = ['gh', 'api', '--method', 'GET'];
@@ -349,7 +463,7 @@ async function ghApi(path, { spawn, paginate = false, jq } = {}) {
         throw new Error('non-JSON gh response');
     }
     if (paginate && Array.isArray(data)) {
-        const flat = [];
+        const flat: unknown[] = [];
         for (const page of data) {
             if (Array.isArray(page))
                 flat.push(...page);
@@ -360,7 +474,7 @@ async function ghApi(path, { spawn, paginate = false, jq } = {}) {
     }
     return data;
 }
-async function consumeGhApiProjectedPages(path, { spawn, jq, totalItems, itemCeiling, pageSize = FEEDBACK_PAGE_SIZE }, consume) {
+async function consumeGhApiProjectedPages(path: string, { spawn, jq, totalItems, itemCeiling, pageSize = FEEDBACK_PAGE_SIZE }: ProjectedPageOptions, consume: (page: unknown[], pageNumber: number) => unknown | Promise<unknown>): Promise<void> {
     if (typeof jq !== 'string' || jq.length === 0)
         throw new Error('projected GitHub pagination requires a fixed jq program');
     if (!Number.isSafeInteger(itemCeiling) || itemCeiling < 1)
@@ -389,19 +503,19 @@ async function consumeGhApiProjectedPages(path, { spawn, jq, totalItems, itemCei
             break;
     }
 }
-async function ghApiProjectedPages(path, options) {
-    const items = [];
+async function ghApiProjectedPages(path: string, options: ProjectedPageOptions): Promise<unknown[]> {
+    const items: unknown[] = [];
     await consumeGhApiProjectedPages(path, options, page => items.push(...page));
     return items;
 }
-export async function fetchAuthenticatedLogin({ spawn } = {}) {
+export async function fetchAuthenticatedLogin({ spawn }: GitHubOptions = {}): Promise<string> {
     const viewer = record(await ghApi('user', { spawn }), 'authenticated user');
     const login = stringField(viewer.login);
     if (!isNonEmptyString(login, { max: 39 }))
         throw new Error('authenticated GitHub login is unavailable');
     return login;
 }
-export async function fetchIssue({ owner, repo, number }, { spawn } = {}) {
+export async function fetchIssue({ owner, repo, number }: PullTarget, { spawn }: GitHubOptions = {}) {
     if (!isSafeOwner(owner) || !isSafeRepo(repo) || !isPositiveInteger(number)) {
         throw new Error('invalid issue target');
     }
@@ -411,7 +525,7 @@ export async function fetchIssue({ owner, repo, number }, { spawn } = {}) {
     ]);
     const issue = record(issueRaw, 'issue response');
     const commentsRaw = normalizeFeedbackArray(commentsValue, 'issue comments response');
-    const warnings = [];
+    const warnings: string[] = [];
     const comments = boundItems(commentsRaw.map(comment => ({
         id: comment.id,
         body: boundText(comment.body, MAX_BODY_LENGTH),
@@ -434,33 +548,34 @@ export async function fetchIssue({ owner, repo, number }, { spawn } = {}) {
         warnings,
     };
 }
-export async function fetchPull({ owner, repo, number }, { spawn } = {}) {
+export async function fetchPull({ owner, repo, number }: PullTarget, { spawn }: GitHubOptions = {}): Promise<NormalizedPullMetadata> {
     return normalizePullMetadata(await ghApi(`repos/${owner}/${repo}/pulls/${number}`, { spawn }));
 }
-function pullFileMetadataValid(file) {
+function pullFileMetadataValid(file: NormalizedPullFile): file is NormalizedPullFile & ManifestFileRecord {
     const filenameValid = isSafeRelativePath(file.filename);
     const previousValid = file.previous_filename === undefined || isSafeRelativePath(file.previous_filename);
     const renameValid = file.status !== 'renamed' || isSafeRelativePath(file.previous_filename);
-    const counts = [file.additions, file.deletions, file.changes];
-    const countsValid = counts.every(value => Number.isSafeInteger(value) && value >= 0)
-        && file.changes === file.additions + file.deletions;
-    return filenameValid && previousValid && renameValid && PULL_FILE_STATUSES.has(file.status)
+    const { additions, deletions, changes } = file;
+    const countsValid = typeof additions === 'number' && typeof deletions === 'number' && typeof changes === 'number'
+        && Number.isSafeInteger(additions) && additions >= 0 && Number.isSafeInteger(deletions) && deletions >= 0
+        && Number.isSafeInteger(changes) && changes >= 0 && changes === additions + deletions;
+    return filenameValid && previousValid && renameValid && typeof file.status === 'string' && PULL_FILE_STATUSES.has(file.status)
         && is40HexSha(file.sha) && countsValid;
 }
-function assessPatch(file, totalBytesUsed) {
-    const map = { left: new Set(), right: new Set(), hunks: [] };
+function assessPatch(file: NormalizedPullFile, totalBytesUsed: number): PatchAssessment {
+    const map: MutableLineMap = { left: new Set<number>(), right: new Set<number>(), hunks: [] };
     const safePath = isSafeRelativePath(file.filename)
         && (file.previous_filename === undefined || isSafeRelativePath(file.previous_filename));
     const immutableMetadataValid = pullFileMetadataValid(file);
     const patch = file.patch || '';
     const measuredPatchBytes = Buffer.byteLength(patch, 'utf-8');
-    const patchBytes = file.patch_oversized === true && Number.isSafeInteger(file.patch_bytes)
+    const patchBytes = file.patch_oversized === true && typeof file.patch_bytes === 'number' && Number.isSafeInteger(file.patch_bytes)
         ? file.patch_bytes : measuredPatchBytes;
     const available = safePath && (patchBytes > 0 || file.patch_oversized === true);
     const perFileLimited = file.patch_oversized === true || patchBytes > MAX_PATCH_BYTES_PER_FILE;
     const aggregateLimited = totalBytesUsed + patchBytes > MAX_TOTAL_PATCH_BYTES;
     const retained = immutableMetadataValid && available && !perFileLimited && !aggregateLimited;
-    let reason = !safePath ? 'redacted-path'
+    let reason: PatchEvidenceReason = !safePath ? 'redacted-path'
         : !immutableMetadataValid ? 'metadata-mismatch'
             : patchBytes === 0 ? 'missing-patch'
             : perFileLimited ? 'per-file-byte-limit'
@@ -482,7 +597,7 @@ function assessPatch(file, totalBytesUsed) {
             },
         };
     }
-    let current = null;
+    let current: HunkCursor | null = null;
     let previousOldEnd = -1;
     let previousNewEnd = -1;
     let additions = 0;
@@ -490,7 +605,7 @@ function assessPatch(file, totalBytesUsed) {
     let valid = true;
     let visitedPatchLines = 0;
     let lineMapLimited = false;
-    const addLine = (side, line) => {
+    const addLine = (side: 'left' | 'right', line: number): boolean => {
         const set = map[side];
         if (set.has(line))
             return true;
@@ -501,7 +616,7 @@ function assessPatch(file, totalBytesUsed) {
         set.add(line);
         return true;
     };
-    const finishHunk = () => {
+    const finishHunk = (): void => {
         if (!current)
             return;
         if (current.oldConsumed !== current.oldCount || current.newConsumed !== current.newCount)
@@ -615,12 +730,12 @@ function assessPatch(file, totalBytesUsed) {
         },
     };
 }
-function summarizeFile(file, totalBytesUsed) {
+function summarizeFile(file: NormalizedPullFile, totalBytesUsed: number): FileEvidenceSummary {
     const safePath = isSafeRelativePath(file.filename)
         && (file.previous_filename === undefined || isSafeRelativePath(file.previous_filename));
     const assessment = assessPatch(file, totalBytesUsed);
     const lineMap = assessment.map;
-    const summary = {
+    const summary: FileEvidenceSummary = {
         filename: file.filename,
         previousFilename: normalizedPreviousPath(file),
         status: file.status,
@@ -644,7 +759,7 @@ function summarizeFile(file, totalBytesUsed) {
     summary[SUMMARY_PATCH_VISITED_LINES] = assessment.visitedPatchLines ?? 0;
     return summary;
 }
-function normalizeReview(review) {
+function normalizeReview(review: NormalizedFeedback): NormalizedReviewItem {
     return {
         id: review.id,
         state: review.state,
@@ -655,7 +770,7 @@ function normalizeReview(review) {
         url: review.html_url,
     };
 }
-function normalizeComment(comment) {
+function normalizeComment(comment: NormalizedFeedback): NormalizedCommentItem {
     return {
         id: comment.id,
         body: boundText(comment.body, MAX_BODY_LENGTH),
@@ -668,13 +783,13 @@ function normalizeComment(comment) {
         url: comment.html_url,
     };
 }
-export async function pullSnapshot({ owner, repo, number }, { spawn } = {}) {
+export async function pullSnapshot({ owner, repo, number }: PullTarget, { spawn }: GitHubOptions = {}): Promise<PullSnapshot> {
     if (!isSafeOwner(owner) || !isSafeRepo(repo) || !isPositiveInteger(number)) {
         throw new Error('invalid pull request target');
     }
-    const warnings = [];
+    const warnings: string[] = [];
     let changedDuringAcquisition = false;
-    let acquired;
+    let acquired: { meta: NormalizedPullMetadata; files: NormalizedPullFile[]; reviews: NormalizedFeedback[]; reviewComments: NormalizedFeedback[]; issueComments: NormalizedFeedback[] } | undefined;
     for (let attempt = 0; attempt < 2; attempt += 1) {
         const startMeta = await fetchPull({ owner, repo, number }, { spawn });
         const startHead = startMeta.head?.sha;
@@ -765,7 +880,7 @@ export async function pullSnapshot({ owner, repo, number }, { spawn } = {}) {
     const hasRedactedPath = fileSummaries.some(file => file.patchRedacted);
     const integrityComplete = inventoryComplete && feedbackComplete && !pullBodyWasTruncated && !hasRedactedPath;
     const reviewabilityStatus = !integrityComplete ? 'unpostable' : patchesComplete ? 'complete' : 'limited-comment';
-    const limitations = [];
+    const limitations: string[] = [];
     if (!inventoryComplete)
         limitations.push(fileMetadataComplete
             ? 'changed file inventory is incomplete'
@@ -780,7 +895,7 @@ export async function pullSnapshot({ owner, repo, number }, { spawn } = {}) {
         limitations.push('one or more changed paths are redacted and cannot be represented safely');
     for (const file of fileSummaries) {
         if (file.patchEvidence.status !== 'complete' && limitations.length < MAX_REVIEWABILITY_LIMITATIONS) {
-            const label = file.patchRedacted ? 'redacted file' : file.filename.slice(0, 256);
+            const label = file.patchRedacted ? 'redacted file' : (file.filename as string).slice(0, 256);
             limitations.push(`${label}: patch evidence ${file.patchEvidence.reason}`);
         }
     }
@@ -800,7 +915,7 @@ export async function pullSnapshot({ owner, repo, number }, { spawn } = {}) {
     // Unified-diff recovery is deliberately unavailable: safely associating arbitrary
     // diff sections with renamed/binary paths needs a substantially larger parser. The
     // caller receives a structured limited state instead of guessed evidence.
-    const recovery = {
+    const recovery: EvidenceRecovery = {
         status: evidenceSummary.limited === 0 ? 'not-needed' : 'unavailable',
         attempted: false,
         recovered: 0,
@@ -858,18 +973,18 @@ export async function pullSnapshot({ owner, repo, number }, { spawn } = {}) {
     };
 }
 
-function validatePullTarget({ owner, repo, number }) {
+function validatePullTarget({ owner, repo, number }: PullTarget): void {
     if (!isSafeOwner(owner) || !isSafeRepo(repo) || !isPositiveInteger(number))
         throw new Error('invalid pull request target');
 }
-function isValidChangedFileCount(value) {
-    return Number.isSafeInteger(value) && value >= 0;
+function isValidChangedFileCount(value: unknown): value is number {
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
-async function compactPullAcquisition({ owner, repo, number }, { spawn } = {}) {
+async function compactPullAcquisition({ owner, repo, number }: PullTarget, { spawn }: GitHubOptions = {}): Promise<CompactAcquisition> {
     validatePullTarget({ owner, repo, number });
-    const warnings = [];
-    let acquired;
+    const warnings: string[] = [];
+    let acquired: { meta: NormalizedPullMetadata; files: NormalizedPullFile[]; reviews: NormalizedFeedback[]; reviewComments: NormalizedFeedback[]; issueComments: NormalizedFeedback[]; inventoryMetadataValid: boolean } | undefined;
     for (let attempt = 0; attempt < 2; attempt += 1) {
         const startMeta = await fetchPull({ owner, repo, number }, { spawn });
         const startHead = startMeta.head?.sha;
@@ -918,10 +1033,10 @@ async function compactPullAcquisition({ owner, repo, number }, { spawn } = {}) {
         throw new Error('PR metadata missing valid base/head SHA');
     if (!isSafeOwner(canonicalOwner) || !isSafeRepo(canonicalRepo))
         throw new Error('PR metadata returned an invalid canonical repository identity');
-    const totalChangedFiles = inventoryMetadataValid ? meta.changed_files : undefined;
+    const totalChangedFiles = inventoryMetadataValid ? meta.changed_files as number : undefined;
     const fileMetadataComplete = files.every(pullFileMetadataValid);
     const inventoryComplete = inventoryMetadataValid && fileMetadataComplete
-        && totalChangedFiles <= MAX_CHANGED_FILES && files.length === totalChangedFiles;
+        && totalChangedFiles! <= MAX_CHANGED_FILES && files.length === totalChangedFiles;
     const feedbackComplete = reviews.length <= MAX_ITEMS && reviewComments.length <= MAX_ITEMS && issueComments.length <= MAX_ITEMS;
     const pathsSafe = files.every(file => isSafeRelativePath(file.filename)
         && (file.previous_filename === undefined || isSafeRelativePath(file.previous_filename)));
@@ -961,7 +1076,7 @@ async function compactPullAcquisition({ owner, repo, number }, { spawn } = {}) {
     };
 }
 
-export async function pullManifest(target, { spawn } = {}) {
+export async function pullManifest(target: PullTarget, { spawn }: GitHubOptions = {}): Promise<PullManifest> {
     const compact = await compactPullAcquisition(target, { spawn });
     return {
         owner: compact.owner,
@@ -1002,12 +1117,12 @@ export async function pullManifest(target, { spawn } = {}) {
         feedback: Object.fromEntries(Object.entries(compact.feedback).map(([kind, items]) => [kind, {
             items: items.length,
             pages: Math.ceil(items.length / FEEDBACK_PAGE_SIZE),
-        }])),
+        }])) as Record<FeedbackKind, { items: number; pages: number }>,
         warnings: compact.warnings,
     };
 }
 
-function selectedEvidenceFilesJq(paths) {
+function selectedEvidenceFilesJq(paths: readonly string[]): string {
     // JSON.stringify is the only interpolation: validated paths become a JSON value,
     // never jq syntax. The filter shape and projected fields are fixed internally.
     const encodedPaths = JSON.stringify(paths);
@@ -1017,26 +1132,30 @@ function selectedEvidenceFilesJq(paths) {
 const SUMMARY_PATCH_HASH = Symbol('summaryPatchHash');
 const SUMMARY_PATCH_VISITED_LINES = Symbol('summaryPatchVisitedLines');
 const SUMMARY_LINE_MAP_ENTRIES = Symbol('summaryLineMapEntries');
-function batchDigestForSummaries(identity, paths, files) {
+function batchDigestForSummaries(identity: PullIdentity, paths: readonly string[], files: readonly (FileEvidenceSummary | undefined)[]): string {
     return hashString(JSON.stringify({
         ...identityFields(identity),
         paths,
-        files: files.map(file => ({
-            filename: file.filename,
-            previousFilename: normalizedPreviousPath(file),
-            status: file.status,
-            sha: file.sha,
-            additions: file.additions,
-            deletions: file.deletions,
-            changes: file.changes,
-            patchHash: file[SUMMARY_PATCH_HASH] ?? (typeof file.patch === 'string' ? hashString(file.patch) : null),
-            patchEvidence: file.patchEvidence,
-            lineMap: file.lineMap,
-        })),
+        files: files.map(file => {
+            if (file === undefined)
+                throw new Error('batch evidence is incomplete');
+            return {
+                filename: file.filename,
+                previousFilename: normalizedPreviousPath(file),
+                status: file.status,
+                sha: file.sha,
+                additions: file.additions,
+                deletions: file.deletions,
+                changes: file.changes,
+                patchHash: file[SUMMARY_PATCH_HASH] ?? (typeof file.patch === 'string' ? hashString(file.patch) : null),
+                patchEvidence: file.patchEvidence,
+                lineMap: file.lineMap,
+            };
+        }),
     }));
 }
 
-function precomputeEvidenceSummary(raw, retainPatch) {
+function precomputeEvidenceSummary(raw: NormalizedPullFile, retainPatch: boolean): FileEvidenceSummary {
     const summary = summarizeFile(raw, 0);
     summary[SUMMARY_PATCH_HASH] = typeof summary.patch === 'string' ? hashString(summary.patch) : null;
     summary[SUMMARY_LINE_MAP_ENTRIES] = lineMapEntryCount(summary);
@@ -1046,8 +1165,8 @@ function precomputeEvidenceSummary(raw, retainPatch) {
     return summary;
 }
 
-function limitedSummary(summary, reason) {
-    const limited = {
+function limitedSummary(summary: FileEvidenceSummary, reason: PatchEvidenceReason): FileEvidenceSummary {
+    const limited: FileEvidenceSummary = {
         ...summary,
         patchTruncated: true,
         lineMap: { left: [], right: [], hunks: [] },
@@ -1065,12 +1184,12 @@ function limitedSummary(summary, reason) {
     return limited;
 }
 
-function lineMapEntryCount(summary) {
+function lineMapEntryCount(summary: FileEvidenceSummary): number {
     return summary[SUMMARY_LINE_MAP_ENTRIES]
         ?? summary.lineMap.left.length + summary.lineMap.right.length;
 }
 
-function applyBatchEvidenceLimits(summaries) {
+function applyBatchEvidenceLimits(summaries: FileEvidenceSummary[]): FileEvidenceSummary[] {
     let totalPatchBytes = 0;
     let totalLineMapEntries = 0;
     return summaries.map(precomputed => {
@@ -1088,38 +1207,38 @@ function applyBatchEvidenceLimits(summaries) {
     });
 }
 
-export function digestRawFileBatch(identity, paths, rawFiles) {
+export function digestRawFileBatch(identity: PullIdentity, paths: string[], rawFiles: NormalizedPullFile[]): string {
     const summaries = applyBatchEvidenceLimits(rawFiles.map(file => precomputeEvidenceSummary(file, true)));
     return batchDigestForSummaries(identity, paths, paths.map(path => summaries.find(file => file.filename === path)));
 }
 
-function boundedManifestFiles(manifest) {
-    const complete = manifest.inventoryComplete === true || manifest.reviewability?.inventoryComplete === true;
+function boundedManifestFiles(manifest: PullManifest | CompactAcquisition): ManifestFile[] {
+    const complete = manifest.inventoryComplete === true || ('reviewability' in manifest && manifest.reviewability?.inventoryComplete === true);
     if (!complete || !Array.isArray(manifest.files) || manifest.files.length > MAX_CHANGED_FILES)
         throw new Error('file evidence requires a complete bounded manifest');
     return manifest.files.map(file => ({
-        path: file.path ?? file.filename,
+        path: (file as ManifestFile).path ?? (file as NormalizedPullFile).filename,
         previousPath: normalizedPreviousPath(file),
         status: file.status,
         sha: file.sha,
         additions: file.additions,
         deletions: file.deletions,
         changes: file.changes,
-    }));
+    })) as ValidatedManifestFile[];
 }
 
-function validateEvidenceMetadata(expected, raw) {
+function validateEvidenceMetadata(expected: ManifestFile, raw: NormalizedPullFile): void {
     if (normalizedPreviousPath(raw) !== normalizedPreviousPath(expected) || raw.status !== expected.status
         || raw.sha !== expected.sha || raw.additions !== expected.additions
         || raw.deletions !== expected.deletions || raw.changes !== expected.changes)
         throw new Error(`projected evidence metadata changed for path: ${raw.filename}`);
 }
 
-async function acquireManifestEvidence(manifest, paths, { spawn, retainPatches = false, onEvidencePage } = {}) {
+async function acquireManifestEvidence(manifest: PullManifest | CompactAcquisition, paths: string[] | undefined, { spawn, retainPatches = false, onEvidencePage }: EvidenceOptions = {}): Promise<Map<string, FileEvidenceSummary>> {
     const manifestFiles = boundedManifestFiles(manifest);
     const expectedByPath = new Map(manifestFiles.map(file => [file.path, file]));
     const selected = paths === undefined ? undefined : new Set(paths);
-    const summariesByPath = new Map();
+    const summariesByPath = new Map<string, FileEvidenceSummary>();
     let manifestIndex = 0;
     let retainedPatchBytes = 0;
     let retainedLineMapEntries = 0;
@@ -1131,17 +1250,20 @@ async function acquireManifestEvidence(manifest, paths, { spawn, retainPatches =
         itemCeiling: MAX_CHANGED_FILES,
         pageSize: EVIDENCE_FILE_PAGE_SIZE,
     }, async (projectedPage, page) => {
-        const inFlightBase64Bytes = projectedPage.reduce((total, item) => total
-            + (typeof item?.patch_base64 === 'string' ? Buffer.byteLength(item.patch_base64, 'utf8') : 0), 0);
+        const inFlightBase64Bytes = projectedPage.reduce<number>((total, item) => total
+            + (isRecord(item) && typeof item.patch_base64 === 'string' ? Buffer.byteLength(item.patch_base64, 'utf8') : 0), 0);
         const rawFiles = normalizeEvidenceFileArray(projectedPage);
         let inFlightPatchBytes = 0;
         for (const raw of rawFiles) {
-            const expected = expectedByPath.get(raw.filename);
-            if (!expected || (selected && !selected.has(raw.filename)))
+            const expected = expectedByPath.get(raw.filename as string);
+            if (!expected || (selected && !selected.has(raw.filename as string)))
                 throw new Error('projected evidence response contained an unrelated path');
-            if (paths === undefined && raw.filename !== manifestFiles[manifestIndex].path)
-                throw new Error('projected evidence response changed manifest path order');
-            if (summariesByPath.has(raw.filename))
+            if (paths === undefined) {
+                const manifestFile = manifestFiles[manifestIndex];
+                if (manifestFile === undefined || raw.filename !== manifestFile.path)
+                    throw new Error('projected evidence response changed manifest path order');
+            }
+            if (summariesByPath.has(raw.filename as string))
                 throw new Error(`projected evidence response duplicated path: ${raw.filename}`);
             validateEvidenceMetadata(expected, raw);
             inFlightPatchBytes += typeof raw.patch === 'string' ? Buffer.byteLength(raw.patch, 'utf8') : 0;
@@ -1149,7 +1271,7 @@ async function acquireManifestEvidence(manifest, paths, { spawn, retainPatches =
             retainedPatchBytes += typeof summary.patch === 'string' ? Buffer.byteLength(summary.patch, 'utf8') : 0;
             retainedLineMapEntries += summary.lineMap.left.length + summary.lineMap.right.length;
             retainedLineMapHunkObjects += summary.lineMap.hunks.length;
-            summariesByPath.set(raw.filename, summary);
+            summariesByPath.set(raw.filename as string, summary);
             manifestIndex += 1;
         }
         if (onEvidencePage)
@@ -1163,7 +1285,7 @@ async function acquireManifestEvidence(manifest, paths, { spawn, retainPatches =
                 retainedLineMapEntries,
                 retainedLineMapHunkObjects,
                 visitedPatchLines: rawFiles.reduce((total, file) => total
-                    + (summariesByPath.get(file.filename)?.[SUMMARY_PATCH_VISITED_LINES] ?? 0), 0),
+                    + (summariesByPath.get(file.filename as string)?.[SUMMARY_PATCH_VISITED_LINES] ?? 0), 0),
             });
     });
     if (paths === undefined && summariesByPath.size !== manifestFiles.length)
@@ -1176,7 +1298,7 @@ async function acquireManifestEvidence(manifest, paths, { spawn, retainPatches =
     return summariesByPath;
 }
 
-function assembleEvidenceBatches(identity, declarations, summariesByPath) {
+function assembleEvidenceBatches(identity: PullIdentity, declarations: FileBatchDeclaration[], summariesByPath: Map<string, FileEvidenceSummary>): FileEvidenceBatch[] {
     return declarations.map((declaration, index) => {
         if (!declaration || !Array.isArray(declaration.paths) || declaration.paths.length < 1
             || declaration.paths.length > MAX_PULL_FILE_BATCH
@@ -1196,7 +1318,7 @@ function assembleEvidenceBatches(identity, declarations, summariesByPath) {
     });
 }
 
-export async function pullFileBatchesAtManifest(manifest, declarations, { spawn, onEvidencePage } = {}) {
+export async function pullFileBatchesAtManifest(manifest: PullManifest, declarations: FileBatchDeclaration[], { spawn, onEvidencePage }: EvidenceOptions = {}): Promise<PullIdentity & { batches: FileEvidenceBatch[] }> {
     validatePullTarget(manifest);
     if (!Array.isArray(declarations))
         throw new Error('internal file batch declarations must be an array');
@@ -1210,7 +1332,7 @@ export async function pullFileBatchesAtManifest(manifest, declarations, { spawn,
     return { ...identity, batches };
 }
 
-export async function pullFilesAtHead({ owner, repo, number, baseSha, headSha, snapshotId: expectedSnapshotId, feedbackDigest, evidenceDigest, paths }, { spawn, onEvidencePage } = {}) {
+export async function pullFilesAtHead({ owner, repo, number, baseSha, headSha, snapshotId: expectedSnapshotId, feedbackDigest, evidenceDigest, paths }: PullIdentity & { paths: string[] }, { spawn, onEvidencePage }: EvidenceOptions = {}): Promise<ExactHeadFileBatch> {
     validatePullTarget({ owner, repo, number });
     if (!is40HexSha(baseSha))
         throw new Error('baseSha must be a 40-char hex SHA');
@@ -1244,7 +1366,7 @@ export async function pullFilesAtHead({ owner, repo, number, baseSha, headSha, s
     const endMeta = await fetchPull({ owner, repo, number }, { spawn });
     if (endMeta.head?.sha !== compact.headSha || endMeta.base?.sha !== compact.baseSha)
         throw new Error('pull request head drifted during file batch acquisition');
-    const assembled = assembleEvidenceBatches(compact, [{ paths }], selectedByPath)[0];
+    const assembled = assembleEvidenceBatches(compact, [{ paths }], selectedByPath)[0]!;
     const finalCompact = await compactPullAcquisition({ owner, repo, number }, { spawn });
     assertManifestIdentity(expectedIdentity, finalCompact, 'final file batch manifest');
     return {
@@ -1261,7 +1383,7 @@ export async function pullFilesAtHead({ owner, repo, number, baseSha, headSha, s
     };
 }
 
-function feedbackMetadataDigest(items) {
+function feedbackMetadataDigest(items: readonly NormalizedFeedback[]): string {
     return hashString(JSON.stringify(items.map(item => ({
         id: item.id,
         state: item.state,
@@ -1274,7 +1396,7 @@ function feedbackMetadataDigest(items) {
     }))));
 }
 
-export async function pullFeedbackPage({ owner, repo, number, baseSha, headSha, snapshotId: expectedSnapshotId, feedbackDigest, evidenceDigest, kind, page }, { spawn } = {}) {
+export async function pullFeedbackPage({ owner, repo, number, baseSha, headSha, snapshotId: expectedSnapshotId, feedbackDigest, evidenceDigest, kind, page }: PullIdentity & { kind: FeedbackKind; page: number }, { spawn }: GitHubOptions = {}): Promise<FeedbackPage> {
     validatePullTarget({ owner, repo, number });
     if (!is40HexSha(baseSha) || !is40HexSha(headSha))
         throw new Error('baseSha and headSha must be 40-char hex SHAs');
@@ -1321,10 +1443,10 @@ export async function pullFeedbackPage({ owner, repo, number, baseSha, headSha, 
     return { ...identityFields(compact), kind, page, pages, items: normalized, pageDigest };
 }
 
-export function digestFeedbackPage(identity, kind, page, normalizedItems) {
+export function digestFeedbackPage(identity: PullIdentity, kind: FeedbackKind, page: number, normalizedItems: readonly NormalizedCommentItem[]): string {
     return hashString(JSON.stringify({ ...identityFields(identity), kind, page, items: normalizedItems }));
 }
-export async function fetchSourceAtSha({ owner, repo, sha, path }, { spawn } = {}) {
+export async function fetchSourceAtSha({ owner, repo, sha, path }: { owner: string; repo: string; sha: string; path: string }, { spawn }: GitHubOptions = {}) {
     if (!isSafeOwner(owner) || !isSafeRepo(repo))
         throw new Error('invalid source target');
     if (!is40HexSha(sha))

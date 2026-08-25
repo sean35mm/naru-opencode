@@ -24,7 +24,7 @@ The orchestrator delegates to the three subagents and may call `naru-git-read`, 
 
 ## Tools
 
-`tools/*.js`, installed as custom OpenCode tools.
+Authoritative `tools/*.ts` entrypoints and `tools/naru-lib/*.mts` helpers are emitted and installed as `.js`/`.mjs` custom OpenCode tools.
 
 ## Code intelligence
 
@@ -88,9 +88,11 @@ Not a sandbox, not a proof system, not durable, and not a global capacity meter.
 ## Commands
 
 ```sh
+npm ci
+npm run build
 sh install.sh --preview            # default, mutates nothing
 sh install.sh --apply
-node tools/naru-doctor.js --json   # health report
+npm run doctor -- --json           # checkout health report
 npm test
 npm run test:bun
 npm run test:installer

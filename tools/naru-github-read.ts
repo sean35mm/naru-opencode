@@ -1,13 +1,45 @@
 // naru-github-read: read-only GitHub inspection for OpenCode custom tools.
 // The filename defines the OpenCode tool ID.
 import { parseReference, resolveBareNumber, fetchIssue, pullSnapshot, pullManifest, pullFilesAtHead, pullFeedbackPage, fetchSourceAtSha, } from './naru-lib/github.mjs';
+import type { FeedbackKind } from './naru-lib/github.mjs';
 import { okEnvelope, errEnvelope } from './naru-lib/output.mjs';
+import type { Spawn } from './naru-lib/transport.mjs';
 import { assertPlainObject, validateAllowedKeys, validateStringEnum, isSafeOwner, isSafeRepo, isPositiveInteger, is40HexSha, isSafeRelativePath, isNonEmptyString, safeError, requireField, } from './naru-lib/validate.mjs';
-const OPERATIONS = ['resolve', 'issue', 'pull', 'pull-manifest', 'pull-files', 'pull-feedback', 'source'];
-function isOperationName(value) {
+const OPERATIONS = ['resolve', 'issue', 'pull', 'pull-manifest', 'pull-files', 'pull-feedback', 'source'] as const;
+type GitHubOperation = typeof OPERATIONS[number];
+interface ResolveInput { operation: 'resolve'; reference: string }
+interface TargetInput { owner: string; repo: string; number: number }
+interface PullInput extends TargetInput { operation: 'pull' }
+interface PullManifestInput extends TargetInput { operation: 'pull-manifest' }
+interface IssueInput extends TargetInput { operation: 'issue' }
+interface PullIdentityInput extends TargetInput { baseSha: string; headSha: string; snapshotId: string; feedbackDigest: string; evidenceDigest: string }
+interface PullFilesInput extends PullIdentityInput { operation: 'pull-files'; paths: string[] }
+interface PullFeedbackInput extends PullIdentityInput { operation: 'pull-feedback'; kind: FeedbackKind; page: number }
+interface SourceInput { operation: 'source'; owner: string; repo: string; sha: string; path: string }
+type GitHubReadInput = ResolveInput | PullInput | PullManifestInput | PullFilesInput | PullFeedbackInput | IssueInput | SourceInput;
+interface GitHubReadArgs { input?: unknown }
+interface GitHubReadContext { directory?: string; worktree?: string; spawn?: Spawn }
+interface GitHubReadTool {
+    description: string;
+    args: Record<string, unknown>;
+    execute(args?: GitHubReadArgs, context?: GitHubReadContext): Promise<string>;
+}
+function isOperationName(value: unknown): value is GitHubOperation {
     return OPERATIONS.some(operation => operation === value);
 }
-function validateInput(raw) {
+function isSnapshotId(value: unknown): value is string {
+    return typeof value === 'string' && /^naru-snap-[0-9a-f]{64}$/.test(value);
+}
+function isDigest(value: unknown): value is string {
+    return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+function isPathArray(value: unknown): value is string[] {
+    return Array.isArray(value);
+}
+function isFeedbackKind(value: unknown): value is FeedbackKind {
+    return value === 'reviews' || value === 'review-comments' || value === 'issue-comments';
+}
+function validateInput(raw: unknown): GitHubReadInput {
     assertPlainObject(raw, 'input');
     validateAllowedKeys(raw, ['operation', 'reference', 'owner', 'repo', 'number', 'sha', 'path', 'baseSha', 'headSha', 'snapshotId', 'feedbackDigest', 'evidenceDigest', 'paths', 'kind', 'page']);
     validateStringEnum(raw.operation, OPERATIONS, 'operation');
@@ -40,10 +72,10 @@ function validateInput(raw) {
             const number = requireField(raw, 'number', isPositiveInteger);
             const baseSha = requireField(raw, 'baseSha', is40HexSha);
             const headSha = requireField(raw, 'headSha', is40HexSha);
-            const snapshotId = requireField(raw, 'snapshotId', value => typeof value === 'string' && /^naru-snap-[0-9a-f]{64}$/.test(value));
-            const feedbackDigest = requireField(raw, 'feedbackDigest', value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value));
-            const evidenceDigest = requireField(raw, 'evidenceDigest', value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value));
-            const paths = requireField(raw, 'paths', value => Array.isArray(value));
+            const snapshotId = requireField(raw, 'snapshotId', isSnapshotId);
+            const feedbackDigest = requireField(raw, 'feedbackDigest', isDigest);
+            const evidenceDigest = requireField(raw, 'evidenceDigest', isDigest);
+            const paths = requireField(raw, 'paths', isPathArray);
             return { operation: 'pull-files', owner, repo, number, baseSha, headSha, snapshotId, feedbackDigest, evidenceDigest, paths };
         }
         case 'pull-feedback': {
@@ -52,11 +84,11 @@ function validateInput(raw) {
                 owner: requireField(raw, 'owner', isSafeOwner), repo: requireField(raw, 'repo', isSafeRepo),
                 number: requireField(raw, 'number', isPositiveInteger), baseSha: requireField(raw, 'baseSha', is40HexSha),
                 headSha: requireField(raw, 'headSha', is40HexSha),
-                snapshotId: requireField(raw, 'snapshotId', value => typeof value === 'string' && /^naru-snap-[0-9a-f]{64}$/.test(value)),
-                feedbackDigest: requireField(raw, 'feedbackDigest', value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)),
-                evidenceDigest: requireField(raw, 'evidenceDigest', value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)),
+                snapshotId: requireField(raw, 'snapshotId', isSnapshotId),
+                feedbackDigest: requireField(raw, 'feedbackDigest', isDigest),
+                evidenceDigest: requireField(raw, 'evidenceDigest', isDigest),
             };
-            const kind = requireField(raw, 'kind', value => ['reviews', 'review-comments', 'issue-comments'].includes(value));
+            const kind = requireField(raw, 'kind', isFeedbackKind);
             const page = requireField(raw, 'page', isPositiveInteger);
             return { operation: 'pull-feedback', ...identity, kind, page };
         }
@@ -77,7 +109,7 @@ function validateInput(raw) {
         }
     }
 }
-const githubReadTool = {
+const githubReadTool: GitHubReadTool = {
     description: 'Read-only GitHub inspection. Resolve PR/issue references, read an issue, capture a ' +
         'coherent pull snapshot/manifest, fetch an exact-head file batch or feedback page, or fetch an exact source file at a 40-char SHA.',
     args: {
@@ -113,8 +145,8 @@ const githubReadTool = {
         },
     },
     execute: async (args = {}, context = {}) => {
-        const raw = args && typeof args === 'object' ? args.input : undefined;
-        let input;
+        const raw = args.input;
+        let input: GitHubReadInput;
         try {
             input = validateInput(raw);
         }
@@ -125,7 +157,7 @@ const githubReadTool = {
             switch (input.operation) {
                 case 'resolve': {
                     const parsed = parseReference(input.reference);
-                    if (parsed.bare) {
+                    if ('bare' in parsed) {
                         const resolved = await resolveBareNumber(parsed.number, context, { spawn: context?.spawn });
                         return JSON.stringify(okEnvelope('naru-github-read', { kind: 'pull', ...resolved }), null, 2);
                     }

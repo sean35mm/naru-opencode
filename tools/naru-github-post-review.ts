@@ -1,7 +1,18 @@
 // naru-github-post-review: post exactly one tool-authorized PR review.
 // The filename defines the OpenCode tool ID.
 import { postReview } from './naru-lib/review.mjs';
-const githubPostReviewTool = {
+import type { ReviewPayloadV4 } from './naru-lib/review.mjs';
+import type { Spawn } from './naru-lib/transport.mjs';
+
+interface GitHubPostReviewArgs { input?: { reviewResult?: ReviewPayloadV4 } }
+interface GitHubPostReviewContext { agent?: string; spawn?: Spawn; [key: string]: unknown }
+interface GitHubPostReviewTool {
+    description: string;
+    args: Record<string, unknown>;
+    execute(args?: GitHubPostReviewArgs, context?: GitHubPostReviewContext): Promise<string>;
+}
+
+const githubPostReviewTool: GitHubPostReviewTool = {
     description: 'Post a single PR review from a validated schema v4 manifest-bound naru_review_result payload. ' +
         'Requires context.agent to be exactly "naru-orchestrator". The tool derives the GitHub event within the asserted submission authorization policy. ' +
         'Legacy v2/v3 markers remain recognizable but cannot create a new review. V4 derives coverage and formal-decision eligibility from final evidence. ' +
@@ -127,7 +138,7 @@ const githubPostReviewTool = {
         },
     },
     execute: async (args = {}, context = {}) => {
-        const input = args && typeof args === 'object' ? args.input : undefined;
+        const input = args.input;
         const result = await postReview(input, context, { spawn: context?.spawn });
         return JSON.stringify(result, null, 2);
     },

@@ -35,10 +35,19 @@ curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstr
 
 Contributors and anyone who prefers to read the source first can skip the bootstrap entirely and run the installer directly. Every flag below works the same way.
 
+```sh
+git clone https://github.com/sean35mm/naru-opencode.git
+cd naru-opencode
+npm ci
+npm run build
+sh install.sh --preview
+sh install.sh --apply
+```
+
 ```mermaid
 flowchart LR
   A["Clone repository"]:::read
-  B["Preview install.sh options"]:::read
+  B["Install dependencies, build, and preview install.sh options"]:::read
   C{"Review the preview"}:::gate
   D["Transactional install"]:::write
   I["Write ownership manifest"]:::write

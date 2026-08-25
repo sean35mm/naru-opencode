@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { constants as fsConstants, realpathSync } from 'node:fs';
+import type { Dirent, Stats } from 'node:fs';
 import { lstat, open, opendir, readlink, writeFile, } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +33,169 @@ const DASHBOARD_RUNTIME_PATHS = new Set([
     'plugins/naru-minions-dashboard.tsx',
     'tools/naru-lib',
 ]);
+
+type PlainObject = Record<string, unknown>;
+type LocationMode = 'global' | 'project' | 'custom';
+type InstallMode = 'copy' | 'symlink';
+type EntryMethod = 'copy' | 'symlink';
+type EntryKind = 'file' | 'directory' | 'symlink';
+type TransactionOperation = 'install' | 'rollback' | 'uninstall';
+type Fingerprint = string;
+
+export interface InstallOptions {
+    dashboard: boolean;
+    configureSubagentDepth: boolean;
+    migrateOrchestrator: boolean;
+}
+
+export interface ManagedEntry {
+    path: string;
+    sourcePath: string;
+    method: EntryMethod;
+    sourceKind: EntryKind;
+    sourceFingerprint: string;
+    installedKind: EntryKind;
+    installedFingerprint: string;
+}
+
+export interface InstallManifest {
+    schemaVersion: typeof INSTALL_MANIFEST_SCHEMA_VERSION;
+    product: typeof PRODUCT;
+    sourceVersion: string;
+    locationMode: LocationMode;
+    installMode: InstallMode;
+    options: InstallOptions;
+    managed: ManagedEntry[];
+}
+
+export interface FilesystemSnapshot {
+    kind: EntryKind;
+    fingerprint: Fingerprint;
+}
+
+export interface BackedUpFilesystemSnapshot extends FilesystemSnapshot {
+    backupPath: string;
+}
+
+export interface InstallTransactionChange {
+    path: string;
+    before: BackedUpFilesystemSnapshot | null;
+    after: FilesystemSnapshot | null;
+}
+
+export interface InstallTransaction {
+    schemaVersion: typeof INSTALL_TRANSACTION_SCHEMA_VERSION;
+    product: typeof PRODUCT;
+    transactionId: string;
+    operation: TransactionOperation;
+    beforeManifest: InstallManifest | null;
+    afterManifest: InstallManifest | null;
+    changes: InstallTransactionChange[];
+}
+
+interface FingerprintBudget {
+    entries: number;
+    bytes: number;
+}
+
+export interface FingerprintFileResult {
+    bytes: Buffer;
+    size: number;
+}
+
+interface InstallPlanEntry {
+    method: string;
+    source: string;
+    path: string;
+}
+
+interface VerifyAppliedTransactionInput {
+    targetRoot: string;
+    transactionId: unknown;
+    receiptPath: string;
+}
+
+interface BuildInstallManifestInput {
+    sourceRoot: string;
+    locationMode: unknown;
+    installMode: unknown;
+    options: unknown;
+    planEntries: InstallPlanEntry[];
+}
+
+interface BuildInstallTransactionInput {
+    transactionId: string;
+    targetRoot: string;
+    previousManifest: InstallManifest | null;
+    desiredManifest: InstallManifest;
+    operations: InstallPlanOperation[];
+}
+
+interface ClassifyInstallPlanInput {
+    targetRoot: string;
+    desiredManifest: unknown;
+    previousManifest: unknown;
+    replaceConflicts?: boolean;
+}
+
+interface LifecycleTransactionInput {
+    transactionId: string;
+    operation: Exclude<TransactionOperation, 'install'>;
+    beforeManifest: InstallManifest | null;
+    afterManifest: InstallManifest | null;
+    operations: LifecycleOperation[];
+}
+
+interface LifecycleConfirmationInput {
+    targetRoot: string;
+    action: Exclude<TransactionOperation, 'install'>;
+    backupId: string | null;
+    replaceConflicts: boolean;
+    currentManifest: InstallManifest | null;
+    selectedReceipt: InstallTransaction | null;
+    operations: LifecycleOperation[];
+}
+
+interface RollbackPlanInput {
+    targetRoot: string;
+    backupId: string;
+    transactionId: string;
+    replaceConflicts: boolean;
+}
+
+interface UninstallPlanInput {
+    targetRoot: string;
+    transactionId: string;
+    replaceConflicts: boolean;
+}
+
+export interface InstallPlanOperation {
+    action: 'create' | 'update' | 'unchanged' | 'conflict-unowned' | 'conflict-modified'
+        | 'retire' | 'retire-missing' | 'preserve-retired-modified' | 'preserve-orphaned';
+    reason: string;
+    entry: ManagedEntry;
+    current: FilesystemSnapshot | null;
+}
+
+export interface LifecycleOperation {
+    action: 'unchanged' | 'remove' | 'restore' | 'conflict-modified' | 'missing'
+        | 'preserve-dashboard' | 'preserve-modified' | 'preserve-manifest';
+    path: string;
+    source: string;
+    reason: string;
+    current: FilesystemSnapshot | null;
+    desired: FilesystemSnapshot | null;
+}
+
+export interface LifecyclePlan {
+    action: 'rollback' | 'uninstall';
+    backupId: string | null;
+    currentManifest: InstallManifest | null;
+    selectedReceipt: InstallTransaction | null;
+    operations: LifecycleOperation[];
+    receipt: InstallTransaction | null;
+    token: string;
+}
 export const RETIRED_MANAGED_PATHS = new Set([
     'commands/naru-plan.md',
     'commands/naru-impact.md',
@@ -85,41 +249,41 @@ export const RETIRED_MANAGED_PATHS = new Set([
     // reader was indistinguishable from the standard reader.
     'agents/naru-reader-deep.md',
 ]);
-function isPlainObject(value) {
+function isPlainObject(value: unknown): value is PlainObject {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-function assertExactKeys(value, expected, label) {
+function assertExactKeys(value: PlainObject, expected: readonly string[], label: string): void {
     const actual = Object.keys(value).sort();
     const wanted = [...expected].sort();
     if (JSON.stringify(actual) !== JSON.stringify(wanted)) {
         throw new Error(`${label} keys must be exactly ${wanted.join(', ')}`);
     }
 }
-function assertBoolean(value, label) {
+function assertBoolean(value: unknown, label: string): asserts value is boolean {
     if (typeof value !== 'boolean')
         throw new Error(`${label} must be a boolean`);
 }
-function assertNonEmptyString(value, label) {
+function assertNonEmptyString(value: unknown, label: string): asserts value is string {
     if (typeof value !== 'string' || value.length === 0) {
         throw new Error(`${label} must be a non-empty string`);
     }
 }
-function assertFingerprint(value, label) {
+function assertFingerprint(value: unknown, label: string): asserts value is Fingerprint {
     if (typeof value !== 'string' || !FINGERPRINT_PATTERN.test(value)) {
         throw new Error(`${label} must be a supported SHA-256 fingerprint`);
     }
 }
-function stateEqual(left, right) {
+function stateEqual(left: FilesystemSnapshot | null, right: FilesystemSnapshot | null): boolean {
     return left === null
         ? right === null
         : right !== null && left.kind === right.kind && left.fingerprint === right.fingerprint;
 }
-function manifestEqual(left, right) {
+function manifestEqual(left: InstallManifest | null, right: InstallManifest | null): boolean {
     if (left === null || right === null)
         return left === right;
     return serializeInstallManifest(left) === serializeInstallManifest(right);
 }
-export function normalizeManagedPath(value, label = 'managed path') {
+export function normalizeManagedPath(value: unknown, label = 'managed path'): string {
     assertNonEmptyString(value, label);
     if (value.includes('\0') || value.includes('\n') || value.includes('\r') || value.includes('\t')) {
         throw new Error(`${label} contains unsupported control characters`);
@@ -133,26 +297,28 @@ export function normalizeManagedPath(value, label = 'managed path') {
     }
     return normalized;
 }
-function assertUnreservedManagedPath(value, label) {
+function assertUnreservedManagedPath(value: string, label: string): void {
     for (const reserved of RESERVED_MANAGED_ROOTS) {
         if (value === reserved || value.startsWith(`${reserved}/`)) {
             throw new Error(`${label} uses reserved lifecycle path ${reserved}`);
         }
     }
 }
-function assertDisjointManagedPaths(values, label) {
+function assertDisjointManagedPaths(values: Iterable<string>, label: string): void {
     const sorted = [...new Set(values)].sort();
     for (let index = 1; index < sorted.length; index += 1) {
         for (let parentIndex = 0; parentIndex < index; parentIndex += 1) {
             const child = sorted[index];
             const parent = sorted[parentIndex];
+            if (child === undefined || parent === undefined)
+                throw new Error(`${label} contains an invalid path`);
             if (child.startsWith(`${parent}/`)) {
                 throw new Error(`${label} contains overlapping paths: ${parent} and ${child}`);
             }
         }
     }
 }
-function containedPath(root, relative, label) {
+function containedPath(root: string, relative: unknown, label: string): string {
     const normalized = normalizeManagedPath(relative, label);
     const resolvedRoot = path.resolve(root);
     const resolved = path.resolve(resolvedRoot, ...normalized.split('/'));
@@ -161,7 +327,7 @@ function containedPath(root, relative, label) {
     }
     return resolved;
 }
-async function containedPathWithoutSymlinkParents(root, relative, label) {
+async function containedPathWithoutSymlinkParents(root: string, relative: unknown, label: string): Promise<string> {
     const normalized = normalizeManagedPath(relative, label);
     const resolvedRoot = path.resolve(root);
     const parts = normalized.split('/');
@@ -177,16 +343,16 @@ async function containedPathWithoutSymlinkParents(root, relative, label) {
     }
     return containedPath(resolvedRoot, normalized, label);
 }
-function hashBytes(value) {
+function hashBytes(value: string | Buffer): string {
     return createHash('sha256').update(value).digest('hex');
 }
-function hasErrorCode(error, code) {
+function hasErrorCode(error: unknown, code: string): boolean {
     return (typeof error === 'object' || typeof error === 'function')
         && error !== null
         && 'code' in error
         && error.code === code;
 }
-async function statOrNull(value) {
+async function statOrNull(value: string): Promise<Stats | null> {
     try {
         return await lstat(value);
     }
@@ -196,14 +362,14 @@ async function statOrNull(value) {
         throw error;
     }
 }
-function compareNames(left, right) {
+function compareNames(left: Dirent, right: Dirent): number {
     if (left.name < right.name)
         return -1;
     if (left.name > right.name)
         return 1;
     return 0;
 }
-async function fingerprintFile(absolute, state = null) {
+async function fingerprintFile(absolute: string, state: FingerprintBudget | null = null): Promise<FingerprintFileResult> {
     const handle = await open(absolute, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
     try {
         const stats = await handle.stat();
@@ -222,15 +388,15 @@ async function fingerprintFile(absolute, state = null) {
         await handle.close();
     }
 }
-function fingerprintBudget() {
+function fingerprintBudget(): FingerprintBudget {
     return { entries: 0, bytes: 0 };
 }
-function countFingerprintEntry(state) {
+function countFingerprintEntry(state: FingerprintBudget): void {
     state.entries += 1;
     if (state.entries > MAX_FINGERPRINT_TREE_ENTRIES)
         throw new Error('managed paths exceed fingerprint entry limit');
 }
-async function directoryRecords(root, relative = '', state = fingerprintBudget()) {
+async function directoryRecords(root: string, relative = '', state = fingerprintBudget()): Promise<string[]> {
     const absolute = relative === '' ? root : containedPath(root, relative, 'tree path');
     const children = [];
     const directory = await opendir(absolute);
@@ -270,7 +436,7 @@ async function directoryRecords(root, relative = '', state = fingerprintBudget()
     }
     return records;
 }
-export async function fingerprintPath(absolute, state = fingerprintBudget()) {
+export async function fingerprintPath(absolute: string, state = fingerprintBudget()): Promise<FilesystemSnapshot | null> {
     const stats = await statOrNull(absolute);
     if (stats === null)
         return null;
@@ -297,10 +463,30 @@ export async function fingerprintPath(absolute, state = fingerprintBudget()) {
     }
     throw new Error(`unsupported managed path type: ${absolute}`);
 }
-function desiredSymlinkFingerprint(sourceAbsolute) {
+function desiredSymlinkFingerprint(sourceAbsolute: string): Fingerprint {
     return `symlink-sha256:${hashBytes(sourceAbsolute)}`;
 }
-function validateEntry(value, index) {
+function isEntryMethod(value: unknown): value is EntryMethod {
+    return typeof value === 'string' && ENTRY_METHODS.has(value);
+}
+
+function isEntryKind(value: unknown): value is EntryKind {
+    return typeof value === 'string' && ENTRY_KINDS.has(value);
+}
+
+function isLocationMode(value: unknown): value is LocationMode {
+    return typeof value === 'string' && LOCATION_MODES.has(value);
+}
+
+function isInstallMode(value: unknown): value is InstallMode {
+    return typeof value === 'string' && INSTALL_MODES.has(value);
+}
+
+function isTransactionOperation(value: unknown): value is TransactionOperation {
+    return typeof value === 'string' && TRANSACTION_OPERATIONS.has(value);
+}
+
+function validateEntry(value: unknown, index: number): asserts value is ManagedEntry {
     if (!isPlainObject(value))
         throw new Error(`managed[${index}] must be an object`);
     assertExactKeys(value, [
@@ -315,20 +501,44 @@ function validateEntry(value, index) {
     const managedPath = normalizeManagedPath(value.path, `managed[${index}].path`);
     assertUnreservedManagedPath(managedPath, `managed[${index}].path`);
     normalizeManagedPath(value.sourcePath, `managed[${index}].sourcePath`);
-    if (typeof value.method !== 'string' || !ENTRY_METHODS.has(value.method)) {
+    if (!isEntryMethod(value.method)) {
         throw new Error(`managed[${index}].method is invalid`);
     }
-    if (typeof value.sourceKind !== 'string' || !ENTRY_KINDS.has(value.sourceKind)) {
+    if (!isEntryKind(value.sourceKind)) {
         throw new Error(`managed[${index}].sourceKind is invalid`);
     }
-    if (typeof value.installedKind !== 'string' || !ENTRY_KINDS.has(value.installedKind)) {
+    if (!isEntryKind(value.installedKind)) {
         throw new Error(`managed[${index}].installedKind is invalid`);
     }
     assertNonEmptyString(value.sourceFingerprint, `managed[${index}].sourceFingerprint`);
     assertNonEmptyString(value.installedFingerprint, `managed[${index}].installedFingerprint`);
-    return value;
 }
-export function validateInstallManifest(value) {
+
+function assertManagedEntries(value: unknown[]): asserts value is ManagedEntry[] {
+    const seen = new Set<string>();
+    for (const [index, entry] of value.entries()) {
+        validateEntry(entry, index);
+        if (seen.has(entry.path))
+            throw new Error(`duplicate managed path: ${entry.path}`);
+        seen.add(entry.path);
+    }
+    assertDisjointManagedPaths(seen, 'install manifest managed');
+}
+
+function validateInstallOptions(value: unknown): asserts value is InstallOptions {
+    if (!isPlainObject(value))
+        throw new Error('install manifest options must be an object');
+    assertExactKeys(value, [
+        'dashboard',
+        'configureSubagentDepth',
+        'migrateOrchestrator',
+    ], 'install manifest options');
+    assertBoolean(value.dashboard, 'install manifest options.dashboard');
+    assertBoolean(value.configureSubagentDepth, 'install manifest options.configureSubagentDepth');
+    assertBoolean(value.migrateOrchestrator, 'install manifest options.migrateOrchestrator');
+}
+
+function assertValidInstallManifest(value: unknown): asserts value is InstallManifest {
     if (!isPlainObject(value))
         throw new Error('install manifest must be an object');
     assertExactKeys(value, [
@@ -346,40 +556,28 @@ export function validateInstallManifest(value) {
     if (value.product !== PRODUCT)
         throw new Error(`install manifest product must be ${PRODUCT}`);
     assertNonEmptyString(value.sourceVersion, 'install manifest sourceVersion');
-    if (typeof value.locationMode !== 'string' || !LOCATION_MODES.has(value.locationMode)) {
+    if (!isLocationMode(value.locationMode)) {
         throw new Error('install manifest locationMode is invalid');
     }
-    if (typeof value.installMode !== 'string' || !INSTALL_MODES.has(value.installMode)) {
+    if (!isInstallMode(value.installMode)) {
         throw new Error('install manifest installMode is invalid');
     }
-    if (!isPlainObject(value.options))
-        throw new Error('install manifest options must be an object');
-    assertExactKeys(value.options, [
-        'dashboard',
-        'configureSubagentDepth',
-        'migrateOrchestrator',
-    ], 'install manifest options');
-    assertBoolean(value.options.dashboard, 'install manifest options.dashboard');
-    assertBoolean(value.options.configureSubagentDepth, 'install manifest options.configureSubagentDepth');
-    assertBoolean(value.options.migrateOrchestrator, 'install manifest options.migrateOrchestrator');
+    validateInstallOptions(value.options);
     if (!Array.isArray(value.managed) || value.managed.length > MAX_MANAGED_ENTRIES) {
         throw new Error(`install manifest managed must contain at most ${MAX_MANAGED_ENTRIES} entries`);
     }
-    const seen = new Set();
-    for (const [index, entry] of value.managed.entries()) {
-        const validatedEntry = validateEntry(entry, index);
-        if (seen.has(validatedEntry.path))
-            throw new Error(`duplicate managed path: ${validatedEntry.path}`);
-        seen.add(validatedEntry.path);
-    }
-    assertDisjointManagedPaths(seen, 'install manifest managed');
+    assertManagedEntries(value.managed);
+}
+
+export function validateInstallManifest(value: unknown): InstallManifest {
+    assertValidInstallManifest(value);
     return value;
 }
-export function serializeInstallManifest(value) {
+export function serializeInstallManifest(value: unknown): string {
     validateInstallManifest(value);
     return `${JSON.stringify(value, null, 2)}\n`;
 }
-export async function loadInstallManifest(targetRoot) {
+export async function loadInstallManifest(targetRoot: string): Promise<InstallManifest | null> {
     const manifestPath = path.join(path.resolve(targetRoot), INSTALL_MANIFEST_FILE);
     const stats = await statOrNull(manifestPath);
     if (stats === null)
@@ -399,7 +597,7 @@ export async function loadInstallManifest(targetRoot) {
         await handle.close();
     }
 }
-function manifestState(manifest) {
+function manifestState(manifest: InstallManifest | null): FilesystemSnapshot | null {
     if (manifest === null)
         return null;
     return {
@@ -407,19 +605,26 @@ function manifestState(manifest) {
         fingerprint: `sha256:${hashBytes(serializeInstallManifest(manifest))}`,
     };
 }
-function validateTransactionState(value, label, withBackupPath) {
+function validateTransactionState(value: unknown, label: string, withBackupPath: true): BackedUpFilesystemSnapshot;
+function validateTransactionState(value: unknown, label: string, withBackupPath: false): FilesystemSnapshot;
+function validateTransactionState(value: unknown, label: string, withBackupPath: boolean): FilesystemSnapshot | BackedUpFilesystemSnapshot {
     if (!isPlainObject(value))
         throw new Error(`${label} must be an object`);
     const expected = withBackupPath ? ['kind', 'fingerprint', 'backupPath'] : ['kind', 'fingerprint'];
     assertExactKeys(value, expected, label);
-    if (typeof value.kind !== 'string' || !ENTRY_KINDS.has(value.kind))
+    if (!isEntryKind(value.kind))
         throw new Error(`${label}.kind is invalid`);
     assertFingerprint(value.fingerprint, `${label}.fingerprint`);
-    if (withBackupPath)
-        normalizeManagedPath(value.backupPath, `${label}.backupPath`);
-    return value;
+    if (withBackupPath) {
+        return {
+            kind: value.kind,
+            fingerprint: value.fingerprint,
+            backupPath: normalizeManagedPath(value.backupPath, `${label}.backupPath`),
+        };
+    }
+    return { kind: value.kind, fingerprint: value.fingerprint };
 }
-function validateOptionalManifest(value, label) {
+function validateOptionalManifest(value: unknown, label: string): InstallManifest | null {
     if (value === null)
         return null;
     try {
@@ -429,7 +634,7 @@ function validateOptionalManifest(value, label) {
         throw new Error(`${label}: ${error instanceof Error ? error.message : String(error)}`);
     }
 }
-export function validateInstallTransaction(value) {
+function assertValidInstallTransaction(value: unknown): asserts value is InstallTransaction {
     if (!isPlainObject(value))
         throw new Error('install transaction must be an object');
     assertExactKeys(value, [
@@ -449,7 +654,7 @@ export function validateInstallTransaction(value) {
     if (typeof value.transactionId !== 'string' || !TRANSACTION_ID_PATTERN.test(value.transactionId)) {
         throw new Error('install transaction transactionId is invalid');
     }
-    if (typeof value.operation !== 'string' || !TRANSACTION_OPERATIONS.has(value.operation)) {
+    if (!isTransactionOperation(value.operation)) {
         throw new Error('install transaction operation is invalid');
     }
     const beforeManifest = validateOptionalManifest(value.beforeManifest, 'install transaction beforeManifest');
@@ -462,9 +667,9 @@ export function validateInstallTransaction(value) {
         ...(afterManifest?.managed.map(entry => entry.path) ?? []),
     ]);
     assertDisjointManagedPaths(ownedPaths, 'install transaction manifests');
-    const seen = new Set();
-    let previousPath = null;
-    let manifestChange = null;
+    const seen = new Set<string>();
+    let previousPath: string | null = null;
+    let manifestChange: InstallTransactionChange | null = null;
     for (const [index, change] of value.changes.entries()) {
         const label = `install transaction changes[${index}]`;
         if (!isPlainObject(change))
@@ -492,7 +697,7 @@ export function validateInstallTransaction(value) {
         if (stateEqual(before, after))
             throw new Error(`${label} must change state`);
         if (managedPath === INSTALL_MANIFEST_FILE) {
-            manifestChange = change;
+            manifestChange = { path: managedPath, before, after };
         }
     }
     const manifestsDiffer = !manifestEqual(beforeManifest, afterManifest);
@@ -509,9 +714,13 @@ export function validateInstallTransaction(value) {
             throw new Error('install transaction manifest states are inconsistent');
         }
     }
+}
+
+export function validateInstallTransaction(value: unknown): InstallTransaction {
+    assertValidInstallTransaction(value);
     return value;
 }
-export function serializeInstallTransaction(value) {
+export function serializeInstallTransaction(value: unknown): string {
     validateInstallTransaction(value);
     const serialized = `${JSON.stringify(value, null, 2)}\n`;
     if (Buffer.byteLength(serialized) > MAX_INSTALL_TRANSACTION_BYTES) {
@@ -519,7 +728,7 @@ export function serializeInstallTransaction(value) {
     }
     return serialized;
 }
-async function loadJsonFile(absolute, maxBytes, label) {
+async function loadJsonFile(absolute: string, maxBytes: number, label: string): Promise<unknown> {
     const stats = await statOrNull(absolute);
     if (stats === null)
         throw new Error(`${label} is missing`);
@@ -535,7 +744,7 @@ async function loadJsonFile(absolute, maxBytes, label) {
         await handle.close();
     }
 }
-export async function loadInstallTransaction(targetRoot, transactionId) {
+export async function loadInstallTransaction(targetRoot: string, transactionId: unknown): Promise<InstallTransaction> {
     if (typeof transactionId !== 'string' || !TRANSACTION_ID_PATTERN.test(transactionId)) {
         throw new Error('rollback backup id is invalid');
     }
@@ -570,7 +779,7 @@ export async function loadInstallTransaction(targetRoot, transactionId) {
     }
     return receipt;
 }
-async function verifyAppliedTransaction({ targetRoot, transactionId, receiptPath, }) {
+async function verifyAppliedTransaction({ targetRoot, transactionId, receiptPath, }: VerifyAppliedTransactionInput): Promise<void> {
     if (typeof transactionId !== 'string' || !TRANSACTION_ID_PATTERN.test(transactionId)) {
         throw new Error('transaction backup id is invalid');
     }
@@ -608,7 +817,7 @@ async function verifyAppliedTransaction({ targetRoot, transactionId, receiptPath
         throw new Error('transaction result ownership manifest does not match the prepared receipt');
     }
 }
-export async function buildInstallManifest({ sourceRoot, locationMode, installMode, options, planEntries, }) {
+export async function buildInstallManifest({ sourceRoot, locationMode, installMode, options, planEntries, }: BuildInstallManifestInput): Promise<InstallManifest> {
     const resolvedSourceRoot = path.resolve(sourceRoot);
     if (typeof locationMode !== 'string' || !LOCATION_MODES.has(locationMode))
         throw new Error('locationMode is invalid');
@@ -671,20 +880,20 @@ export async function buildInstallManifest({ sourceRoot, locationMode, installMo
         managed,
     });
 }
-function stateMatches(current, entry) {
+function stateMatches(current: FilesystemSnapshot | null, entry: ManagedEntry): boolean {
     return current !== null
         && current.kind === entry.installedKind
         && current.fingerprint === entry.installedFingerprint;
 }
-function installedState(entry) {
+function installedState(entry: ManagedEntry): FilesystemSnapshot {
     return { kind: entry.installedKind, fingerprint: entry.installedFingerprint };
 }
-function backedUpState(state, managedPath) {
+function backedUpState(state: FilesystemSnapshot | null, managedPath: string): BackedUpFilesystemSnapshot | null {
     if (state === null)
         return null;
     return { kind: state.kind, fingerprint: state.fingerprint, backupPath: managedPath };
 }
-async function buildInstallTransaction({ transactionId, targetRoot, previousManifest, desiredManifest, operations, }) {
+async function buildInstallTransaction({ transactionId, targetRoot, previousManifest, desiredManifest, operations, }: BuildInstallTransactionInput): Promise<InstallTransaction | null> {
     const changes = [];
     for (const operation of operations) {
         if (!['create', 'update', 'conflict-unowned', 'conflict-modified', 'retire'].includes(operation.action))
@@ -718,19 +927,19 @@ async function buildInstallTransaction({ transactionId, targetRoot, previousMani
         changes,
     });
 }
-export async function classifyInstallPlan({ targetRoot, desiredManifest: desiredManifestValue, previousManifest: previousManifestValue, replaceConflicts = false, }) {
+export async function classifyInstallPlan({ targetRoot, desiredManifest: desiredManifestValue, previousManifest: previousManifestValue, replaceConflicts = false, }: ClassifyInstallPlanInput): Promise<InstallPlanOperation[]> {
     const desiredManifest = validateInstallManifest(desiredManifestValue);
     const previousManifest = previousManifestValue === null
         ? null
         : validateInstallManifest(previousManifestValue);
     const previousByPath = new Map(previousManifest?.managed.map(entry => [entry.path, entry]) ?? []);
     const desiredPaths = new Set(desiredManifest.managed.map(entry => entry.path));
-    const operations = [];
+    const operations: InstallPlanOperation[] = [];
     const targetBudget = fingerprintBudget();
     for (const entry of desiredManifest.managed) {
         const current = await fingerprintPath(await containedPathWithoutSymlinkParents(targetRoot, entry.path, 'target path'), targetBudget);
-        let action;
-        let reason;
+        let action: InstallPlanOperation['action'];
+        let reason: string;
         if (current === null) {
             action = 'create';
             reason = 'missing';
@@ -760,8 +969,8 @@ export async function classifyInstallPlan({ targetRoot, desiredManifest: desired
         if (!desiredPaths.has(entry.path)) {
             if (RETIRED_MANAGED_PATHS.has(entry.path)) {
                 const current = await fingerprintPath(await containedPathWithoutSymlinkParents(targetRoot, entry.path, 'retired target path'), targetBudget);
-                let action;
-                let reason;
+                let action: InstallPlanOperation['action'];
+                let reason: string;
                 if (current === null) {
                     action = 'retire-missing';
                     reason = 'previously-owned-already-missing';
@@ -791,7 +1000,7 @@ export async function classifyInstallPlan({ targetRoot, desiredManifest: desired
     }
     return operations;
 }
-function lifecycleTransaction({ transactionId, operation, beforeManifest, afterManifest, operations, }) {
+function lifecycleTransaction({ transactionId, operation, beforeManifest, afterManifest, operations, }: LifecycleTransactionInput): InstallTransaction | null {
     const changes = operations
         .filter(item => item.action === 'remove' || item.action === 'restore')
         .map(item => ({
@@ -812,7 +1021,7 @@ function lifecycleTransaction({ transactionId, operation, beforeManifest, afterM
         changes,
     });
 }
-function lifecycleConfirmationToken({ targetRoot, action, backupId, replaceConflicts, currentManifest, selectedReceipt, operations, }) {
+function lifecycleConfirmationToken({ targetRoot, action, backupId, replaceConflicts, currentManifest, selectedReceipt, operations, }: LifecycleConfirmationInput): string {
     const input = {
         target: path.resolve(targetRoot),
         action,
@@ -831,13 +1040,13 @@ function lifecycleConfirmationToken({ targetRoot, action, backupId, replaceConfl
     };
     return `sha256:${hashBytes(JSON.stringify(input))}`;
 }
-async function planRollback({ targetRoot, backupId, transactionId, replaceConflicts, }) {
+async function planRollback({ targetRoot, backupId, transactionId, replaceConflicts, }: RollbackPlanInput): Promise<LifecyclePlan> {
     const selectedReceipt = await loadInstallTransaction(targetRoot, backupId);
     const currentManifest = await loadInstallManifest(targetRoot);
     if (!manifestEqual(currentManifest, selectedReceipt.afterManifest)) {
         throw new Error('rollback is stale: current ownership manifest does not match the selected transaction');
     }
-    const operations = [];
+    const operations: LifecycleOperation[] = [];
     const budget = fingerprintBudget();
     for (const change of selectedReceipt.changes) {
         const current = await fingerprintPath(await containedPathWithoutSymlinkParents(targetRoot, change.path, 'rollback target path'), budget);
@@ -847,8 +1056,8 @@ async function planRollback({ targetRoot, backupId, transactionId, replaceConfli
         };
         const expected = change.after;
         const source = change.before === null ? '-' : `.naru-backups/${backupId}/${change.before.backupPath}`;
-        let action;
-        let reason;
+        let action: LifecycleOperation['action'];
+        let reason: string;
         if (stateEqual(current, desired)) {
             action = 'unchanged';
             reason = 'already-at-rollback-state';
@@ -892,11 +1101,11 @@ async function planRollback({ targetRoot, backupId, transactionId, replaceConfli
         }),
     };
 }
-async function planUninstall({ targetRoot, transactionId, replaceConflicts, }) {
+async function planUninstall({ targetRoot, transactionId, replaceConflicts, }: UninstallPlanInput): Promise<LifecyclePlan> {
     const currentManifest = await loadInstallManifest(targetRoot);
     if (currentManifest === null)
         throw new Error('uninstall requires a valid .naru-install.json ownership manifest');
-    const operations = [];
+    const operations: LifecycleOperation[] = [];
     const budget = fingerprintBudget();
     let preservedModified = 0;
     let preservedDashboard = 0;
@@ -994,7 +1203,7 @@ async function planUninstall({ targetRoot, transactionId, replaceConflicts, }) {
         }),
     };
 }
-export async function inferInstallSourceRoot(targetRoot, manifestValue) {
+export async function inferInstallSourceRoot(targetRoot: string, manifestValue: unknown): Promise<string | null> {
     const manifest = validateInstallManifest(manifestValue);
     let inferred = null;
     for (const entry of manifest.managed) {
@@ -1017,7 +1226,16 @@ export async function inferInstallSourceRoot(targetRoot, manifestValue) {
     }
     return inferred;
 }
-export async function inspectInstallManifest({ targetRoot, manifest: manifestValue, sourceRoot = null, }) {
+export async function inspectInstallManifest({ targetRoot, manifest: manifestValue, sourceRoot = null, }: {
+    targetRoot: string;
+    manifest: unknown;
+    sourceRoot?: string | null;
+}): Promise<Array<{
+    path: string;
+    method: EntryMethod;
+    installedStatus: 'healthy' | 'missing' | 'modified';
+    sourceStatus: 'unknown' | 'missing' | 'matched' | 'copy-stale' | 'symlink-live-source-changed';
+}>> {
     const manifest = validateInstallManifest(manifestValue);
     const resolvedSourceRoot = sourceRoot === null ? null : path.resolve(sourceRoot);
     const entries = [];
@@ -1025,12 +1243,12 @@ export async function inspectInstallManifest({ targetRoot, manifest: manifestVal
     const sourceBudget = fingerprintBudget();
     for (const entry of manifest.managed) {
         const current = await fingerprintPath(await containedPathWithoutSymlinkParents(targetRoot, entry.path, 'installed path'), installedBudget);
-        let installedStatus = 'healthy';
+        let installedStatus: 'healthy' | 'missing' | 'modified' = 'healthy';
         if (current === null)
             installedStatus = 'missing';
         else if (!stateMatches(current, entry))
             installedStatus = 'modified';
-        let sourceStatus = 'unknown';
+        let sourceStatus: 'unknown' | 'missing' | 'matched' | 'copy-stale' | 'symlink-live-source-changed' = 'unknown';
         if (resolvedSourceRoot !== null) {
             const source = await fingerprintPath(await containedPathWithoutSymlinkParents(resolvedSourceRoot, entry.sourcePath, 'source path'), sourceBudget);
             if (source === null)
@@ -1044,17 +1262,50 @@ export async function inspectInstallManifest({ targetRoot, manifest: manifestVal
     }
     return entries;
 }
-function parseBoolean(value, label) {
+interface PrepareArguments {
+    '--source': string;
+    '--target': string;
+    '--plan': string;
+    '--manifest-output': string;
+    '--operations-output': string;
+    '--receipt-output': string;
+    '--transaction-id': string;
+    '--location-mode': string;
+    '--install-mode': string;
+    '--dashboard': string;
+    '--configure-subagent-depth': string;
+    '--migrate-orchestrator': string;
+    '--replace-conflicts': string;
+}
+
+interface LifecycleArguments {
+    '--action': string;
+    '--target': string;
+    '--backup-id': string;
+    '--operations-output': string;
+    '--receipt-output': string;
+    '--token-output': string;
+    '--transaction-id': string;
+    '--replace-conflicts': string;
+}
+
+interface VerifyArguments {
+    '--target': string;
+    '--backup-id': string;
+    '--receipt': string;
+}
+
+function parseBoolean(value: string, label: string): boolean {
     if (value === 'true')
         return true;
     if (value === 'false')
         return false;
     throw new Error(`${label} must be true or false`);
 }
-function parseKeyValueArgs(argv, command, expected) {
+function parseKeyValueArgs<Key extends string>(argv: string[], command: string, expected: readonly Key[]): Record<Key, string> {
     if (argv[0] !== command)
         throw new Error(`expected ${command} command`);
-    const values = {};
+    const values: Record<string, string> = {};
     for (let index = 1; index < argv.length; index += 2) {
         const key = argv[index];
         const value = argv[index + 1];
@@ -1065,9 +1316,9 @@ function parseKeyValueArgs(argv, command, expected) {
         values[key] = value;
     }
     assertExactKeys(values, expected, `${command} arguments`);
-    return values;
+    return values as Record<Key, string>;
 }
-function parsePrepareArgs(argv) {
+function parsePrepareArgs(argv: string[]): PrepareArguments {
     const values = parseKeyValueArgs(argv, 'prepare', [
         '--source',
         '--target',
@@ -1085,9 +1336,23 @@ function parsePrepareArgs(argv) {
     ]);
     if (!TRANSACTION_ID_PATTERN.test(values['--transaction-id']))
         throw new Error('prepare transaction id is invalid');
-    return values;
+    return {
+        '--source': values['--source'],
+        '--target': values['--target'],
+        '--plan': values['--plan'],
+        '--manifest-output': values['--manifest-output'],
+        '--operations-output': values['--operations-output'],
+        '--receipt-output': values['--receipt-output'],
+        '--transaction-id': values['--transaction-id'],
+        '--location-mode': values['--location-mode'],
+        '--install-mode': values['--install-mode'],
+        '--dashboard': values['--dashboard'],
+        '--configure-subagent-depth': values['--configure-subagent-depth'],
+        '--migrate-orchestrator': values['--migrate-orchestrator'],
+        '--replace-conflicts': values['--replace-conflicts'],
+    };
 }
-function parseLifecycleArgs(argv) {
+function parseLifecycleArgs(argv: string[]): LifecycleArguments {
     const values = parseKeyValueArgs(argv, 'lifecycle', [
         '--action',
         '--target',
@@ -1109,9 +1374,18 @@ function parseLifecycleArgs(argv) {
     else if (values['--backup-id'] !== '-') {
         throw new Error('uninstall backup id must be -');
     }
-    return values;
+    return {
+        '--action': values['--action'],
+        '--target': values['--target'],
+        '--backup-id': values['--backup-id'],
+        '--operations-output': values['--operations-output'],
+        '--receipt-output': values['--receipt-output'],
+        '--token-output': values['--token-output'],
+        '--transaction-id': values['--transaction-id'],
+        '--replace-conflicts': values['--replace-conflicts'],
+    };
 }
-function parseVerifyArgs(argv) {
+function parseVerifyArgs(argv: string[]): VerifyArguments {
     const values = parseKeyValueArgs(argv, 'verify', [
         '--target',
         '--backup-id',
@@ -1119,9 +1393,13 @@ function parseVerifyArgs(argv) {
     ]);
     if (!TRANSACTION_ID_PATTERN.test(values['--backup-id']))
         throw new Error('verify backup id is invalid');
-    return values;
+    return {
+        '--target': values['--target'],
+        '--backup-id': values['--backup-id'],
+        '--receipt': values['--receipt'],
+    };
 }
-async function readPlan(planPath) {
+async function readPlan(planPath: string): Promise<InstallPlanEntry[]> {
     const handle = await open(planPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
     let text;
     try {
@@ -1133,18 +1411,21 @@ async function readPlan(planPath) {
     finally {
         await handle.close();
     }
-    const entries = [];
+    const entries: InstallPlanEntry[] = [];
     for (const [index, line] of text.split('\n').entries()) {
         if (line === '')
             continue;
         const fields = line.split('\t');
         if (fields.length !== 3)
             throw new Error(`plan line ${index + 1} is malformed`);
-        entries.push({ method: fields[0], source: fields[1], path: fields[2] });
+        const [method, source, entryPath] = fields;
+        if (method === undefined || source === undefined || entryPath === undefined)
+            throw new Error(`plan line ${index + 1} is malformed`);
+        entries.push({ method, source, path: entryPath });
     }
     return entries;
 }
-async function prepare(argv) {
+async function prepare(argv: string[]): Promise<void> {
     const values = parsePrepareArgs(argv);
     const planEntries = await readPlan(values['--plan']);
     const desiredManifest = await buildInstallManifest({
@@ -1183,7 +1464,7 @@ async function prepare(argv) {
     await writeFile(values['--operations-output'], `${lines.join('\n')}\n`, { mode: 0o600 });
     await writeFile(values['--receipt-output'], receipt === null ? '' : serializeInstallTransaction(receipt), { mode: 0o600 });
 }
-async function planLifecycle(argv) {
+async function planLifecycle(argv: string[]): Promise<void> {
     const values = parseLifecycleArgs(argv);
     const replaceConflicts = parseBoolean(values['--replace-conflicts'], '--replace-conflicts');
     const result = values['--action'] === 'rollback'
@@ -1209,7 +1490,7 @@ async function planLifecycle(argv) {
     await writeFile(values['--receipt-output'], result.receipt === null ? '' : serializeInstallTransaction(result.receipt), { mode: 0o600 });
     await writeFile(values['--token-output'], `${result.token}\n`, { mode: 0o600 });
 }
-async function verify(argv) {
+async function verify(argv: string[]): Promise<void> {
     const values = parseVerifyArgs(argv);
     await verifyAppliedTransaction({
         targetRoot: values['--target'],
@@ -1217,7 +1498,7 @@ async function verify(argv) {
         receiptPath: values['--receipt'],
     });
 }
-async function main() {
+async function main(): Promise<void> {
     try {
         const argv = process.argv.slice(2);
         if (argv[0] === 'prepare')
@@ -1234,7 +1515,7 @@ async function main() {
         process.exitCode = 1;
     }
 }
-function realpathOrNull(value) {
+function realpathOrNull(value: string): string | null {
     try {
         return realpathSync(value);
     }

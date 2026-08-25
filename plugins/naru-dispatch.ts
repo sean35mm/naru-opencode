@@ -16,11 +16,25 @@ import {
     parseModelsConfig,
     readAuthProviders,
 } from '../tools/naru-lib/dispatch.mjs';
+import type { ModelsConfig } from '../tools/naru-lib/dispatch.mjs';
+
+interface OpenCodeAgentConfig {
+    [key: string]: unknown;
+}
+
+interface OpenCodeConfig {
+    agent?: Record<string, OpenCodeAgentConfig>;
+    [key: string]: unknown;
+}
+
+interface OpenCodePluginHooks {
+    config(config: OpenCodeConfig): Promise<void>;
+}
 
 const CONFIG_PATH = fileURLToPath(new URL('../naru-runtime.json', import.meta.url));
 const MAX_CONFIG_BYTES = 64 * 1024;
 
-async function loadModelsConfig() {
+async function loadModelsConfig(): Promise<ModelsConfig> {
     let handle;
     try {
         handle = await open(CONFIG_PATH, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
@@ -44,11 +58,11 @@ async function loadModelsConfig() {
     }
 }
 
-export const NaruDispatchPlugin = async () => {
+export const NaruDispatchPlugin = async (): Promise<OpenCodePluginHooks> => {
     const classes = await loadModelsConfig();
     const authProviders = readAuthProviders();
     return {
-        config: async (config) => {
+        config: async (config: OpenCodeConfig) => {
             if (Object.keys(classes).length === 0) return;
             try {
                 applyVariantsToConfig(config, classes, authProviders);

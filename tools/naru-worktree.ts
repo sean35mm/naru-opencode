@@ -3,7 +3,10 @@ import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { errEnvelope, okEnvelope } from './naru-lib/output.mjs';
 import { cleanupWorktreeRun, createWorktreeRun, createWriterWorktree, finalizeWorktreeRun, integrateWriterWorktree, recoverWorktreeRun, worktreeRunSnapshot, } from './naru-lib/worktree.mjs';
+import type { WorktreeRegistry } from './naru-lib/worktree.mjs';
 import { loadRuntimeConfigFile, parseRuntimeConfig } from './naru-lib/runtime-config.mjs';
+import type { RuntimeConfig } from './naru-lib/runtime-config.mjs';
+import type { Spawn } from './naru-lib/transport.mjs';
 const TOOL_ID = 'naru-worktree';
 const DEFAULT_CONFIG_PATH = fileURLToPath(new URL('../naru-runtime.json', import.meta.url));
 const OPERATIONS = Object.freeze([
@@ -14,19 +17,41 @@ const OPERATIONS = Object.freeze([
     'snapshot',
     'finalize_run',
     'cleanup_run',
-]);
-function isOperationName(value) {
+] as const);
+type WorktreeOperation = typeof OPERATIONS[number];
+type WorktreeInput =
+    | { operation: 'prepare_item'; runId: string; itemId: string; ownedWriteScope: string[] }
+    | { operation: 'integrate_item'; runId: string; itemId: string }
+    | { operation: Exclude<WorktreeOperation, 'prepare_item' | 'integrate_item'>; runId: string };
+interface WorktreeToolArgs { input?: unknown }
+interface WorktreeToolContext {
+    agent?: string;
+    directory?: string;
+    worktree?: string;
+    runtimeConfig?: unknown;
+    runtimeConfigPath?: string;
+    spawn?: Spawn | undefined;
+    worktreeRegistry?: WorktreeRegistry | undefined;
+    worktreeRoot?: string | undefined;
+}
+interface WorktreeTool {
+    description: string;
+    args: Record<string, unknown>;
+    execute(args?: WorktreeToolArgs, context?: WorktreeToolContext): Promise<string>;
+}
+
+function isOperationName(value: unknown): value is WorktreeOperation {
     return typeof value === 'string' && OPERATIONS.some((operation) => operation === value);
 }
-function isErrorCode(error, code) {
+function isErrorCode(error: unknown, code: string): error is Error & { code: string } {
     return error instanceof Error && 'code' in error && error.code === code;
 }
-function assertUnknownRecord(value) {
+function assertUnknownRecord(value: unknown): asserts value is Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         throw new Error('input must be an object');
     }
 }
-async function runtimeConfig(context) {
+async function runtimeConfig(context: WorktreeToolContext): Promise<RuntimeConfig> {
     if (context?.runtimeConfig !== undefined)
         return parseRuntimeConfig(context.runtimeConfig);
     const path = context?.runtimeConfigPath ?? DEFAULT_CONFIG_PATH;
@@ -39,7 +64,7 @@ async function runtimeConfig(context) {
         throw error;
     }
 }
-function validate(raw) {
+function validate(raw: unknown): WorktreeInput {
     assertUnknownRecord(raw);
     const operation = raw.operation;
     if (!isOperationName(operation))
@@ -72,10 +97,10 @@ function validate(raw) {
     }
     return { operation, runId: raw.runId };
 }
-function errorText(error) {
+function errorText(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
-async function workspaceDirectory(context) {
+async function workspaceDirectory(context: WorktreeToolContext): Promise<string> {
     const directory = context.worktree ?? context.directory;
     if (typeof directory !== 'string' || !isAbsolute(directory) || directory.includes('\0')) {
         throw new Error('an absolute workspace directory is required');
@@ -85,7 +110,7 @@ async function workspaceDirectory(context) {
         throw new Error('workspace directory must be a directory');
     return directory;
 }
-const worktreeTool = {
+const worktreeTool: WorktreeTool = {
     description: 'Manage clean-repository isolated Naru writer worktrees and serialized integration. Never pushes or creates delivery commits.',
     args: {
         input: {

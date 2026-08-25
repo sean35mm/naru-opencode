@@ -33,6 +33,8 @@ Prefer to work from a clone? That still works and is what contributors use:
 ```sh
 git clone https://github.com/sean35mm/naru-opencode.git
 cd naru-opencode
+npm ci
+npm run build
 sh install.sh --preview
 sh install.sh --apply
 ```
@@ -173,10 +175,11 @@ That is the entire configuration surface. Prefer configuring the current project
 ## Tests and health
 
 ```sh
-npm test              # Node test runner over tests/*.test.mjs
+npm run typecheck
+npm test              # clean build, then the emitted Node test suite
 npm run test:bun      # Bun transport check
 npm run test:installer
-node tools/naru-doctor.js --json
+npm run doctor -- --json
 ```
 
 `naru-doctor` is read-only and provider-free: it reports on the local install and configuration and contacts nothing.

@@ -26,6 +26,8 @@ Clone Naru, review the preview, then apply the same option set:
 ```sh
 git clone https://github.com/sean35mm/naru-opencode.git
 cd naru-opencode
+npm ci
+npm run build
 sh install.sh --preview
 sh install.sh --apply
 ```
@@ -72,6 +74,8 @@ After pulling a new version, rerun the installer with the same location flags fo
 
 ```sh
 git pull
+npm ci
+npm run build
 sh install.sh --preview
 sh install.sh --apply
 ```
@@ -306,23 +310,28 @@ The bounded, path-sanitized report covers candidate global, project, and custom 
 ## Working on Naru itself
 
 ```sh
-npm test            # node --test over tests/*.test.mjs
+npm run typecheck
+npm test            # clean build, then the emitted Node suite
 npm run test:bun    # bun transport check
 npm run test:installer
 ```
 
-Sources are plain `.js` and `.mjs`; there is no build step.
+Authoritative source is `.ts`/`.mts`; `npm run build` emits the installed `.js`/`.mjs` runtime names
+into `.naru-build/`. Runtime validation remains authoritative at external boundaries.
 
 ## Manual install
 
 The installer is strongly preferred — a manual copy has no ownership manifest, so the doctor reports it as untracked and updates cannot preview or preserve conflicts. If you need one:
 
 ```sh
-mkdir -p ~/.config/opencode/skills ~/.config/opencode/agents ~/.config/opencode/tools
+npm ci
+npm run build
+mkdir -p ~/.config/opencode/skills ~/.config/opencode/agents ~/.config/opencode/tools ~/.config/opencode/plugins
 cp -R skills/naru-* ~/.config/opencode/skills/
 cp agents/naru-*.md ~/.config/opencode/agents/
-cp tools/naru-*.js tools/package.json ~/.config/opencode/tools/
-cp -R tools/naru-lib ~/.config/opencode/tools/
+cp .naru-build/tools/naru-*.js .naru-build/tools/package.json ~/.config/opencode/tools/
+cp -R .naru-build/tools/naru-lib ~/.config/opencode/tools/
+cp .naru-build/plugins/naru-dispatch.js ~/.config/opencode/plugins/
 cp naru-runtime.example.json ~/.config/opencode/
 ```
 
@@ -343,7 +352,7 @@ Naru does not modify your `AGENTS.md`, your optional `naru-runtime.json`, unrela
 
 ### Agents or skills look stale
 
-Run the installed doctor with `--source /path/to/naru-opencode` to spot stale copy-pinned state. Preview `install.sh` with the original options, review any conflicts, apply, then restart OpenCode. Tools and helpers are copy-pinned even when Markdown is symlinked, and every loaded global and project scope needs the update.
+Run the installed doctor with `--source /path/to/naru-opencode` to spot stale copy-pinned state. Run `npm ci` and `npm run build` in the checkout, preview `install.sh` with the original options, review any conflicts, apply, then restart OpenCode. Tools and helpers are copy-pinned even when Markdown is symlinked, and every loaded global and project scope needs the update.
 
 ### The installer reports a conflict
 

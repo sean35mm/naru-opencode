@@ -16,16 +16,38 @@ import {
   recoverWorktreeRun,
   worktreeRunSnapshot,
 } from '../tools/naru-lib/worktree.mjs';
+import type { PersistedWorktreeMetadata, WorktreeRegistry } from '../tools/naru-lib/worktree.mjs';
+import type { ProcessResult, Spawn, SpawnOptions } from '../tools/naru-lib/transport.mjs';
 
-function nodeSpawn(argv, { cwd, input } = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(argv[0], argv.slice(1), { cwd, env: { ...process.env, NO_COLOR: '1' } });
-    const stdout = [];
-    const stderr = [];
-    child.stdout.on('data', (chunk) => stdout.push(chunk));
-    child.stderr.on('data', (chunk) => stderr.push(chunk));
+interface WorktreeFixture {
+  root: string;
+  repository: string;
+  worktreeRoot: string;
+}
+
+interface WorktreeToolOutput {
+  ok: boolean;
+  error?: string;
+  data: {
+    finalized: boolean;
+    items: Array<{ itemId: string }>;
+  };
+}
+
+const nodeSpawn: Spawn = (argv: string[], { cwd, input }: SpawnOptions = {}): Promise<ProcessResult> => {
+  return new Promise<ProcessResult>((resolve, reject) => {
+    const command = argv[0];
+    if (command === undefined) throw new Error('spawn command is required');
+    const child = spawn(command, argv.slice(1), {
+      ...(cwd === undefined ? {} : { cwd }),
+      env: { ...process.env, NO_COLOR: '1' },
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
     child.once('error', reject);
-    child.once('exit', (code) => resolve({
+    child.once('exit', (code: number | null) => resolve({
       ok: code === 0,
       code,
       stdout: Buffer.concat(stdout).toString('utf8'),
@@ -36,15 +58,15 @@ function nodeSpawn(argv, { cwd, input } = {}) {
     if (input !== undefined) child.stdin.end(input);
     else child.stdin.end();
   });
-}
+};
 
-async function git(repository, ...args) {
+async function git(repository: string, ...args: string[]): Promise<string> {
   const result = await nodeSpawn(['git', ...args], { cwd: repository });
   assert.equal(result.ok, true, result.stderr);
   return result.stdout.trim();
 }
 
-async function fixture() {
+async function fixture(): Promise<WorktreeFixture> {
   const root = await mkdtemp(join(tmpdir(), 'naru-worktree-test-'));
   const repository = join(root, 'repository');
   await mkdir(join(repository, 'src'), { recursive: true });
@@ -61,7 +83,7 @@ async function fixture() {
 test('isolated writers integrate serially and leave the main branch uncommitted', async (t) => {
   const { root, repository, worktreeRoot } = await fixture();
   t.after(() => rm(root, { recursive: true, force: true }));
-  const stateRegistry = new Map();
+  const stateRegistry: WorktreeRegistry = new Map();
   const run = await createWorktreeRun({
     directory: repository,
     runId: 'run-a',
@@ -91,7 +113,7 @@ test('isolated writers integrate serially and leave the main branch uncommitted'
   await writeFile(join(b.path, 'src/b.txt'), 'b1\n');
   await writeFile(join(b.path, 'src/new.txt'), 'new\n');
 
-  const activeRegistry = new Map();
+  const activeRegistry: WorktreeRegistry = new Map();
   const active = await recoverWorktreeRun({
     directory: repository,
     runId: 'run-a',
@@ -115,7 +137,7 @@ test('isolated writers integrate serially and leave the main branch uncommitted'
   assert.equal(await git(repository, 'rev-parse', 'HEAD'), baseSha);
   assert.match(await git(repository, 'status', '--porcelain'), /src\/a\.txt/);
 
-  const recoveredRegistry = new Map();
+  const recoveredRegistry: WorktreeRegistry = new Map();
   const recoveryOutput = JSON.parse(await worktreeTool.execute({
     input: { operation: 'recover_run', runId: 'run-a' },
   }, {
@@ -125,7 +147,7 @@ test('isolated writers integrate serially and leave the main branch uncommitted'
     worktreeRoot,
     spawn: nodeSpawn,
     worktreeRegistry: recoveredRegistry,
-  }));
+  })) as WorktreeToolOutput;
   assert.equal(recoveryOutput.ok, true, recoveryOutput.error);
   assert.equal(recoveryOutput.data.finalized, true);
   assert.deepEqual(recoveryOutput.data.items.map((item) => item.itemId), ['a', 'b']);
@@ -139,7 +161,7 @@ test('isolated writers integrate serially and leave the main branch uncommitted'
 test('worktree integration rejects out-of-scope changes and cleanup before finalization', async (t) => {
   const { root, repository, worktreeRoot } = await fixture();
   t.after(() => rm(root, { recursive: true, force: true }));
-  const stateRegistry = new Map();
+  const stateRegistry: WorktreeRegistry = new Map();
   await createWorktreeRun({
     directory: repository,
     runId: 'run-b',
@@ -189,9 +211,9 @@ test('isolated writer mode refuses dirty repositories and tool mode can be disab
     spawn: nodeSpawn,
     worktreeRoot,
     worktreeRegistry: new Map(),
-  }));
+  })) as WorktreeToolOutput;
   assert.equal(output.ok, false);
-  assert.match(output.error, /isolated writer mode is disabled/);
+  assert.match(output.error ?? '', /isolated writer mode is disabled/);
 });
 
 test('worktree tool denies unauthorized callers and invalid workspace paths before Git I/O', async (t) => {
@@ -211,16 +233,16 @@ test('worktree tool denies unauthorized callers and invalid workspace paths befo
     worktreeRegistry: new Map(),
   };
 
-  const denied = JSON.parse(await worktreeTool.execute(input, context));
+  const denied = JSON.parse(await worktreeTool.execute(input, context)) as WorktreeToolOutput;
   assert.equal(denied.ok, false);
-  assert.match(denied.error, /restricted to naru-orchestrator/);
+  assert.match(denied.error ?? '', /restricted to naru-orchestrator/);
   const invalidDirectory = JSON.parse(await worktreeTool.execute(input, {
     ...context,
     agent: 'naru-orchestrator',
     directory: 'relative/repository',
-  }));
+  })) as WorktreeToolOutput;
   assert.equal(invalidDirectory.ok, false);
-  assert.match(invalidDirectory.error, /absolute workspace directory/);
+  assert.match(invalidDirectory.error ?? '', /absolute workspace directory/);
   assert.equal(spawnCalls, 0);
 });
 
@@ -231,12 +253,12 @@ test('worktree creation rejects a symlinked repository-name ancestor before exte
   await mkdir(worktreeRoot);
   await mkdir(externalDirectory);
   await symlink(externalDirectory, join(worktreeRoot, basename(repository)));
-  const calls = [];
-  const trackedSpawn = (argv, options) => {
+  const calls: string[][] = [];
+  const trackedSpawn: Spawn = (argv, options) => {
     calls.push(argv);
     return nodeSpawn(argv, options);
   };
-  const stateRegistry = new Map();
+  const stateRegistry: WorktreeRegistry = new Map();
 
   await assert.rejects(
     createWorktreeRun({
@@ -260,12 +282,12 @@ test('Naru worktree creation defaults to fifty writers and disables checkout hoo
   const hook = join(repository, '.git/hooks/post-checkout');
   await writeFile(hook, `#!/bin/sh\n: > ${JSON.stringify(marker)}\n`);
   await chmod(hook, 0o700);
-  const calls = [];
-  const trackedSpawn = (argv, options) => {
+  const calls: string[][] = [];
+  const trackedSpawn: Spawn = (argv, options) => {
     calls.push(argv);
     return nodeSpawn(argv, options);
   };
-  const stateRegistry = new Map();
+  const stateRegistry: WorktreeRegistry = new Map();
   const run = await createWorktreeRun({
     directory: repository,
     runId: 'run-hooks',
@@ -323,7 +345,7 @@ test('mutating operations serialize per run and release the lock after rejection
   await writeFile(join(accepted.path, 'src/b.txt'), 'accepted\n');
   let active = 0;
   let maximumActive = 0;
-  const delayedSpawn = async (argv, options) => {
+  const delayedSpawn: Spawn = async (argv, options) => {
     active += 1;
     maximumActive = Math.max(maximumActive, active);
     await delay(15);
@@ -342,7 +364,9 @@ test('mutating operations serialize per run and release the lock after rejection
   assert.match(results[0].reason.message, /outside rejected ownership/);
   assert.equal(results[1].status, 'fulfilled');
   assert.equal(maximumActive, 1);
-  assert.equal(worktreeRunSnapshot('run-lock', stateRegistry).items[1].integrated, true);
+  const acceptedItem = worktreeRunSnapshot('run-lock', stateRegistry).items[1];
+  assert.ok(acceptedItem);
+  assert.equal(acceptedItem.integrated, true);
 });
 
 test('metadata replacement is private and recovery rejects malformed or inconsistent state', async (t) => {
@@ -368,7 +392,7 @@ test('metadata replacement is private and recovery rejects malformed or inconsis
   assert.equal((await stat(metadataPath)).mode & 0o777, 0o600);
   assert.deepEqual((await readdir(runRoot)).filter((name) => name.endsWith('.tmp')), []);
 
-  const metadata = JSON.parse(await readFile(metadataPath, 'utf8'));
+  const metadata = JSON.parse(await readFile(metadataPath, 'utf8')) as PersistedWorktreeMetadata;
   metadata.finalized = true;
   await writeFile(metadataPath, `${JSON.stringify(metadata)}\n`, { mode: 0o600 });
   await assert.rejects(

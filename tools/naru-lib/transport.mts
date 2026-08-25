@@ -7,23 +7,90 @@ const DEFAULT_KILL_GRACE_MS = 1000;
 const FINALIZATION_GRACE_MS = 250;
 const MAX_TIMEOUT_MS = 60 * 60 * 1000;
 const MAX_KILL_GRACE_MS = 30000;
-function isBunRuntime(value) {
+
+export interface ProcessResult {
+    ok: boolean;
+    code: number | null;
+    stdout: string;
+    stderr: string;
+    stdoutTruncated?: boolean;
+    stderrTruncated?: boolean;
+    timedOut?: true;
+    terminationEscalated?: boolean;
+}
+
+export interface RunOptions {
+    spawn?: Spawn | undefined;
+    input?: string | undefined;
+    cwd?: string | undefined;
+    timeout?: number | undefined;
+    maxBytes?: number | undefined;
+    killGraceMs?: number | undefined;
+}
+
+export type SpawnOptions = Omit<RunOptions, 'spawn'>;
+export type Spawn = (argv: string[], options?: SpawnOptions) => PromiseLike<ProcessResult> | ProcessResult;
+
+interface BunSpawnOptions {
+    cwd?: string | undefined;
+    stdin: 'ignore' | Uint8Array;
+    stdout: 'pipe';
+    stderr: 'pipe';
+    env: Record<string, string | undefined>;
+}
+
+interface BunReadablePipe {
+    getReader(): ReadableStreamDefaultReader<Uint8Array>;
+}
+
+interface BunSpawnedProcess {
+    stdout: BunReadablePipe;
+    stderr: BunReadablePipe;
+    exited: PromiseLike<number>;
+    kill(signal: NodeJS.Signals): unknown;
+}
+
+interface BunRuntime {
+    spawn(argv: string[], options: BunSpawnOptions): BunSpawnedProcess;
+}
+
+interface CaptureSnapshot {
+    buffer: Buffer;
+    truncated: boolean;
+    error: unknown;
+}
+
+interface Capture {
+    promise: Promise<void>;
+    snapshot(): CaptureSnapshot;
+    cancel(): void;
+}
+
+type WaitResult<T> =
+    | { timedOut: true; value?: undefined; error?: undefined }
+    | { timedOut: false; value: T; error?: undefined }
+    | { timedOut: false; value?: undefined; error: unknown };
+
+function isBunRuntime(value: unknown): value is BunRuntime {
     return value !== null
         && (typeof value === 'object' || typeof value === 'function')
         && 'spawn' in value
         && typeof value.spawn === 'function';
 }
-function getBunRuntime() {
-    const runtime = Object.getOwnPropertyDescriptor(globalThis, 'Bun')?.value;
+
+function getBunRuntime(): BunRuntime {
+    const runtime: unknown = Object.getOwnPropertyDescriptor(globalThis, 'Bun')?.value;
     if (!isBunRuntime(runtime)) {
         throw new Error('Bun.spawn is unavailable; this transport requires Bun in production');
     }
     return runtime;
 }
-function isStringArray(value) {
+
+function isStringArray(value: unknown): value is string[] {
     return Array.isArray(value) && value.every(item => typeof item === 'string');
 }
-function truncateUtf8(buf, maxBytes) {
+
+function truncateUtf8(buf: Buffer, maxBytes: number): { text: string; truncated: boolean } {
     if (buf.length <= maxBytes)
         return { text: buf.toString('utf-8'), truncated: false };
     const slice = buf.subarray(0, maxBytes);
@@ -33,13 +100,14 @@ function truncateUtf8(buf, maxBytes) {
     }
     return { text: slice.subarray(0, end).toString('utf-8'), truncated: true };
 }
-function capture(reader, maxBytes) {
-    const chunks = [];
+
+function capture(reader: ReadableStreamDefaultReader<Uint8Array>, maxBytes: number): Capture {
+    const chunks: Buffer[] = [];
     let kept = 0;
     let truncated = false;
     let cancelled = false;
-    let error;
-    const promise = (async () => {
+    let error: unknown;
+    const promise = (async (): Promise<void> => {
         try {
             while (true) {
                 const { done, value } = await reader.read();
@@ -77,7 +145,8 @@ function capture(reader, maxBytes) {
         },
     };
 }
-function waitFor(promise, timeoutMs) {
+
+function waitFor<T>(promise: PromiseLike<T>, timeoutMs: number): Promise<WaitResult<T>> {
     return new Promise((resolve) => {
         let settled = false;
         const timer = setTimeout(() => {
@@ -92,7 +161,7 @@ function waitFor(promise, timeoutMs) {
             settled = true;
             clearTimeout(timer);
             resolve({ timedOut: false, value });
-        }, (error) => {
+        }, (error: unknown) => {
             if (settled)
                 return;
             settled = true;
@@ -101,7 +170,14 @@ function waitFor(promise, timeoutMs) {
         });
     });
 }
-function resultFromCaptures({ exitCode, stdoutCapture, stderrCapture, timedOut, terminationEscalated, }) {
+
+function resultFromCaptures({ exitCode, stdoutCapture, stderrCapture, timedOut, terminationEscalated, }: {
+    exitCode: number | null;
+    stdoutCapture: Capture;
+    stderrCapture: Capture;
+    timedOut: boolean;
+    terminationEscalated: boolean;
+}): ProcessResult {
     const stdoutResult = stdoutCapture.snapshot();
     const stderrResult = stderrCapture.snapshot();
     if (!timedOut && stdoutResult.error)
@@ -117,10 +193,11 @@ function resultFromCaptures({ exitCode, stdoutCapture, stderrCapture, timedOut, 
         stderr: err.text,
         stdoutTruncated: stdoutResult.truncated || out.truncated,
         stderrTruncated: stderrResult.truncated || err.truncated,
-        ...(timedOut ? { timedOut: true, terminationEscalated } : {}),
+        ...(timedOut ? { timedOut: true as const, terminationEscalated } : {}),
     };
 }
-function kill(proc, signal) {
+
+function kill(proc: BunSpawnedProcess, signal: NodeJS.Signals): void {
     try {
         proc.kill(signal);
     }
@@ -128,7 +205,14 @@ function kill(proc, signal) {
         // ignore
     }
 }
-function validateOptions({ timeout, maxBytes, killGraceMs }, prefix) {
+
+interface ValidatedOptions {
+    timeout: number;
+    maxBytes: number;
+    killGraceMs: number;
+}
+
+function validateOptions({ timeout, maxBytes, killGraceMs }: ValidatedOptions, prefix: string): void {
     if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > MAX_TIMEOUT_MS) {
         throw new Error(`${prefix} timeout must be from 1 to ${MAX_TIMEOUT_MS} milliseconds`);
     }
@@ -139,7 +223,8 @@ function validateOptions({ timeout, maxBytes, killGraceMs }, prefix) {
         throw new Error(`${prefix} killGraceMs must be from 1 to ${MAX_KILL_GRACE_MS} milliseconds`);
     }
 }
-async function defaultSpawn(argv, { input, cwd, timeout = DEFAULT_TIMEOUT, maxBytes = DEFAULT_MAX_BYTES, killGraceMs = DEFAULT_KILL_GRACE_MS, } = {}) {
+
+async function defaultSpawn(argv: string[], { input, cwd, timeout = DEFAULT_TIMEOUT, maxBytes = DEFAULT_MAX_BYTES, killGraceMs = DEFAULT_KILL_GRACE_MS, }: SpawnOptions = {}): Promise<ProcessResult> {
     validateOptions({ timeout, maxBytes, killGraceMs }, 'run');
     const proc = getBunRuntime().spawn(argv, {
         cwd,
@@ -191,7 +276,8 @@ async function defaultSpawn(argv, { input, cwd, timeout = DEFAULT_TIMEOUT, maxBy
         terminationEscalated,
     });
 }
-export async function run(argv, { spawn, input, cwd, timeout, maxBytes, killGraceMs } = {}) {
+
+export async function run(argv: unknown, { spawn, input, cwd, timeout, maxBytes, killGraceMs }: RunOptions = {}): Promise<ProcessResult> {
     const spawner = spawn || defaultSpawn;
     if (!Array.isArray(argv))
         throw new Error('run argv must be an array');
@@ -206,4 +292,5 @@ export async function run(argv, { spawn, input, cwd, timeout, maxBytes, killGrac
     }, 'run');
     return spawner(argv, { input, cwd, timeout, maxBytes, killGraceMs });
 }
+
 export { defaultSpawn };

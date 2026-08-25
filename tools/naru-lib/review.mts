@@ -1,10 +1,10 @@
 // Validated PR review posting. This module exposes no caller-
 // controlled command, HTTP method, endpoint, environment, or working directory.
 import { createHash } from 'node:crypto';
-import { run } from './transport.mjs';
+import { run, type Spawn } from './transport.mjs';
 import { okEnvelope, errEnvelope } from './output.mjs';
-import { fetchAuthenticatedLogin, pullSnapshot, pullManifest, pullFileBatchesAtManifest, pullFeedbackPage } from './github.mjs';
-import { assertPlainObject, validateAllowedKeys, isSafeOwner, isSafeRepo, isPositiveInteger, is40HexSha, isSafeRelativePath, isNonEmptyString, isBoolean, safeError, stripSecrets, requireField, } from './validate.mjs';
+import { fetchAuthenticatedLogin, pullSnapshot, pullManifest, pullFileBatchesAtManifest, pullFeedbackPage, type FeedbackKind, type FileEvidenceSummary, type NormalizedCommentItem, type NormalizedReviewItem, type PullIdentity, type PullManifest, type PullSnapshot, type PullTarget } from './github.mjs';
+import { assertPlainObject, validateAllowedKeys, isSafeOwner, isSafeRepo, isPositiveInteger, is40HexSha, isSafeRelativePath, isNonEmptyString, isBoolean, safeError, stripSecrets, requireField, type UnknownRecord, } from './validate.mjs';
 const MAX_BODY_LENGTH = 64 * 1024;
 const MAX_COMMENT_BODY_LENGTH = 32 * 1024;
 const MAX_COMMENTS = 100;
@@ -17,49 +17,127 @@ const MAX_GH_BYTES = 32 * 1024 * 1024;
 const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
 const SEVERITIES = ['Critical', 'High', 'Medium', 'Low'];
 const CONFIDENCE = ['High', 'Medium', 'Low'];
-const SUBMISSION_POLICY_EVENTS = Object.freeze({
-    'comment-only': new Set(['COMMENT']),
-    'approve-if-clear': new Set(['COMMENT', 'APPROVE']),
-    'request-changes-if-blocked': new Set(['COMMENT', 'REQUEST_CHANGES']),
-    'select-state': new Set(['COMMENT', 'APPROVE', 'REQUEST_CHANGES']),
+const SUBMISSION_POLICY_EVENTS: Readonly<Record<SubmissionPolicy, ReadonlySet<ReviewEvent>>> = Object.freeze({
+    'comment-only': new Set<ReviewEvent>(['COMMENT']),
+    'approve-if-clear': new Set<ReviewEvent>(['COMMENT', 'APPROVE']),
+    'request-changes-if-blocked': new Set<ReviewEvent>(['COMMENT', 'REQUEST_CHANGES']),
+    'select-state': new Set<ReviewEvent>(['COMMENT', 'APPROVE', 'REQUEST_CHANGES']),
 });
 const SNAPSHOT_ID = /^naru-snap-[0-9a-f]{64}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
 const POSTING_AGENTS = new Set(['naru-orchestrator']);
 const MAX_TRACKED_POST_TARGETS = 128;
-const postLocks = new Map();
-const postRecords = new Map();
-function hash(value) {
+export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
+export type Severity = 'Critical' | 'High' | 'Medium' | 'Low';
+export type Confidence = 'High' | 'Medium' | 'Low';
+export type ReviewSide = 'LEFT' | 'RIGHT';
+export type SubmissionPolicy = 'comment-only' | 'approve-if-clear' | 'request-changes-if-blocked' | 'select-state';
+export type SubmissionMode = 'complete' | 'limited';
+export type ReviewConclusion = 'informational' | 'clear' | 'blocking';
+export type ReviewEvent = 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES';
+export interface ReviewTarget { owner: string; repo: string; number: number }
+export interface ReviewSnapshotV2V3 { id: string; baseSha: string; headSha: string; feedbackDigest: string; complete: boolean; warnings: string[] }
+export interface ReviewSnapshotV4 { id: string; baseSha: string; headSha: string; feedbackDigest: string; evidenceDigest: string; warnings: string[] }
+export interface CoverageV2 { complete: boolean; limitations: string[]; posture?: never; ledger?: never }
+export interface CoverageV3 { posture: SubmissionMode; limitations: string[]; ledger?: never }
+export type CoverageStatus = 'reviewed' | 'blocked' | 'excluded';
+export type CoverageEvidence = 'current-patch' | 'recovered-patch' | 'alternate' | 'none';
+export interface CoverageLedgerEntry { path: string; status: CoverageStatus; evidence: CoverageEvidence; note?: string }
+export interface DeclaredFileBatch { paths: string[]; batchDigest: string }
+export interface DeclaredFeedbackPage { kind: FeedbackKind; page: number; pageDigest: string }
+export interface CoverageV4 {
+    ledger: CoverageLedgerEntry[]; fileBatches: DeclaredFileBatch[]; feedbackPages: DeclaredFeedbackPage[];
+    feedbackAcknowledged: true; feedbackDigest: string; limitations?: never; posture?: never;
+}
+interface FindingCore { body: string; priority: Priority; severity: Severity; confidence: Confidence }
+export type ReviewFinding = FindingCore & (
+    | { path?: undefined; line?: undefined; side?: undefined }
+    | { path: string; line?: undefined; side?: undefined }
+    | { path: string; line: number; side: ReviewSide }
+);
+export interface InlineComment extends FindingCore { path: string; line: number; side: ReviewSide }
+export interface SkippedInlineComment { path: string; line: number; side: ReviewSide; reason: string }
+export interface ReviewPayloadV2 { schemaVersion: 2; target: ReviewTarget; snapshot: ReviewSnapshotV2V3; coverage: CoverageV2; body: string; summary?: never; submissionMode?: never; inlineComments: InlineComment[]; skippedInlineComments: SkippedInlineComment[]; findings?: never; supersedes?: never }
+export interface ReviewPayloadV3 { schemaVersion: 3; target: ReviewTarget; snapshot: ReviewSnapshotV2V3; coverage: CoverageV3; body: string; summary?: never; submissionMode?: never; submissionPolicy: SubmissionPolicy; conclusion: ReviewConclusion; findings: ReviewFinding[]; supersedes?: never }
+export interface ReviewPayloadV4 { schemaVersion: 4; target: ReviewTarget; snapshot: ReviewSnapshotV4; coverage: CoverageV4; body?: never; inlineComments?: never; submissionMode: SubmissionMode; summary: string; submissionPolicy: SubmissionPolicy; conclusion: ReviewConclusion; findings: ReviewFinding[]; supersedes?: { reviewId: number; digest: string } }
+export type ReviewPayload = ReviewPayloadV2 | ReviewPayloadV3 | ReviewPayloadV4;
+export interface LocationValidation { valid: InlineComment[]; dropped: Array<{ comment: InlineComment; reason: string }> }
+export interface FindingValidation {
+    validInline: ReviewFinding[]; invalid: Array<{ finding: ReviewFinding; reason: string | undefined }>;
+    nonInline: Array<{ finding: ReviewFinding; reason: string | undefined; displayPath: string | undefined }>;
+    eligibleBlockers: ReviewFinding[];
+}
+export interface SubmissionDecision {
+    event: ReviewEvent; evidencePosture: SubmissionMode; limitations: string[];
+    limitationDetails?: Array<string | { path: string; reason: string; [key: string]: unknown }>;
+    droppedBlocker?: boolean; authorizationPolicy: SubmissionPolicy; droppedFindings?: DroppedFinding[];
+}
+export interface DroppedFinding { finding: ReviewFinding; reason: string; fingerprint?: string; suppressedFromPosting?: true; retainedForDecision?: true; eligibleBlocker?: boolean }
+export type PostOutcomeState =
+    | { postAttempted: false; correctable: true; outcomeUnknown: false }
+    | { postAttempted: false; correctable: false; outcomeUnknown: false }
+    | { postAttempted: true; correctable: false; outcomeUnknown: false }
+    | { postAttempted: true; correctable: false; outcomeUnknown: true };
+export type ReviewPostOutcome =
+    | { ok: false; postAttempted: false; correctable: true; outcomeUnknown: false; error: unknown }
+    | { ok: false; postAttempted: false; correctable: false; outcomeUnknown: false; error: unknown }
+    | { ok: true; postAttempted: true; correctable: false; outcomeUnknown: false; data: { posted: true; [key: string]: unknown } }
+    | { ok: true; postAttempted: false; correctable: false; outcomeUnknown: false; data: { posted: false; reason: 'alreadyPosted'; [key: string]: unknown } }
+    | { ok: false; postAttempted: true; correctable: false; outcomeUnknown: true; error: unknown };
+export type ReviewValidationResult = LocationValidation | FindingValidation;
+export interface PostRecord extends SubmissionDecision { actor: string; headSha: string; digest: string; status: 'unknown' | 'succeeded'; reviewId?: unknown; reviewUrl?: string | undefined }
+interface PostLock { tail: Promise<void>; queued: number }
+type RuntimeEvidenceFile = Omit<FileEvidenceSummary, 'bytesUsed'> & { bytesUsed?: number };
+interface RuntimeSnapshot extends PullIdentity {
+    pull: { state?: string | undefined; draft?: boolean | undefined; author?: string | undefined; contentDigest: string; [key: string]: unknown };
+    files: RuntimeEvidenceFile[]; reviews: NormalizedReviewItem[]; reviewComments: NormalizedCommentItem[];
+    issueComments: NormalizedCommentItem[]; complete: boolean; warnings: string[];
+    reviewability: { status: 'complete' | 'limited-comment' | 'manifest' | 'unpostable'; inventoryComplete: boolean; feedbackComplete: boolean; patchesComplete: boolean; limitations: string[] };
+    completeness: { allFilesIncluded: boolean; feedbackComplete: boolean; patchesComplete: boolean; [key: string]: unknown };
+}
+type ReviewMarker = { reviewId: unknown; url?: string | undefined; state?: string | undefined; author?: string | undefined; owner: string; repo: string; number: number; headSha: string; digest: string; version?: number | undefined; posture?: string | undefined; supersedes?: number | undefined };
+const postLocks = new Map<string, PostLock>();
+const postRecords = new Map<string, PostRecord>();
+function hash(value: string): string {
     return createHash('sha256').update(value).digest('hex');
 }
-function postState(result, { postAttempted = false, correctable = false, outcomeUnknown = false } = {}) {
+function postState<T extends object>(result: T, { postAttempted = false, correctable = false, outcomeUnknown = false }: { postAttempted?: boolean; correctable?: boolean; outcomeUnknown?: boolean } = {}): T & { postAttempted: boolean; correctable: boolean; outcomeUnknown: boolean } {
     return { ...result, postAttempted, correctable, outcomeUnknown };
 }
-function postError(error, state) {
+function postError(error: unknown, state?: { postAttempted?: boolean; correctable?: boolean; outcomeUnknown?: boolean }) {
     return postState(errEnvelope('naru-github-post-review', error), state);
 }
-function isUnknownRecord(value) {
+function isUnknownRecord(value: unknown): value is UnknownRecord {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-function isUnknownArray(value) {
+function isUnknownArray(value: unknown): value is unknown[] {
     return Array.isArray(value);
 }
-function isBoundedText(value, max) {
+function isBoundedText(value: unknown, max: number): value is string {
     return typeof value === 'string' && value.length > 0 && value.length <= max && !value.includes('\0');
 }
-function isPriority(value) {
+function isPriority(value: unknown): value is Priority {
     return typeof value === 'string' && PRIORITIES.some(priority => priority === value);
 }
-function isSeverity(value) {
+function isSeverity(value: unknown): value is Severity {
     return typeof value === 'string' && SEVERITIES.some(severity => severity === value);
 }
-function isConfidence(value) {
+function isConfidence(value: unknown): value is Confidence {
     return typeof value === 'string' && CONFIDENCE.some(confidence => confidence === value);
 }
-function isReviewSide(value) {
+function isReviewSide(value: unknown): value is ReviewSide {
     return value === 'LEFT' || value === 'RIGHT';
 }
-function requireStringArray(value, name, max) {
+function isSnapshotId(value: unknown): value is string { return typeof value === 'string' && SNAPSHOT_ID.test(value); }
+function isDigest(value: unknown): value is string { return typeof value === 'string' && DIGEST.test(value); }
+function isCoveragePosture(value: unknown): value is SubmissionMode { return value === 'complete' || value === 'limited'; }
+function isCoverageStatus(value: unknown): value is CoverageStatus { return typeof value === 'string' && ['reviewed', 'blocked', 'excluded'].includes(value); }
+function isCoverageEvidence(value: unknown): value is CoverageEvidence { return typeof value === 'string' && ['current-patch', 'recovered-patch', 'alternate', 'none'].includes(value); }
+function isSubmissionPolicy(value: unknown): value is SubmissionPolicy { return typeof value === 'string' && Object.hasOwn(SUBMISSION_POLICY_EVENTS, value); }
+function isConclusion(value: unknown): value is ReviewConclusion { return typeof value === 'string' && ['informational', 'clear', 'blocking'].includes(value); }
+function isFeedbackKind(value: unknown): value is FeedbackKind { return typeof value === 'string' && ['reviews', 'review-comments', 'issue-comments'].includes(value); }
+function isSchemaVersion(value: unknown): value is 2 | 3 | 4 { return value === 2 || value === 3 || value === 4; }
+function requireStringArray(value: unknown, name: string, max: number): string[] {
     if (!Array.isArray(value) || value.length > max)
         throw new Error(`${name} must be an array with at most ${max} items`);
     for (let index = 0; index < value.length; index += 1) {
@@ -71,7 +149,7 @@ function requireStringArray(value, name, max) {
 // naru-github-read emits `number` and `snapshotId`; this tool's canonical
 // names are `pullNumber` and `id`. Accept both spellings so a snapshot can be
 // carried straight into a posting payload without a silent rename trap.
-function normalizeTargetAliases(raw) {
+function normalizeTargetAliases(raw: UnknownRecord): UnknownRecord {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
     if (Object.hasOwn(raw, 'pullNumber') && Object.hasOwn(raw, 'number'))
         throw new Error('reviewResult.target cannot contain both pullNumber and number');
@@ -81,7 +159,7 @@ function normalizeTargetAliases(raw) {
     }
     return raw;
 }
-function normalizeSnapshotAliases(raw) {
+function normalizeSnapshotAliases(raw: UnknownRecord): UnknownRecord {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
     if (Object.hasOwn(raw, 'id') && Object.hasOwn(raw, 'snapshotId'))
         throw new Error('reviewResult.snapshot cannot contain both id and snapshotId');
@@ -91,7 +169,7 @@ function normalizeSnapshotAliases(raw) {
     }
     return raw;
 }
-function validateTarget(raw) {
+function validateTarget(raw: unknown): ReviewTarget {
     assertPlainObject(raw, 'reviewResult.target');
     validateAllowedKeys(raw, ['owner', 'repo', 'pullNumber']);
     return {
@@ -100,19 +178,19 @@ function validateTarget(raw) {
         number: requireField(raw, 'pullNumber', isPositiveInteger),
     };
 }
-function validateSnapshot(raw) {
+function validateSnapshot(raw: unknown): ReviewSnapshotV2V3 {
     assertPlainObject(raw, 'reviewResult.snapshot');
     validateAllowedKeys(raw, ['id', 'baseSha', 'headSha', 'feedbackDigest', 'complete', 'warnings']);
     return {
-        id: requireField(raw, 'id', (value) => typeof value === 'string' && SNAPSHOT_ID.test(value)),
+        id: requireField(raw, 'id', isSnapshotId),
         baseSha: requireField(raw, 'baseSha', is40HexSha),
         headSha: requireField(raw, 'headSha', is40HexSha),
-        feedbackDigest: requireField(raw, 'feedbackDigest', (value) => typeof value === 'string' && DIGEST.test(value)),
+        feedbackDigest: requireField(raw, 'feedbackDigest', isDigest),
         complete: requireField(raw, 'complete', isBoolean),
         warnings: requireStringArray(requireField(raw, 'warnings', isUnknownArray), 'reviewResult.snapshot.warnings', MAX_WARNINGS),
     };
 }
-function validateCoverage(raw) {
+function validateCoverage(raw: unknown): CoverageV2 {
     assertPlainObject(raw, 'reviewResult.coverage');
     validateAllowedKeys(raw, ['complete', 'limitations']);
     return {
@@ -120,48 +198,48 @@ function validateCoverage(raw) {
         limitations: requireStringArray(requireField(raw, 'limitations', isUnknownArray), 'reviewResult.coverage.limitations', MAX_WARNINGS),
     };
 }
-function validateV3Coverage(raw, snapshotWarnings) {
+function validateV3Coverage(raw: unknown, snapshotWarnings: string[]): CoverageV3 {
     assertPlainObject(raw, 'reviewResult.coverage');
     validateAllowedKeys(raw, ['posture', 'limitations']);
-    const posture = requireField(raw, 'posture', value => value === 'complete' || value === 'limited');
+    const posture = requireField(raw, 'posture', isCoveragePosture);
     const limitations = requireStringArray(requireField(raw, 'limitations', isUnknownArray), 'reviewResult.coverage.limitations', MAX_WARNINGS);
     if (posture === 'limited' && limitations.length === 0 && snapshotWarnings.length === 0)
         throw new Error('limited review evidence requires at least one coverage limitation or snapshot warning');
     return { posture, limitations };
 }
-function validateV4Snapshot(raw) {
+function validateV4Snapshot(raw: unknown): ReviewSnapshotV4 {
     assertPlainObject(raw, 'reviewResult.snapshot');
     validateAllowedKeys(raw, ['id', 'baseSha', 'headSha', 'feedbackDigest', 'evidenceDigest', 'warnings']);
     return {
-        id: requireField(raw, 'id', value => typeof value === 'string' && SNAPSHOT_ID.test(value)),
+        id: requireField(raw, 'id', isSnapshotId),
         baseSha: requireField(raw, 'baseSha', is40HexSha),
         headSha: requireField(raw, 'headSha', is40HexSha),
-        feedbackDigest: requireField(raw, 'feedbackDigest', value => typeof value === 'string' && DIGEST.test(value)),
-        evidenceDigest: requireField(raw, 'evidenceDigest', value => typeof value === 'string' && DIGEST.test(value)),
+        feedbackDigest: requireField(raw, 'feedbackDigest', isDigest),
+        evidenceDigest: requireField(raw, 'evidenceDigest', isDigest),
         warnings: requireStringArray(requireField(raw, 'warnings', isUnknownArray), 'reviewResult.snapshot.warnings', MAX_WARNINGS),
     };
 }
-function validateCoverageEntry(raw, index) {
+function validateCoverageEntry(raw: unknown, index: number): CoverageLedgerEntry {
     assertPlainObject(raw, `reviewResult.coverage.ledger[${index}]`);
     validateAllowedKeys(raw, ['path', 'status', 'evidence', 'note']);
-    const entry = {
+    const entry: CoverageLedgerEntry = {
         path: requireField(raw, 'path', isSafeRelativePath),
-        status: requireField(raw, 'status', value => ['reviewed', 'blocked', 'excluded'].includes(value)),
-        evidence: requireField(raw, 'evidence', value => ['current-patch', 'recovered-patch', 'alternate', 'none'].includes(value)),
+        status: requireField(raw, 'status', isCoverageStatus),
+        evidence: requireField(raw, 'evidence', isCoverageEvidence),
     };
     if (Object.hasOwn(raw, 'note'))
         entry.note = requireField(raw, 'note', value => isBoundedText(value, 4096));
     return entry;
 }
-function validateV4Coverage(raw, feedbackDigest) {
+function validateV4Coverage(raw: unknown, feedbackDigest: string): CoverageV4 {
     assertPlainObject(raw, 'reviewResult.coverage');
     validateAllowedKeys(raw, ['ledger', 'fileBatches', 'feedbackPages', 'feedbackAcknowledged', 'feedbackDigest']);
     const ledgerRaw = requireField(raw, 'ledger', isUnknownArray);
     if (ledgerRaw.length > MAX_COVERAGE_ENTRIES)
         throw new Error(`coverage ledger exceeds ${MAX_COVERAGE_ENTRIES}`);
     const ledger = ledgerRaw.map(validateCoverageEntry);
-    const feedbackAcknowledged = requireField(raw, 'feedbackAcknowledged', value => value === true);
-    const acknowledgedDigest = requireField(raw, 'feedbackDigest', value => typeof value === 'string' && DIGEST.test(value));
+    const feedbackAcknowledged = requireField(raw, 'feedbackAcknowledged', (value: unknown): value is true => value === true);
+    const acknowledgedDigest = requireField(raw, 'feedbackDigest', isDigest);
     if (acknowledgedDigest !== feedbackDigest)
         throw new Error('coverage feedback acknowledgement is not bound to snapshot feedbackDigest');
     const fileBatchesRaw = requireField(raw, 'fileBatches', isUnknownArray);
@@ -173,7 +251,7 @@ function validateV4Coverage(raw, feedbackDigest) {
         const paths = requireStringArray(requireField(batch, 'paths', isUnknownArray), `reviewResult.coverage.fileBatches[${index}].paths`, 100);
         if (paths.length === 0 || paths.some(path => !isSafeRelativePath(path)) || new Set(paths).size !== paths.length)
             throw new Error(`reviewResult.coverage.fileBatches[${index}].paths must contain 1-100 distinct safe paths`);
-        return { paths, batchDigest: requireField(batch, 'batchDigest', value => typeof value === 'string' && DIGEST.test(value)) };
+        return { paths, batchDigest: requireField(batch, 'batchDigest', isDigest) };
     });
     const feedbackPagesRaw = requireField(raw, 'feedbackPages', isUnknownArray);
     if (feedbackPagesRaw.length > MAX_COVERAGE_ENTRIES)
@@ -182,36 +260,36 @@ function validateV4Coverage(raw, feedbackDigest) {
         assertPlainObject(page, `reviewResult.coverage.feedbackPages[${index}]`);
         validateAllowedKeys(page, ['kind', 'page', 'pageDigest']);
         return {
-            kind: requireField(page, 'kind', value => ['reviews', 'review-comments', 'issue-comments'].includes(value)),
+            kind: requireField(page, 'kind', isFeedbackKind),
             page: requireField(page, 'page', isPositiveInteger),
-            pageDigest: requireField(page, 'pageDigest', value => typeof value === 'string' && DIGEST.test(value)),
+            pageDigest: requireField(page, 'pageDigest', isDigest),
         };
     });
     return { ledger, fileBatches, feedbackPages, feedbackAcknowledged, feedbackDigest: acknowledgedDigest };
 }
-function validateComment(raw, index) {
+function validateComment(raw: unknown, index: number): InlineComment {
     assertPlainObject(raw, `reviewResult.inlineComments[${index}]`);
     validateAllowedKeys(raw, ['path', 'line', 'side', 'body', 'priority', 'severity', 'confidence']);
     const path = requireField(raw, 'path', isSafeRelativePath);
     const line = requireField(raw, 'line', isPositiveInteger);
     const side = requireField(raw, 'side', isReviewSide);
-    const body = requireField(raw, 'body', (value) => isBoundedText(value, MAX_COMMENT_BODY_LENGTH));
+    const body = requireField(raw, 'body', (value: unknown): value is string => isBoundedText(value, MAX_COMMENT_BODY_LENGTH));
     const priority = requireField(raw, 'priority', isPriority);
     const severity = requireField(raw, 'severity', isSeverity);
     const confidence = requireField(raw, 'confidence', isConfidence);
     return { path, line, side, body, priority, severity, confidence };
 }
-function validateSkippedComment(raw, index) {
+function validateSkippedComment(raw: unknown, index: number): SkippedInlineComment {
     assertPlainObject(raw, `reviewResult.skippedInlineComments[${index}]`);
     validateAllowedKeys(raw, ['path', 'line', 'side', 'reason']);
     return {
         path: requireField(raw, 'path', isSafeRelativePath),
         line: requireField(raw, 'line', isPositiveInteger),
         side: requireField(raw, 'side', isReviewSide),
-        reason: requireField(raw, 'reason', (value) => isBoundedText(value, 4096)),
+        reason: requireField(raw, 'reason', (value: unknown): value is string => isBoundedText(value, 4096)),
     };
 }
-function validateFinding(raw, index) {
+function validateFinding(raw: unknown, index: number): ReviewFinding {
     assertPlainObject(raw, `reviewResult.findings[${index}]`);
     validateAllowedKeys(raw, ['path', 'line', 'side', 'body', 'priority', 'severity', 'confidence']);
     const hasPath = Object.hasOwn(raw, 'path');
@@ -219,8 +297,8 @@ function validateFinding(raw, index) {
     const hasSide = Object.hasOwn(raw, 'side');
     if (hasLine !== hasSide || (!hasPath && (hasLine || hasSide)))
         throw new Error(`reviewResult.findings[${index}] must omit path, line, and side together, or provide path with line and side together`);
-    const finding = {
-        body: requireField(raw, 'body', value => isBoundedText(value, MAX_COMMENT_BODY_LENGTH)),
+    const finding: { body: string; priority: Priority; severity: Severity; confidence: Confidence; path?: string; line?: number; side?: ReviewSide } = {
+        body: requireField(raw, 'body', (value: unknown): value is string => isBoundedText(value, MAX_COMMENT_BODY_LENGTH)),
         priority: requireField(raw, 'priority', isPriority),
         severity: requireField(raw, 'severity', isSeverity),
         confidence: requireField(raw, 'confidence', isConfidence),
@@ -231,14 +309,14 @@ function validateFinding(raw, index) {
         finding.line = requireField(raw, 'line', isPositiveInteger);
         finding.side = requireField(raw, 'side', isReviewSide);
     }
-    return finding;
+    return finding as ReviewFinding;
 }
-export function validateReviewPayload(raw) {
+export function validateReviewPayload(raw: unknown): ReviewPayload {
     assertPlainObject(raw, 'input');
     validateAllowedKeys(raw, ['reviewResult']);
     const result = requireField(raw, 'reviewResult', isUnknownRecord);
     assertPlainObject(result, 'reviewResult');
-    if (![2, 3, 4].includes(result.schemaVersion))
+    if (!isSchemaVersion(result.schemaVersion))
         throw new Error('reviewResult.schemaVersion must be 2, 3, or 4');
     const version = result.schemaVersion;
     validateAllowedKeys(result, version === 2
@@ -248,15 +326,15 @@ export function validateReviewPayload(raw) {
             : ['schemaVersion', 'target', 'snapshot', 'coverage', 'submissionMode', 'summary', 'submissionPolicy', 'conclusion', 'findings', 'supersedes']);
     const target = validateTarget(normalizeTargetAliases(requireField(result, 'target', isUnknownRecord)));
     const snapshotRaw = normalizeSnapshotAliases(requireField(result, 'snapshot', isUnknownRecord));
-    const snapshot = version === 4 ? validateV4Snapshot(snapshotRaw) : validateSnapshot(snapshotRaw);
     if (version === 4) {
+        const snapshot = validateV4Snapshot(snapshotRaw);
         const coverage = validateV4Coverage(requireField(result, 'coverage', isUnknownRecord), snapshot.feedbackDigest);
-        const submissionMode = requireField(result, 'submissionMode', value => value === 'complete' || value === 'limited');
-        const summary = requireField(result, 'summary', value => isBoundedText(value, MAX_SUMMARY_LENGTH));
+        const submissionMode = requireField(result, 'submissionMode', isCoveragePosture);
+        const summary = requireField(result, 'summary', (value: unknown): value is string => isBoundedText(value, MAX_SUMMARY_LENGTH));
         if (/<!--\s*naru-review:/i.test(summary))
             throw new Error('reviewResult.summary contains a reserved Naru marker');
-        const submissionPolicy = requireField(result, 'submissionPolicy', value => typeof value === 'string' && Object.hasOwn(SUBMISSION_POLICY_EVENTS, value));
-        const conclusion = requireField(result, 'conclusion', value => ['informational', 'clear', 'blocking'].includes(value));
+        const submissionPolicy = requireField(result, 'submissionPolicy', isSubmissionPolicy);
+        const conclusion = requireField(result, 'conclusion', isConclusion);
         const findingsRaw = requireField(result, 'findings', isUnknownArray);
         if (findingsRaw.length > MAX_COMMENTS)
             throw new Error(`findings exceeds ${MAX_COMMENTS}`);
@@ -266,21 +344,33 @@ export function validateReviewPayload(raw) {
             validateAllowedKeys(result.supersedes, ['reviewId', 'digest']);
             supersedes = {
                 reviewId: requireField(result.supersedes, 'reviewId', isPositiveInteger),
-                digest: requireField(result.supersedes, 'digest', value => typeof value === 'string' && DIGEST.test(value)),
+                digest: requireField(result.supersedes, 'digest', isDigest),
             };
         }
-        return { schemaVersion: 4, target, snapshot, coverage, submissionMode, summary, submissionPolicy, conclusion, findings: findingsRaw.map(validateFinding), supersedes };
+        return {
+            schemaVersion: 4,
+            target,
+            snapshot,
+            coverage,
+            submissionMode,
+            summary,
+            submissionPolicy,
+            conclusion,
+            findings: findingsRaw.map(validateFinding),
+            ...(supersedes === undefined ? {} : { supersedes }),
+        };
     }
-    const body = requireField(result, 'body', (value) => isBoundedText(value, MAX_BODY_LENGTH - 256));
+    const snapshot = validateSnapshot(snapshotRaw);
+    const body = requireField(result, 'body', (value: unknown): value is string => isBoundedText(value, MAX_BODY_LENGTH - 256));
     if (/<!--\s*naru-review:/i.test(body))
         throw new Error('reviewResult.body contains a reserved Naru marker');
     if (version === 3) {
         const coverage = validateV3Coverage(requireField(result, 'coverage', isUnknownRecord), snapshot.warnings);
         const submissionPolicy = result.submissionPolicy;
-        if (typeof submissionPolicy !== 'string' || !Object.hasOwn(SUBMISSION_POLICY_EVENTS, submissionPolicy)) {
+        if (!isSubmissionPolicy(submissionPolicy)) {
             throw new Error('reviewResult.submissionPolicy must assert current user authorization as comment-only, approve-if-clear, request-changes-if-blocked, or select-state');
         }
-        const conclusion = requireField(result, 'conclusion', value => ['informational', 'clear', 'blocking'].includes(value));
+        const conclusion = requireField(result, 'conclusion', isConclusion);
         const findingsRaw = requireField(result, 'findings', isUnknownArray);
         if (findingsRaw.length > MAX_COMMENTS)
             throw new Error(`findings exceeds ${MAX_COMMENTS}`);
@@ -297,12 +387,12 @@ export function validateReviewPayload(raw) {
     const skippedInlineComments = skippedRaw.map(validateSkippedComment);
     return { schemaVersion: 2, target, snapshot, coverage, body, inlineComments, skippedInlineComments };
 }
-function compareCanonical(a, b) {
+function compareCanonical(a: unknown, b: unknown): number {
     const left = JSON.stringify(a);
     const right = JSON.stringify(b);
     return left < right ? -1 : left > right ? 1 : 0;
 }
-function markerDigest(payload, comments, decision, renderedFindings = '') {
+function markerDigest(payload: ReviewPayload, comments: InlineComment[] | ReviewFinding[], decision: SubmissionDecision, renderedFindings = ''): string {
     const normalized = comments.map(comment => ({
         path: comment.path,
         line: comment.line,
@@ -346,13 +436,13 @@ function markerDigest(payload, comments, decision, renderedFindings = '') {
         evidencePosture: decision.evidencePosture,
         limitations: decision.limitations,
         coveragePosture: payload.coverage.posture ?? decision.evidencePosture,
-        coverageLedger: payload.coverage.ledger.map(entry => ({
+        coverageLedger: (payload as ReviewPayloadV4).coverage.ledger.map(entry => ({
             path: entry.path,
             status: entry.status,
             evidence: entry.evidence,
             ...(entry.note === undefined ? {} : { note: entry.note }),
         })).sort(compareCanonical),
-        submissionMode: payload.submissionMode,
+        submissionMode: (payload as ReviewPayloadV4).submissionMode,
         conclusion: payload.conclusion,
         submissionPolicy: payload.submissionPolicy,
         authorizationPolicy: decision.authorizationPolicy,
@@ -360,7 +450,7 @@ function markerDigest(payload, comments, decision, renderedFindings = '') {
         renderedFindings,
     }));
 }
-function markerTag(payload, digest) {
+function markerTag(payload: ReviewPayload, digest: string): string {
     const { owner, repo, number } = payload.target;
     if (payload.schemaVersion === 4) {
         const supersedes = payload.supersedes ? ` supersedes=${payload.supersedes.reviewId}` : '';
@@ -368,7 +458,7 @@ function markerTag(payload, digest) {
     }
     return `<!-- naru-review:${owner}/${repo}#${number} head=${payload.snapshot.headSha} digest=${digest} -->`;
 }
-function extractMarker(body) {
+function extractMarker(body: unknown): Omit<ReviewMarker, 'reviewId'> | null {
     if (typeof body !== 'string')
         return null;
     const match = body.match(/<!--\s*naru-review:([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)#(\d+) head=([0-9a-f]{40}) digest=([0-9a-f]{64})(?: v=(\d+) posture=(complete|limited)(?: supersedes=(\d+))?)?\s*-->/i);
@@ -381,10 +471,19 @@ function extractMarker(body) {
     const digest = match[5];
     if (!owner || !repo || !headSha || !digest)
         return null;
-    return { owner, repo, number, headSha, digest, version: match[6] ? Number(match[6]) : undefined, posture: match[7], supersedes: match[8] ? Number(match[8]) : undefined };
+    return {
+        owner,
+        repo,
+        number,
+        headSha,
+        digest,
+        ...(match[6] ? { version: Number(match[6]) } : {}),
+        ...(match[7] ? { posture: match[7] } : {}),
+        ...(match[8] ? { supersedes: Number(match[8]) } : {}),
+    };
 }
-function markersOnHead(reviews, target, headSha, actor) {
-    const matches = [];
+function markersOnHead(reviews: Array<NormalizedReviewItem | NormalizedCommentItem>, target: ReviewTarget, headSha: string, actor: string): ReviewMarker[] {
+    const matches: ReviewMarker[] = [];
     for (const review of reviews) {
         const commitId = review.commitId ?? review.commit_id;
         if (commitId !== headSha)
@@ -402,32 +501,36 @@ function markersOnHead(reviews, target, headSha, actor) {
     }
     return matches;
 }
-function recoveredMarkerOnHead(reviews, target, headSha, actor, payload, digest) {
+function recoveredMarkerOnHead(reviews: Array<NormalizedReviewItem | NormalizedCommentItem>, target: ReviewTarget, headSha: string, actor: string, payload: ReviewPayloadV4, digest: string): ReviewMarker | null {
     const markers = markersOnHead(reviews, target, headSha, actor);
+    const supersedes = payload.supersedes;
     const expected = markers.filter(item => item.digest === digest
         && item.version === payload.schemaVersion
         && item.posture === payload.submissionMode
-        && (!payload.supersedes || item.supersedes === payload.supersedes.reviewId));
+        && (!supersedes || item.supersedes === supersedes.reviewId));
     if (expected.length !== 1)
         return null;
-    const predecessors = payload.supersedes ? markers.filter(item => item.reviewId === payload.supersedes.reviewId
-        && item.digest === payload.supersedes.digest && item.version === 4 && item.posture === 'limited'
+    const predecessors = supersedes ? markers.filter(item => item.reviewId === supersedes.reviewId
+        && item.digest === supersedes.digest && item.version === 4 && item.posture === 'limited'
         && item.supersedes === undefined) : [];
-    if (payload.supersedes && predecessors.length !== 1)
+    if (supersedes && predecessors.length !== 1)
         return null;
     const conflicts = markers.filter(item => item !== expected[0] && item !== predecessors[0]);
-    return conflicts.length === 0 ? expected[0] : null;
+    return conflicts.length === 0 ? expected[0] ?? null : null;
 }
-function validateSupersession(payload, reviews, actor, decision) {
-    if (!payload.supersedes)
+function validateSupersession(payload: ReviewPayloadV4, reviews: Array<NormalizedReviewItem | NormalizedCommentItem>, actor: string, decision: SubmissionDecision): ReviewMarker | null {
+    const supersedes = payload.supersedes;
+    if (!supersedes)
         return null;
     if (payload.schemaVersion !== 4 || payload.submissionMode !== 'complete' || decision.evidencePosture !== 'complete')
         throw new Error('supersession requires a new complete v4 review');
     const markers = markersOnHead(reviews, payload.target, payload.snapshot.headSha, actor);
-    const predecessors = markers.filter(item => item.reviewId === payload.supersedes.reviewId && item.digest === payload.supersedes.digest);
+    const predecessors = markers.filter(item => item.reviewId === supersedes.reviewId && item.digest === supersedes.digest);
     if (predecessors.length !== 1)
         throw new Error('supersession predecessor is missing or ambiguous');
     const predecessor = predecessors[0];
+    if (predecessor === undefined)
+        throw new Error('supersession predecessor is missing');
     if (predecessor.version !== 4 || predecessor.posture !== 'limited'
         || !['COMMENT', 'COMMENTED'].includes(String(predecessor.state).toUpperCase()))
         throw new Error('supersession predecessor must be a limited v4 COMMENT');
@@ -439,10 +542,10 @@ function validateSupersession(payload, reviews, actor, decision) {
         throw new Error('supersession predecessor already has a successor');
     return predecessor;
 }
-function targetKey(target) {
+function targetKey(target: ReviewTarget): string {
     return `${target.owner.toLowerCase()}/${target.repo.toLowerCase()}#${target.number}`;
 }
-async function withPostLock(key, operation) {
+async function withPostLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
     let entry = postLocks.get(key);
     if (!entry) {
         if (postLocks.size >= MAX_TRACKED_POST_TARGETS) {
@@ -453,8 +556,8 @@ async function withPostLock(key, operation) {
     }
     entry.queued += 1;
     const previous = entry.tail;
-    let release;
-    const current = new Promise(resolve => { release = resolve; });
+    let release!: (value: void) => void;
+    const current = new Promise<void>(resolve => { release = resolve; });
     entry.tail = current;
     await previous;
     try {
@@ -467,7 +570,7 @@ async function withPostLock(key, operation) {
             postLocks.delete(key);
     }
 }
-function postRecord(key) {
+function postRecord(key: string): PostRecord | null {
     const record = postRecords.get(key);
     if (!record)
         return null;
@@ -475,7 +578,7 @@ function postRecord(key) {
     postRecords.set(key, record);
     return record;
 }
-function rememberPost(key, record) {
+function rememberPost(key: string, record: PostRecord): void {
     postRecords.delete(key);
     postRecords.set(key, record);
     while (postRecords.size > MAX_TRACKED_POST_TARGETS) {
@@ -485,7 +588,7 @@ function rememberPost(key, record) {
         postRecords.delete(oldest.value);
     }
 }
-function alreadyPosted(reviewId, reviewUrl, decision = {}) {
+function alreadyPosted(reviewId: unknown, reviewUrl: string | undefined, decision: Partial<SubmissionDecision> = {}) {
     return postState(okEnvelope('naru-github-post-review', {
         posted: false,
         reason: 'alreadyPosted',
@@ -498,7 +601,7 @@ function alreadyPosted(reviewId, reviewUrl, decision = {}) {
         submissionPolicy: decision.authorizationPolicy,
     }));
 }
-function recordedPostResult(key, payload, actor, digest, unknownOnly = false) {
+function recordedPostResult(key: string, payload: ReviewPayload, actor: string, digest: string, unknownOnly = false) {
     const record = postRecord(key);
     if (!record || record.headSha !== payload.snapshot.headSha)
         return null;
@@ -514,7 +617,7 @@ function recordedPostResult(key, payload, actor, digest, unknownOnly = false) {
         return alreadyPosted(record.reviewId, record.reviewUrl, record);
     return postError('outcomeUnknown: a prior in-process POST attempt on this head has an unknown outcome; duplicate refused', { outcomeUnknown: true });
 }
-function validateCurrentComments(comments, snapshot) {
+function validateCurrentComments(comments: InlineComment[], snapshot: RuntimeSnapshot): LocationValidation {
     const files = new Map(snapshot.files.map(file => [file.filename, file]));
     const valid = [];
     const dropped = [];
@@ -533,24 +636,24 @@ function validateCurrentComments(comments, snapshot) {
     }
     return { valid, dropped };
 }
-function isCompletePatch(file) {
+function isCompletePatch(file: RuntimeEvidenceFile | undefined): boolean {
     return Boolean(file && !file.patchRedacted && !file.patchTruncated && file.patchAvailable
         && (!file.patchEvidence || file.patchEvidence.status === 'complete'));
 }
-function isApprovalBlocker(finding) {
+function isApprovalBlocker(finding: ReviewFinding): boolean {
     return (finding.priority === 'P0' || finding.priority === 'P1')
         && (finding.severity === 'Critical' || finding.severity === 'High')
         && finding.confidence === 'High';
 }
-function validateCurrentFindings(findings, snapshot) {
+function validateCurrentFindings(findings: ReviewFinding[], snapshot: RuntimeSnapshot): FindingValidation {
     const files = new Map(snapshot.files.map(file => [file.filename, file]));
-    const validInline = [];
-    const invalid = [];
-    const nonInline = [];
-    const eligibleBlockers = [];
+    const validInline: ReviewFinding[] = [];
+    const invalid: FindingValidation['invalid'] = [];
+    const nonInline: FindingValidation['nonInline'] = [];
+    const eligibleBlockers: ReviewFinding[] = [];
     for (const finding of findings) {
         const file = finding.path ? files.get(finding.path) : undefined;
-        let reason;
+        let reason: string | undefined;
         let displayPath = finding.path;
         let blockerEvidenceValid = false;
         let invalidLocation = false;
@@ -586,7 +689,7 @@ function validateCurrentFindings(findings, snapshot) {
     }
     return { validInline, invalid, nonInline, eligibleBlockers };
 }
-function locationValidationDigest(validation) {
+function locationValidationDigest(validation: LocationValidation): string {
     return hash(JSON.stringify({
         valid: validation.valid.map(({ path, line, side }) => ({ path, line, side })),
         dropped: validation.dropped.map(({ comment, reason }) => ({
@@ -597,7 +700,7 @@ function locationValidationDigest(validation) {
         })),
     }));
 }
-function findingValidationDigest(validation) {
+function findingValidationDigest(validation: FindingValidation): string {
     return hash(JSON.stringify({
         validInline: validation.validInline.map(({ path, line, side }) => ({ path, line, side })),
         invalid: validation.invalid.map(({ finding, reason }) => ({ path: finding.path, line: finding.line, side: finding.side, reason })),
@@ -605,18 +708,18 @@ function findingValidationDigest(validation) {
         eligibleBlockers: validation.eligibleBlockers.map(({ path, line, side, body }) => ({ path, line, side, body })),
     }));
 }
-function findingFingerprint(item) {
+function findingFingerprint(item: ReviewFinding | NormalizedCommentItem): string | null {
     if (!item.path || !item.line || !item.side || typeof item.body !== 'string')
         return null;
     const body = item.body.replace(/\r\n?/g, '\n').trim();
     return hash(JSON.stringify({ path: item.path, line: item.line, side: item.side.toUpperCase(), body }));
 }
-function suppressExactPriorFindings(findings, snapshot) {
+function suppressExactPriorFindings(findings: ReviewFinding[], snapshot: RuntimeSnapshot): { kept: ReviewFinding[]; dropped: DroppedFinding[] } {
     const prior = new Set(snapshot.reviewComments
         .filter(comment => comment.commitId === snapshot.headSha)
         .map(findingFingerprint).filter(Boolean));
-    const kept = [];
-    const dropped = [];
+    const kept: ReviewFinding[] = [];
+    const dropped: DroppedFinding[] = [];
     for (const finding of findings) {
         const fingerprint = findingFingerprint(finding);
         if (fingerprint && prior.has(fingerprint))
@@ -626,7 +729,7 @@ function suppressExactPriorFindings(findings, snapshot) {
     }
     return { kept, dropped };
 }
-function reconcileV4Coverage(payload, snapshot) {
+function reconcileV4Coverage(payload: ReviewPayloadV4, snapshot: RuntimeSnapshot): { posture: SubmissionMode; limitations: Array<{ path: string; status: CoverageStatus; evidence: CoverageEvidence; reason: string }> } {
     const inventory = new Map(snapshot.files.map(file => [file.filename, file]));
     const seen = new Set();
     for (const entry of payload.coverage.ledger) {
@@ -639,7 +742,7 @@ function reconcileV4Coverage(payload, snapshot) {
     const missing = [...inventory.keys()].filter(path => !seen.has(path));
     if (missing.length)
         throw new Error(`coverage ledger is missing ${missing.length} final snapshot path(s): ${missing.slice(0, 5).join(', ')}`);
-    const limitations = [];
+    const limitations: Array<{ path: string; status: CoverageStatus; evidence: CoverageEvidence; reason: string }> = [];
     for (const entry of payload.coverage.ledger) {
         const file = inventory.get(entry.path);
         const currentComplete = entry.status === 'reviewed' && entry.evidence === 'current-patch' && isCompletePatch(file);
@@ -655,7 +758,7 @@ function reconcileV4Coverage(payload, snapshot) {
         throw new Error(`${posture} derived coverage requires v4 submissionMode=${posture}; submissionMode is an orchestrator assertion derived only from the current user's explicit review request`);
     return { posture, limitations };
 }
-function boundedSafeMarkdown(value, max) {
+function boundedSafeMarkdown(value: unknown, max: number): string {
     if (typeof value !== 'string')
         return 'not available';
     const normalized = value.replace(/\r\n?/g, '\n').replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ');
@@ -666,7 +769,7 @@ function boundedSafeMarkdown(value, max) {
         .replaceAll('`', '&#96;');
     return escaped.length > max ? `${escaped.slice(0, max)}…` : escaped;
 }
-function renderNonInlineFindings(entries) {
+function renderNonInlineFindings(entries: FindingValidation['nonInline']): string {
     if (entries.length === 0)
         return '';
     const rendered = entries.map(({ finding, reason, displayPath }, index) => {
@@ -686,15 +789,15 @@ function renderNonInlineFindings(entries) {
         throw new Error('rendered non-inline findings exceed the safe body allowance');
     return section;
 }
-function aggregateLimitations(entries) {
-    const counts = new Map();
+function aggregateLimitations(entries: Array<string | { reason: string }>): Array<{ reason: string; count: number }> {
+    const counts = new Map<string, number>();
     for (const entry of entries) {
         const reason = typeof entry === 'string' ? entry : entry.reason;
         counts.set(reason, (counts.get(reason) ?? 0) + 1);
     }
     return [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([reason, count]) => ({ reason, count }));
 }
-function composeReviewBody(payload, decision, findingsSection, marker = '') {
+function composeReviewBody(payload: ReviewPayload, decision: SubmissionDecision, findingsSection: string, marker = ''): string {
     const limitations = aggregateLimitations(decision.limitationDetails ?? decision.limitations ?? []);
     const limitationLines = limitations.map(({ reason, count }) => `- ${boundedSafeMarkdown(reason, 256)} (${count})`);
     const examples = (decision.limitationDetails ?? []).filter(item => typeof item !== 'string').slice(0, MAX_LIMITATION_EXAMPLES)
@@ -714,7 +817,7 @@ function composeReviewBody(payload, decision, findingsSection, marker = '') {
         throw new Error(`composed review body exceeds ${MAX_BODY_LENGTH} characters`);
     return body;
 }
-function snapshotEvidenceDigest(snapshot) {
+function snapshotEvidenceDigest(snapshot: RuntimeSnapshot): string {
     return hash(JSON.stringify({
         state: snapshot.pull?.state,
         draft: snapshot.pull?.draft,
@@ -732,7 +835,7 @@ function snapshotEvidenceDigest(snapshot) {
         })),
     }));
 }
-async function currentSnapshot(payload, spawn) {
+async function currentSnapshot(payload: ReviewPayload, spawn?: Spawn): Promise<RuntimeSnapshot> {
     if (payload.schemaVersion === 4)
         return boundedV4Evidence(payload, spawn);
     return pullSnapshot({
@@ -741,14 +844,14 @@ async function currentSnapshot(payload, spawn) {
         number: payload.target.number,
     }, { spawn });
 }
-function manifestIdentity(manifest) {
+function manifestIdentity(manifest: PullManifest): PullIdentity {
     return {
         owner: manifest.owner, repo: manifest.repo, number: manifest.number,
         baseSha: manifest.baseSha, headSha: manifest.headSha, snapshotId: manifest.snapshotId,
         feedbackDigest: manifest.feedbackDigest, evidenceDigest: manifest.evidenceDigest,
     };
 }
-function assertPayloadManifest(payload, manifest) {
+function assertPayloadManifest(payload: ReviewPayloadV4, manifest: PullManifest): void {
     const expected = {
         owner: payload.target.owner, repo: payload.target.repo, number: payload.target.number,
         baseSha: payload.snapshot.baseSha, headSha: payload.snapshot.headSha, snapshotId: payload.snapshot.id,
@@ -759,7 +862,7 @@ function assertPayloadManifest(payload, manifest) {
             throw new Error(`bounded manifest ${field} mismatch`);
     }
 }
-async function boundedV4Evidence(payload, spawn) {
+async function boundedV4Evidence(payload: ReviewPayloadV4, spawn?: Spawn): Promise<RuntimeSnapshot> {
     const target = payload.target;
     const first = await pullManifest(target, { spawn });
     assertPayloadManifest(payload, first);
@@ -795,6 +898,8 @@ async function boundedV4Evidence(payload, spawn) {
     for (let index = 0; index < payload.coverage.fileBatches.length; index += 1) {
         const declaration = payload.coverage.fileBatches[index];
         const batch = acquiredFileBatches.batches[index];
+        if (declaration === undefined || batch === undefined)
+            throw new Error('file batch acquisition is incomplete');
         if (batch.batchDigest !== declaration.batchDigest)
             throw new Error('file batch digest mismatch');
         files.push(...batch.files.map(file => {
@@ -802,7 +907,7 @@ async function boundedV4Evidence(payload, spawn) {
             return retained;
         }));
     }
-    const feedback = { reviews: [], 'review-comments': [], 'issue-comments': [] };
+    const feedback: Record<FeedbackKind, NormalizedCommentItem[]> = { reviews: [], 'review-comments': [], 'issue-comments': [] };
     for (const declaration of payload.coverage.feedbackPages) {
         const page = await pullFeedbackPage({ ...identity, kind: declaration.kind, page: declaration.page }, { spawn });
         if (page.pageDigest !== declaration.pageDigest)
@@ -835,7 +940,7 @@ async function boundedV4Evidence(payload, spawn) {
         completeness: { allFilesIncluded: true, feedbackComplete: true, patchesComplete },
     };
 }
-async function boundedReviewsForRecovery(payload, spawn) {
+async function boundedReviewsForRecovery(payload: ReviewPayloadV4, spawn?: Spawn): Promise<NormalizedCommentItem[]> {
     const manifest = await pullManifest(payload.target, { spawn });
     if (manifest.headSha !== payload.snapshot.headSha
         || manifest.baseSha !== payload.snapshot.baseSha
@@ -843,14 +948,14 @@ async function boundedReviewsForRecovery(payload, spawn) {
         || manifest.evidenceDigest !== payload.snapshot.evidenceDigest)
         return [];
     const identity = manifestIdentity(manifest);
-    const reviews = [];
+    const reviews: NormalizedCommentItem[] = [];
     for (let page = 1; page <= manifest.feedback.reviews.pages; page += 1) {
         const result = await pullFeedbackPage({ ...identity, kind: 'reviews', page }, { spawn });
         reviews.push(...result.items);
     }
     return reviews;
 }
-function snapshotIdentityError(payload, snapshot) {
+function snapshotIdentityError(payload: ReviewPayload, snapshot: RuntimeSnapshot): string | null {
     if (snapshot.number !== payload.target.number
         || snapshot.owner.toLowerCase() !== payload.target.owner.toLowerCase()
         || snapshot.repo.toLowerCase() !== payload.target.repo.toLowerCase()) {
@@ -862,7 +967,7 @@ function snapshotIdentityError(payload, snapshot) {
         return 'snapshot base SHA mismatch';
     return null;
 }
-function snapshotFreshnessError(payload, snapshot) {
+function snapshotFreshnessError(payload: ReviewPayload, snapshot: RuntimeSnapshot): string | null {
     if (snapshot.snapshotId !== payload.snapshot.id)
         return 'snapshot ID mismatch';
     if (snapshot.feedbackDigest !== payload.snapshot.feedbackDigest)
@@ -873,7 +978,7 @@ function snapshotFreshnessError(payload, snapshot) {
         return 'current snapshot is incomplete; refusing to post';
     return null;
 }
-function reviewability(snapshot) {
+function reviewability(snapshot: RuntimeSnapshot) {
     if (snapshot.reviewability)
         return snapshot.reviewability;
     return {
@@ -884,7 +989,7 @@ function reviewability(snapshot) {
         limitations: snapshot.warnings ?? [],
     };
 }
-function deriveReviewSubmission(payload, initialSnapshot, finalSnapshot, actor, validation) {
+function deriveReviewSubmission(payload: ReviewPayload, initialSnapshot: RuntimeSnapshot, finalSnapshot: RuntimeSnapshot, actor: string, validation: LocationValidation | FindingValidation): SubmissionDecision {
     const currentEvidence = reviewability(initialSnapshot);
     const finalEvidence = reviewability(finalSnapshot);
     if (finalSnapshot.pull?.state?.toLowerCase() !== 'open')
@@ -911,20 +1016,20 @@ function deriveReviewSubmission(payload, initialSnapshot, finalSnapshot, actor, 
         if (evidencePosture === 'limited' && limitationDetails.length === 0)
             throw new Error('limited v4 review requires mechanically derived limitations');
         const declaredBlockers = payload.findings.filter(isApprovalBlocker);
-        const droppedBlocker = declaredBlockers.some(finding => !validation.eligibleBlockers.includes(finding));
+        const droppedBlocker = declaredBlockers.some(finding => !(validation as FindingValidation).eligibleBlockers.includes(finding));
         const formalEligible = evidencePosture === 'complete'
             && finalSnapshot.pull?.draft === false
             && typeof finalSnapshot.pull?.author === 'string'
             && finalSnapshot.pull.author.toLowerCase() !== actor.toLowerCase();
-        let event = 'COMMENT';
+        let event: ReviewEvent = 'COMMENT';
         if (payload.submissionPolicy === 'approve-if-clear'
             && formalEligible && payload.conclusion === 'clear' && declaredBlockers.length === 0 && !droppedBlocker)
             event = 'APPROVE';
         else if (payload.submissionPolicy === 'request-changes-if-blocked'
-            && formalEligible && payload.conclusion === 'blocking' && validation.eligibleBlockers.length > 0)
+            && formalEligible && payload.conclusion === 'blocking' && (validation as FindingValidation).eligibleBlockers.length > 0)
             event = 'REQUEST_CHANGES';
         else if (payload.submissionPolicy === 'select-state') {
-            if (formalEligible && payload.conclusion === 'blocking' && validation.eligibleBlockers.length > 0)
+            if (formalEligible && payload.conclusion === 'blocking' && (validation as FindingValidation).eligibleBlockers.length > 0)
                 event = 'REQUEST_CHANGES';
             else if (formalEligible && payload.conclusion === 'clear' && declaredBlockers.length === 0 && !droppedBlocker)
                 event = 'APPROVE';
@@ -956,22 +1061,22 @@ function deriveReviewSubmission(payload, initialSnapshot, finalSnapshot, actor, 
     if (evidencePosture === 'limited' && limitations.length === 0)
         throw new Error('limited review evidence requires at least one limitation');
     const declaredBlockers = payload.findings.filter(isApprovalBlocker);
-    const droppedBlocker = declaredBlockers.some(finding => !validation.eligibleBlockers.includes(finding));
+    const droppedBlocker = declaredBlockers.some(finding => !(validation as FindingValidation).eligibleBlockers.includes(finding));
     const formalEligible = evidencePosture === 'complete'
         && finalSnapshot.pull?.draft === false
         && typeof finalSnapshot.pull?.author === 'string'
         && finalSnapshot.pull.author.toLowerCase() !== actor.toLowerCase();
-    let event = 'COMMENT';
+    let event: ReviewEvent = 'COMMENT';
     if (payload.submissionPolicy === 'approve-if-clear'
         && formalEligible && payload.conclusion === 'clear' && declaredBlockers.length === 0 && !droppedBlocker) {
         event = 'APPROVE';
     }
     else if (payload.submissionPolicy === 'request-changes-if-blocked'
-        && formalEligible && payload.conclusion === 'blocking' && validation.eligibleBlockers.length > 0) {
+        && formalEligible && payload.conclusion === 'blocking' && (validation as FindingValidation).eligibleBlockers.length > 0) {
         event = 'REQUEST_CHANGES';
     }
     else if (payload.submissionPolicy === 'select-state') {
-        if (formalEligible && payload.conclusion === 'blocking' && validation.eligibleBlockers.length > 0)
+        if (formalEligible && payload.conclusion === 'blocking' && (validation as FindingValidation).eligibleBlockers.length > 0)
             event = 'REQUEST_CHANGES';
         else if (formalEligible && payload.conclusion === 'clear' && declaredBlockers.length === 0 && !droppedBlocker)
             event = 'APPROVE';
@@ -983,7 +1088,7 @@ function deriveReviewSubmission(payload, initialSnapshot, finalSnapshot, actor, 
         authorizationPolicy: payload.submissionPolicy,
     };
 }
-async function postReviewLocked(payload, spawn, key) {
+async function postReviewLocked(payload: ReviewPayloadV4, spawn: Spawn | undefined, key: string) {
     let snapshot;
     try {
         snapshot = await currentSnapshot(payload, spawn);
@@ -1024,11 +1129,11 @@ async function postReviewLocked(payload, spawn, key) {
     const finalDuplicates = payload.schemaVersion === 4 ? suppressExactPriorFindings(payload.findings, finalSnapshot) : initialDuplicates;
     if (hash(JSON.stringify(initialDuplicates.dropped)) !== hash(JSON.stringify(finalDuplicates.dropped)))
         return postError('prior-feedback duplicate state changed during final validation; refusing to post', { correctable: true });
-    const initialPostingValidation = payload.schemaVersion === 2
-        ? validateCurrentComments(payload.inlineComments, snapshot)
+    const initialPostingValidation = (payload.schemaVersion as number) === 2
+        ? validateCurrentComments(payload.inlineComments!, snapshot)
         : validateCurrentFindings(initialDuplicates.kept, snapshot);
-    const finalPostingValidation = payload.schemaVersion === 2
-        ? validateCurrentComments(payload.inlineComments, finalSnapshot)
+    const finalPostingValidation = (payload.schemaVersion as number) === 2
+        ? validateCurrentComments(payload.inlineComments!, finalSnapshot)
         : validateCurrentFindings(finalDuplicates.kept, finalSnapshot);
     // Current-head exact duplicates are suppressed only from emitted comments.
     // They remain declared findings and are revalidated for formal decisions.
@@ -1038,10 +1143,10 @@ async function postReviewLocked(payload, spawn, key) {
     const finalDecisionValidation = payload.schemaVersion === 4
         ? validateCurrentFindings(payload.findings, finalSnapshot)
         : finalPostingValidation;
-    const validationChanged = payload.schemaVersion === 2
-        ? locationValidationDigest(finalPostingValidation) !== locationValidationDigest(initialPostingValidation)
-        : findingValidationDigest(finalPostingValidation) !== findingValidationDigest(initialPostingValidation)
-            || findingValidationDigest(finalDecisionValidation) !== findingValidationDigest(initialDecisionValidation);
+    const validationChanged = (payload.schemaVersion as number) === 2
+        ? locationValidationDigest(finalPostingValidation as LocationValidation) !== locationValidationDigest(initialPostingValidation as LocationValidation)
+        : findingValidationDigest(finalPostingValidation as FindingValidation) !== findingValidationDigest(initialPostingValidation as FindingValidation)
+            || findingValidationDigest(finalDecisionValidation as FindingValidation) !== findingValidationDigest(initialDecisionValidation as FindingValidation);
     if (validationChanged)
         return postError('finding locations or evidence changed during final validation; refusing to post', { correctable: true });
     let decision;
@@ -1051,18 +1156,18 @@ async function postReviewLocked(payload, spawn, key) {
     catch (error) {
         return postError(safeError(error), { correctable: true });
     }
-    const droppedFindings = finalDuplicates.dropped.map(entry => ({
+    const droppedFindings: DroppedFinding[] = finalDuplicates.dropped.map(entry => ({
         ...entry,
         suppressedFromPosting: true,
         retainedForDecision: true,
-        eligibleBlocker: finalDecisionValidation.eligibleBlockers.includes(entry.finding),
+        eligibleBlocker: (finalDecisionValidation as FindingValidation).eligibleBlockers.includes(entry.finding),
     }));
     decision.droppedFindings = droppedFindings;
-    const validComments = payload.schemaVersion === 2 ? finalPostingValidation.valid : finalPostingValidation.validInline;
-    const droppedComments = payload.schemaVersion === 2 ? finalPostingValidation.dropped : finalPostingValidation.invalid;
+    const validComments = (payload.schemaVersion as number) === 2 ? (finalPostingValidation as LocationValidation).valid : (finalPostingValidation as FindingValidation).validInline;
+    const droppedComments = (payload.schemaVersion as number) === 2 ? (finalPostingValidation as LocationValidation).dropped : (finalPostingValidation as FindingValidation).invalid;
     let findingsSection = '';
     try {
-        findingsSection = payload.schemaVersion === 2 ? '' : renderNonInlineFindings(finalPostingValidation.nonInline);
+        findingsSection = (payload.schemaVersion as number) === 2 ? '' : renderNonInlineFindings((finalPostingValidation as FindingValidation).nonInline);
     }
     catch (error) {
         return postError(safeError(error), { correctable: true });
@@ -1228,8 +1333,8 @@ async function postReviewLocked(payload, spawn, key) {
         warnings: [stripSecrets(postResult.stderr || postResult.stdout || '')].filter(Boolean),
     }), { postAttempted: true, outcomeUnknown: true });
 }
-export async function postReview(rawPayload, context, { spawn } = {}) {
-    if (!context || typeof context !== 'object' || !POSTING_AGENTS.has(typeof context.agent === 'string' ? context.agent : '')) {
+export async function postReview(rawPayload: unknown, context: unknown, { spawn }: { spawn?: Spawn | undefined } = {}) {
+    if (!isUnknownRecord(context) || !POSTING_AGENTS.has(typeof context.agent === 'string' ? context.agent : '')) {
         return postError('caller agent identity mismatch');
     }
     let payload;

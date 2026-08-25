@@ -5,8 +5,23 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { basename } from 'node:path';
 const MAX_CONFIG_BYTES = 64 * 1024;
-const WORKSPACE_MODES = Object.freeze(['auto', 'shared', 'worktree']);
+const WORKSPACE_MODES = Object.freeze(['auto', 'shared', 'worktree'] as const);
 const MAX_CONCURRENT_WRITERS = 50;
+type UnknownRecord = Record<string, unknown>;
+
+export type ImplementationWorkspaceMode = typeof WORKSPACE_MODES[number];
+export interface RuntimeImplementationConfig {
+    workspaceMode: ImplementationWorkspaceMode;
+    maxConcurrentWriters: number;
+    cleanWorkspaceRequired: true;
+}
+
+export interface RuntimeConfig {
+    schemaVersion: 1;
+    implementation: RuntimeImplementationConfig;
+    models?: UnknownRecord;
+}
+
 export const DEFAULT_RUNTIME_CONFIG = Object.freeze({
     schemaVersion: 1,
     implementation: Object.freeze({
@@ -14,38 +29,38 @@ export const DEFAULT_RUNTIME_CONFIG = Object.freeze({
         maxConcurrentWriters: MAX_CONCURRENT_WRITERS,
         cleanWorkspaceRequired: true,
     }),
-});
-function isPlainObject(value) {
+}) satisfies Readonly<RuntimeConfig>;
+function isPlainObject(value: unknown): value is UnknownRecord {
     if (value === null || typeof value !== 'object' || Array.isArray(value))
         return false;
     const prototype = Object.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
 }
-function assertObject(value, label) {
+function assertObject(value: unknown, label: string): asserts value is UnknownRecord {
     if (!isPlainObject(value))
         throw new Error(`${label} must be a plain object`);
 }
-function assertAllowedKeys(value, fields, label) {
+function assertAllowedKeys(value: UnknownRecord, fields: readonly string[], label: string): void {
     const allowed = new Set(fields);
     const unknown = Object.keys(value).filter((key) => !allowed.has(key));
     if (unknown.length > 0)
         throw new Error(`${label} contains unknown fields: ${unknown.sort().join(', ')}`);
 }
-function integerOption(value, fallback, label, { minimum, maximum }) {
+function integerOption(value: unknown, fallback: number, label: string, { minimum, maximum }: { minimum: number; maximum: number }): number {
     const resolved = value === undefined ? fallback : value;
     if (typeof resolved !== 'number' || !Number.isSafeInteger(resolved) || resolved < minimum || resolved > maximum) {
         throw new Error(`${label} must be an integer from ${minimum} to ${maximum}`);
     }
     return resolved;
 }
-function enumOption(value, fallback, allowed, label) {
+function enumOption<T extends string>(value: unknown, fallback: T, allowed: readonly T[], label: string): T {
     const resolved = value === undefined ? fallback : value;
     const match = typeof resolved === 'string' ? allowed.find((entry) => entry === resolved) : undefined;
     if (match === undefined)
         throw new Error(`${label} must be one of ${allowed.join(', ')}`);
     return match;
 }
-export function parseRuntimeConfig(value = undefined) {
+export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
     if (value === undefined || value === null) {
         return { schemaVersion: 1, implementation: { ...DEFAULT_RUNTIME_CONFIG.implementation } };
     }
@@ -76,7 +91,7 @@ export function parseRuntimeConfig(value = undefined) {
         },
     };
 }
-function hasControl(value) {
+function hasControl(value: string): boolean {
     for (let index = 0; index < value.length; index += 1) {
         const code = value.charCodeAt(index);
         if (code <= 31 || code === 127)
@@ -84,7 +99,7 @@ function hasControl(value) {
     }
     return false;
 }
-function assertSafeConfigPath(path) {
+function assertSafeConfigPath(path: unknown): asserts path is string {
     if (typeof path !== 'string' ||
         path.length === 0 ||
         path.length > 4096 ||
@@ -96,7 +111,7 @@ function assertSafeConfigPath(path) {
         throw new Error('config path must identify a non-secret JSON file');
     }
 }
-export async function loadRuntimeConfigFile(path) {
+export async function loadRuntimeConfigFile(path: string): Promise<RuntimeConfig> {
     assertSafeConfigPath(path);
     const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
@@ -109,7 +124,7 @@ export async function loadRuntimeConfigFile(path) {
         if (Buffer.byteLength(text, 'utf8') > MAX_CONFIG_BYTES) {
             throw new Error(`runtime config exceeds ${MAX_CONFIG_BYTES} bytes`);
         }
-        let value;
+        let value: unknown;
         try {
             value = JSON.parse(text);
         }

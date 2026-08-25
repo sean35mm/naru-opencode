@@ -98,6 +98,6 @@ Isolated worktrees are a containment convenience, not a sandbox. They do not pro
 - It must be a regular file, not a symlink, and no larger than 64 KiB.
 - It must be valid JSON with `schemaVersion` set to `1`.
 - Unknown fields at either level are rejected rather than ignored.
-- An invalid file is an error, not a silent fallback to defaults. `node tools/naru-doctor.js --json` reports it as `invalid-runtime-config` and shows the effective workspace mode.
+- An invalid file is an error, not a silent fallback to defaults. From a source checkout, `npm run doctor -- --json` reports it as `invalid-runtime-config` and shows the effective workspace mode; installed `naru-doctor.js` retains that runtime filename.
 - The file is read when `naru-worktree` runs, not cached once at startup.
 - The `models` block is the one exception to both points: the `naru-dispatch` plugin reads it once at plugin load and fails open — a missing or malformed file leaves OpenCode's config untouched, so no variants are generated and the base agents keep working on the session model until the file is fixed and OpenCode restarts.

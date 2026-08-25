@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { INSTALL_MANIFEST_FILE, inferInstallSourceRoot, inspectInstallManifest, loadInstallManifest, } from './naru-lib/install-manifest.mjs';
+import type { InstallOptions } from './naru-lib/install-manifest.mjs';
 import { loadRuntimeConfigFile } from './naru-lib/runtime-config.mjs';
 import { parseModelsConfig } from './naru-lib/dispatch.mjs';
 const REPORT_SCHEMA_VERSION = 1;
@@ -13,20 +14,74 @@ const MIN_OPENCODE_VERSION = '1.18.4';
 const MAX_CONFIG_BYTES = 64 * 1024;
 const MAX_ISSUES = 32;
 const MAX_REPORTED_PATHS = 10;
-function recordValue(value) {
-    return value !== null && typeof value === 'object' && !Array.isArray(value)
-        ? value
-        : null;
+
+export interface DoctorOptions {
+    customDir: string | null;
+    projectRoot: string;
+    sourceRoot: string | null;
+    json: boolean;
+    help?: boolean;
 }
-function errorMessage(error) {
+interface DoctorIssue { code: string; scope: string; detail: string }
+interface ScopeCandidate { id: string; loadState: string; target: string }
+interface OpenCodeConfigState { status: 'absent' | 'invalid' | 'valid'; file: string | null; depth: number | null }
+interface RuntimeState { status: 'default' | 'custom-valid' | 'invalid'; workspaceMode: string | null; modelClasses?: string[] | null; modelsError?: string | null }
+interface ScopeAssets {
+    total: number;
+    installed: Record<string, number>;
+    source: Record<string, number>;
+    sourceCompared: boolean;
+    inspectionStatus: 'complete' | 'failed';
+}
+interface ScopeReport {
+    id: string;
+    loadState: string;
+    installed: boolean;
+    manifestStatus: 'absent' | 'invalid' | 'valid';
+    sourceVersion: string | null;
+    locationMode: string | null;
+    installMode: string | null;
+    options: InstallOptions | null;
+    assets: ScopeAssets | null;
+    issuePaths: string[];
+    runtime: RuntimeState;
+}
+interface DepthReport {
+    status: 'known' | 'unknown';
+    effective: number | null;
+    source: string;
+    global: OpenCodeConfigState;
+    project: OpenCodeConfigState;
+    custom: OpenCodeConfigState | null;
+}
+interface OpenCodeCompatibility { status: 'not-found' | 'timeout' | 'unknown' | 'supported' | 'unsupported'; version: string | null; minimum: string }
+export interface DoctorReport {
+    schemaVersion: 1;
+    diagnostic: 'naru-doctor';
+    providerFree: true;
+    readOnly: true;
+    status: 'healthy' | 'warning';
+    compatibility: { opencode: OpenCodeCompatibility; runtime: { name: 'bun' | 'node'; version: string } };
+    depth: DepthReport;
+    scopes: ScopeReport[];
+    issues: DoctorIssue[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function recordValue(value: unknown): Record<string, unknown> | null {
+    return isRecord(value) ? value : null;
+}
+function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 function usage() {
     return `Usage: node tools/naru-doctor.js [--dir PATH] [--project-root PATH] [--source PATH] [--json]\n\n` +
         'Reads local installation and configuration state only. It never loads plugins, credentials, providers, or remote services.\n';
 }
-function parseArgs(argv) {
-    const options = {
+function parseArgs(argv: string[]): DoctorOptions {
+    const options: DoctorOptions = {
         customDir: null,
         projectRoot: process.cwd(),
         sourceRoot: null,
@@ -57,7 +112,7 @@ function parseArgs(argv) {
     }
     return options;
 }
-async function statOrNull(value) {
+async function statOrNull(value: string) {
     try {
         return await lstat(value);
     }
@@ -67,7 +122,7 @@ async function statOrNull(value) {
         throw error;
     }
 }
-function stripJsonc(source) {
+function stripJsonc(source: string): string {
     let result = '';
     let string = false;
     let escaped = false;
@@ -144,7 +199,7 @@ function stripJsonc(source) {
     }
     return normalized;
 }
-async function readBoundedConfig(file) {
+async function readBoundedConfig(file: string): Promise<string | null> {
     const stats = await statOrNull(file);
     if (stats === null)
         return null;
@@ -162,7 +217,7 @@ async function readBoundedConfig(file) {
         await handle.close();
     }
 }
-async function loadJsonConfig(file, { jsonc = false } = {}) {
+async function loadJsonConfig(file: string, { jsonc = false }: { jsonc?: boolean } = {}): Promise<Record<string, unknown> | null> {
     const source = await readBoundedConfig(file);
     if (source === null)
         return null;
@@ -173,7 +228,7 @@ async function loadJsonConfig(file, { jsonc = false } = {}) {
     }
     return record;
 }
-async function openCodeConfigAt(root) {
+async function openCodeConfigAt(root: string): Promise<OpenCodeConfigState> {
     const candidates = [
         { name: 'opencode.jsonc', jsonc: true },
         { name: 'opencode.json', jsonc: false },
@@ -205,7 +260,7 @@ async function openCodeConfigAt(root) {
         return { status: 'invalid', file: selected.name, depth: null };
     }
 }
-function compareVersions(left, right) {
+function compareVersions(left: string, right: string): number {
     const a = left.split('.').map(Number);
     const b = right.split('.').map(Number);
     for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
@@ -215,7 +270,7 @@ function compareVersions(left, right) {
     }
     return 0;
 }
-function openCodeCompatibility() {
+function openCodeCompatibility(): OpenCodeCompatibility {
     const result = spawnSync('opencode', ['--version'], {
         encoding: 'utf8',
         timeout: 2_000,
@@ -241,12 +296,12 @@ function openCodeCompatibility() {
         minimum: MIN_OPENCODE_VERSION,
     };
 }
-function addIssue(issues, code, scope, detail) {
+function addIssue(issues: DoctorIssue[], code: string, scope: string, detail: string): void {
     if (issues.length >= MAX_ISSUES)
         return;
     issues.push({ code, scope, detail });
 }
-function canonicalCandidate(value) {
+function canonicalCandidate(value: string): string {
     try {
         return realpathSync(value);
     }
@@ -254,7 +309,7 @@ function canonicalCandidate(value) {
         return path.resolve(value);
     }
 }
-function scopeCandidates(options) {
+function scopeCandidates(options: DoctorOptions): ScopeCandidate[] {
     const globalTarget = canonicalCandidate(path.join(os.homedir(), '.config', 'opencode'));
     const projectTarget = canonicalCandidate(path.join(options.projectRoot, '.opencode'));
     const candidates = [
@@ -280,15 +335,15 @@ function scopeCandidates(options) {
         return true;
     });
 }
-function countBy(values, field) {
-    const counts = {};
+function countBy<T, K extends keyof T>(values: readonly T[], field: K): Record<string, number> {
+    const counts: Record<string, number> = {};
     for (const value of values) {
         const key = String(value[field]);
         counts[key] = (counts[key] ?? 0) + 1;
     }
     return counts;
 }
-async function runtimeState(target) {
+async function runtimeState(target: string): Promise<RuntimeState> {
     const file = path.join(target, 'naru-runtime.json');
     if (await statOrNull(file) === null) {
         return { status: 'default', workspaceMode: 'auto' };
@@ -318,7 +373,7 @@ async function runtimeState(target) {
         return { status: 'invalid', workspaceMode: null, modelClasses: null, modelsError: null };
     }
 }
-async function inspectScope(candidate, options, issues) {
+async function inspectScope(candidate: ScopeCandidate, options: DoctorOptions, issues: DoctorIssue[]): Promise<ScopeReport> {
     let manifest;
     try {
         manifest = await loadInstallManifest(candidate.target);
@@ -426,7 +481,7 @@ async function inspectScope(candidate, options, issues) {
         runtime,
     };
 }
-async function depthState(options, issues) {
+async function depthState(options: DoctorOptions, issues: DoctorIssue[]): Promise<DepthReport> {
     const globalRoot = path.join(os.homedir(), '.config', 'opencode');
     const global = await openCodeConfigAt(globalRoot);
     const project = await openCodeConfigAt(options.projectRoot);
@@ -437,9 +492,9 @@ async function depthState(options, issues) {
         addIssue(issues, 'invalid-opencode-config', 'project', 'project OpenCode config is invalid or ambiguous');
     if (custom?.status === 'invalid')
         addIssue(issues, 'invalid-opencode-config', 'custom', 'custom OpenCode config is invalid or ambiguous');
-    let effective = 1;
+    let effective: number | null = 1;
     let source = 'opencode-default';
-    let status = 'known';
+    let status: 'known' | 'unknown' = 'known';
     if (global.status === 'invalid' || project.status === 'invalid') {
         effective = null;
         source = 'unknown';
@@ -459,11 +514,11 @@ async function depthState(options, issues) {
     }
     return { status, effective, source, global, project, custom };
 }
-export async function buildDoctorReport(options) {
-    const issues = [];
+export async function buildDoctorReport(options: DoctorOptions): Promise<DoctorReport> {
+    const issues: DoctorIssue[] = [];
     const bun = recordValue(Reflect.get(globalThis, 'Bun'));
     const bunVersion = typeof bun?.version === 'string' ? bun.version : '';
-    const compatibility = {
+    const compatibility: DoctorReport['compatibility'] = {
         opencode: openCodeCompatibility(),
         runtime: {
             name: bun ? 'bun' : 'node',
@@ -474,7 +529,7 @@ export async function buildDoctorReport(options) {
         addIssue(issues, 'opencode-compatibility', 'host', `OpenCode ${MIN_OPENCODE_VERSION} or later was not confirmed`);
     }
     const depth = await depthState(options, issues);
-    const scopes = [];
+    const scopes: ScopeReport[] = [];
     for (const candidate of scopeCandidates(options)) {
         scopes.push(await inspectScope(candidate, options, issues));
     }
@@ -493,7 +548,7 @@ export async function buildDoctorReport(options) {
         issues,
     };
 }
-function renderPlain(report) {
+function renderPlain(report: DoctorReport): string {
     const lines = [
         `Naru doctor: ${report.status}`,
         `OpenCode: ${report.compatibility.opencode.status}${report.compatibility.opencode.version ? ` (${report.compatibility.opencode.version})` : ''}; minimum ${report.compatibility.opencode.minimum}`,
@@ -546,7 +601,7 @@ async function main() {
         process.exitCode = 1;
     }
 }
-function realpathOrNull(value) {
+function realpathOrNull(value: string): string | null {
     try {
         return realpathSync(value);
     }

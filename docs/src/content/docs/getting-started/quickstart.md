@@ -17,6 +17,8 @@ Prefer to read the source first? Clone and run the installer directly — same f
 ```sh
 git clone https://github.com/sean35mm/naru-opencode.git
 cd naru-opencode
+npm ci
+npm run build
 sh install.sh --preview
 sh install.sh --apply
 ```

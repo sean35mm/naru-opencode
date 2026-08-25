@@ -1,10 +1,12 @@
 import { constants as fsConstants } from 'node:fs';
+import type { BigIntStats } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { isRunId, isSafeScope, scopeCoversPath } from './validate.mjs';
-import { run } from './transport.mjs';
+import { run, type Spawn } from './transport.mjs';
 const MAX_WRITERS = 50;
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // Isolated worktrees are for source changes, not transferring arbitrarily large artifacts.
@@ -12,30 +14,140 @@ const MAX_UNTRACKED_FILE_BYTES = 64 * 1024 * 1024;
 const NO_HOOKS_PATH = '/dev/null';
 const METADATA_FILE = '.naru-run.json';
 const REGISTRY_KEY = Symbol.for('naru.worktree.registry.v1');
-const RUN_LOCKS = new Map();
-function hasErrorCode(error, code) {
+const RUN_LOCKS = new Map<string, Promise<void>>();
+
+export type WorktreeLifecycleState = 'writable' | 'faulted' | 'finalized';
+
+export interface WorktreeItem {
+    itemId: string;
+    path: string;
+    ownedWriteScope: string[];
+    integrated: boolean;
+    changedPaths: string[];
+}
+
+export interface WorktreeRun {
+    runId: string;
+    repository: string;
+    baseSha: string;
+    integrationPath: string;
+    maxWriters: number;
+    finalized: boolean;
+    faulted: boolean;
+    items: WorktreeItem[];
+}
+
+export interface WorktreeRunState extends Omit<WorktreeRun, 'items'> {
+    runRoot: string;
+    items: Map<string, WorktreeItem>;
+    integratedPaths: Set<string>;
+}
+
+export type WorktreeRegistry = Map<string, WorktreeRunState>;
+
+export interface PersistedWorktreeItem {
+    itemId: string;
+    path: string;
+    ownedWriteScope: string[];
+    integrated: boolean;
+    changedPaths: string[];
+}
+
+export interface PersistedWorktreeMetadata {
+    schemaVersion: 1;
+    runId: string;
+    repository: string;
+    baseSha: string;
+    integrationPath: string;
+    maxWriters: number;
+    finalized: boolean;
+    faulted: boolean;
+    items: PersistedWorktreeItem[];
+}
+
+export interface GitOperationRecord {
+    cwd: string;
+    input?: string | undefined;
+    spawn?: Spawn | undefined;
+    label: string;
+}
+
+export interface FilesystemOperationRecord {
+    path: string;
+    destination: string;
+    dev: bigint | undefined;
+    ino: bigint | undefined;
+    expected: BigIntStats | undefined;
+}
+
+interface BaseRunOptions {
+    runId: string;
+    spawn?: Spawn | undefined;
+    stateRegistry?: WorktreeRegistry | undefined;
+}
+
+export interface CreateWorktreeRunOptions extends BaseRunOptions {
+    directory: string;
+    maxWriters?: number;
+    worktreeRoot?: string | undefined;
+}
+
+export interface CreateWriterWorktreeOptions extends BaseRunOptions {
+    itemId: string;
+    ownedWriteScope: unknown;
+}
+
+export interface WriterWorktreeOptions extends BaseRunOptions {
+    itemId: string;
+}
+
+export interface RecoverWorktreeRunOptions extends BaseRunOptions {
+    directory: string;
+    worktreeRoot?: string | undefined;
+}
+
+export interface IntegrationResult {
+    itemId: string;
+    changedPaths: string[];
+    integrationPath: string;
+}
+
+export interface FinalizationResult {
+    runId: string;
+    changedPaths: string[];
+    finalized: true;
+}
+
+export interface CleanupResult {
+    runId: string;
+    cleaned: true;
+}
+
+type RegistryGlobal = typeof globalThis & { [REGISTRY_KEY]?: WorktreeRegistry };
+
+function hasErrorCode(error: unknown, code: string): error is Error & { code: string } {
     return error instanceof Error && 'code' in error && error.code === code;
 }
-function errorMessage(error) {
+function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
-function isUnknownRecord(value) {
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-function assertUnknownRecord(value, label) {
+function assertUnknownRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
     if (!isUnknownRecord(value)) {
         throw new Error(`${label} must be an object`);
     }
 }
-function registry() {
-    const runtime = globalThis;
+function registry(): WorktreeRegistry {
+    const runtime = globalThis as RegistryGlobal;
     runtime[REGISTRY_KEY] ??= new Map();
     return runtime[REGISTRY_KEY];
 }
-async function withRunLock(runId, operation) {
+async function withRunLock<T>(runId: string, operation: () => Promise<T>): Promise<T> {
     const previous = RUN_LOCKS.get(runId) ?? Promise.resolve();
-    let release;
-    const gate = new Promise((resolveGate) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolveGate) => {
         release = resolveGate;
     });
     const tail = previous.catch(() => { }).then(() => gate);
@@ -50,18 +162,19 @@ async function withRunLock(runId, operation) {
             RUN_LOCKS.delete(runId);
     }
 }
-function safeId(value, label) {
+function safeId(value: unknown, label: string): string {
     if (!isRunId(value))
         throw new Error(`${label} is not a safe identifier`);
     return value;
 }
-function assertAbsolute(path, label) {
+function assertAbsolute(path: unknown, label: string): asserts path is string;
+function assertAbsolute(path: unknown, label: string): string {
     if (typeof path !== 'string' || !path.startsWith('/') || path.includes('\0')) {
         throw new Error(`${label} must be an absolute path`);
     }
     return path;
 }
-function parseNul(text) {
+function parseNul(text: string): string[] {
     if (!text)
         return [];
     const values = text.split('\0');
@@ -69,7 +182,7 @@ function parseNul(text) {
         values.pop();
     return values;
 }
-async function git(args, { cwd, input, spawn, label }) {
+async function git(args: string[], { cwd, input, spawn, label }: GitOperationRecord): Promise<string> {
     const result = await run(['git', '--no-pager', '-c', 'color.ui=false', ...args], {
         cwd,
         input,
@@ -83,18 +196,18 @@ async function git(args, { cwd, input, spawn, label }) {
     }
     return result.stdout;
 }
-async function addWorktree(repository, path, baseSha, spawn, label) {
+async function addWorktree(repository: string, path: string, baseSha: string, spawn: Spawn | undefined, label: string): Promise<void> {
     await git(['-c', `core.hooksPath=${NO_HOOKS_PATH}`, 'worktree', 'add', '--detach', path, baseSha], {
         cwd: repository,
         spawn,
         label,
     });
 }
-function inside(root, path) {
+function inside(root: string, path: string): boolean {
     const rel = relative(root, path);
     return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !rel.startsWith(sep));
 }
-async function repositoryIdentity(directory, spawn) {
+async function repositoryIdentity(directory: unknown, spawn: Spawn | undefined): Promise<{ repository: string; baseSha: string }> {
     assertAbsolute(directory, 'directory');
     const top = (await git(['rev-parse', '--show-toplevel'], {
         cwd: directory,
@@ -111,7 +224,7 @@ async function repositoryIdentity(directory, spawn) {
         throw new Error('baseline revision is not a full commit SHA');
     return { repository, baseSha };
 }
-async function canonicalRepository(directory, spawn) {
+async function canonicalRepository(directory: unknown, spawn: Spawn | undefined): Promise<{ repository: string; baseSha: string }> {
     const identity = await repositoryIdentity(directory, spawn);
     const status = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
         cwd: identity.repository,
@@ -122,8 +235,8 @@ async function canonicalRepository(directory, spawn) {
         throw new Error('isolated writer mode requires a clean workspace');
     return identity;
 }
-async function writeMetadata(runState) {
-    const data = {
+async function writeMetadata(runState: WorktreeRunState): Promise<void> {
+    const data: PersistedWorktreeMetadata = {
         schemaVersion: 1,
         runId: runState.runId,
         repository: runState.repository,
@@ -142,7 +255,7 @@ async function writeMetadata(runState) {
     };
     const metadataPath = join(runState.runRoot, METADATA_FILE);
     const temporaryPath = join(runState.runRoot, `.naru-run.${process.pid}.${randomBytes(8).toString('hex')}.tmp`);
-    let handle;
+    let handle: FileHandle | undefined;
     try {
         handle = await open(temporaryPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0), 0o600);
         await handle.writeFile(`${JSON.stringify(data, null, 2)}\n`, 'utf8');
@@ -157,12 +270,12 @@ async function writeMetadata(runState) {
         throw error;
     }
 }
-async function runRootFor(worktreeRoot, repository, runId, { create = false } = {}) {
+async function runRootFor(worktreeRoot: string | undefined, repository: string, runId: string, { create = false }: { create?: boolean } = {}): Promise<string> {
     const configuredRoot = resolve(worktreeRoot ?? join(homedir(), '.worktrees'));
     if (create)
         await mkdir(configuredRoot, { recursive: true, mode: 0o700 });
     const canonicalRoot = await realpath(configuredRoot);
-    const validateSegment = async (path, label, { exclusive = false } = {}) => {
+    const validateSegment = async (path: string, label: string, { exclusive = false }: { exclusive?: boolean } = {}): Promise<void> => {
         if (!inside(canonicalRoot, path))
             throw new Error('derived worktree path escapes its configured root');
         let created = false;
@@ -196,7 +309,7 @@ async function runRootFor(worktreeRoot, repository, runId, { create = false } = 
     await validateSegment(runRoot, 'worktree run directory', { exclusive: create });
     return runRoot;
 }
-function publicRun(runState) {
+function publicRun(runState: WorktreeRunState): WorktreeRun {
     return {
         runId: runState.runId,
         repository: runState.repository,
@@ -214,13 +327,13 @@ function publicRun(runState) {
         })),
     };
 }
-function stateFor(runId, stateRegistry = registry()) {
+function stateFor(runId: string, stateRegistry: WorktreeRegistry = registry()): WorktreeRunState {
     const state = stateRegistry.get(runId);
     if (!state)
         throw new Error(`unknown worktree run: ${runId}`);
     return state;
 }
-async function createWorktreeRunUnlocked({ directory, runId, maxWriters = 50, worktreeRoot, spawn, stateRegistry = registry(), }) {
+async function createWorktreeRunUnlocked({ directory, runId, maxWriters = 50, worktreeRoot, spawn, stateRegistry = registry(), }: CreateWorktreeRunOptions): Promise<WorktreeRun> {
     safeId(runId, 'runId');
     if (!Number.isSafeInteger(maxWriters) || maxWriters < 1 || maxWriters > MAX_WRITERS) {
         throw new Error(`maxWriters must be an integer from 1 to ${MAX_WRITERS}`);
@@ -237,7 +350,7 @@ async function createWorktreeRunUnlocked({ directory, runId, maxWriters = 50, wo
         await rm(runRoot, { recursive: true, force: true });
         throw error;
     }
-    const runState = {
+    const runState: WorktreeRunState = {
         runId,
         repository,
         baseSha,
@@ -265,7 +378,7 @@ async function createWorktreeRunUnlocked({ directory, runId, maxWriters = 50, wo
     }
     return publicRun(runState);
 }
-async function createWriterWorktreeUnlocked({ runId, itemId, ownedWriteScope, spawn, stateRegistry, }) {
+async function createWriterWorktreeUnlocked({ runId, itemId, ownedWriteScope, spawn, stateRegistry, }: CreateWriterWorktreeOptions & { stateRegistry: WorktreeRegistry }): Promise<WorktreeItem> {
     safeId(itemId, 'itemId');
     const runState = stateFor(runId, stateRegistry);
     if (runState.finalized || runState.faulted)
@@ -277,7 +390,7 @@ async function createWriterWorktreeUnlocked({ runId, itemId, ownedWriteScope, sp
     if (!Array.isArray(ownedWriteScope) || ownedWriteScope.length === 0 || ownedWriteScope.length > 128) {
         throw new Error('ownedWriteScope must be a bounded non-empty array');
     }
-    const validatedScopes = [];
+    const validatedScopes: string[] = [];
     for (const scope of ownedWriteScope) {
         if (!isSafeScope(scope))
             throw new Error(`ownedWriteScope contains an unsafe scope: ${scope}`);
@@ -310,7 +423,9 @@ async function createWriterWorktreeUnlocked({ runId, itemId, ownedWriteScope, sp
         throw new Error(`writer worktree state was not recorded: ${itemId}`);
     return item;
 }
-async function changesAt(path, spawn) {
+interface WorktreeChanges { tracked: string[]; untracked: string[]; all: string[] }
+
+async function changesAt(path: string, spawn: Spawn | undefined): Promise<WorktreeChanges> {
     const tracked = parseNul(await git(['diff', '--name-only', '-z', 'HEAD', '--', '.'], {
         cwd: path,
         spawn,
@@ -323,7 +438,7 @@ async function changesAt(path, spawn) {
     })).sort();
     return { tracked, untracked, all: [...new Set([...tracked, ...untracked])].sort() };
 }
-async function rejectSymlinks(root, paths) {
+async function rejectSymlinks(root: string, paths: string[]): Promise<void> {
     for (const path of paths) {
         let stats;
         try {
@@ -340,7 +455,7 @@ async function rejectSymlinks(root, paths) {
             throw new Error(`changed path is not a regular file: ${path}`);
     }
 }
-function assertContained(item, changedPaths) {
+function assertContained(item: WorktreeItem, changedPaths: string[]): void {
     for (const path of changedPaths) {
         if (!isSafeScope(path, { allowGlob: false }))
             throw new Error(`changed path is unsafe: ${path}`);
@@ -349,14 +464,14 @@ function assertContained(item, changedPaths) {
         }
     }
 }
-async function trackedPatch(path, spawn) {
+async function trackedPatch(path: string, spawn: Spawn | undefined): Promise<string> {
     return git(['diff', '--binary', '--full-index', '--no-ext-diff', 'HEAD', '--', '.'], {
         cwd: path,
         spawn,
         label: 'writer patch capture',
     });
 }
-async function applyPatch(target, patch, spawn, checkOnly = false, reverse = false) {
+async function applyPatch(target: string, patch: string, spawn: Spawn | undefined, checkOnly = false, reverse = false): Promise<void> {
     if (!patch)
         return;
     const args = ['apply', '--binary', '--whitespace=nowarn'];
@@ -368,7 +483,7 @@ async function applyPatch(target, patch, spawn, checkOnly = false, reverse = fal
     const action = reverse ? 'patch rollback' : 'patch application';
     await git(args, { cwd: target, input: patch, spawn, label: checkOnly ? `${action} preflight` : action });
 }
-async function safeAncestor(root, relativePath, { create }) {
+async function safeAncestor(root: string, relativePath: string, { create }: { create: boolean }): Promise<string> {
     const canonicalRoot = await realpath(root);
     if (canonicalRoot !== root)
         throw new Error(`copy root is not canonical: ${root}`);
@@ -404,14 +519,14 @@ async function safeAncestor(root, relativePath, { create }) {
     }
     return current;
 }
-async function copyRegularFile(source, target, path, created) {
+async function copyRegularFile(source: string, target: string, path: string, created: FilesystemOperationRecord[]): Promise<void> {
     const sourceParent = await safeAncestor(source, path, { create: false });
     const targetParent = await safeAncestor(target, path, { create: true });
     const sourcePath = join(source, path);
     const destination = join(target, path);
-    let sourceHandle;
-    let destinationHandle;
-    let record;
+    let sourceHandle: FileHandle | undefined;
+    let destinationHandle: FileHandle | undefined;
+    let record: FilesystemOperationRecord | undefined;
     try {
         sourceHandle = await open(sourcePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
         const sourceStats = await sourceHandle.stat({ bigint: true });
@@ -492,11 +607,11 @@ async function copyRegularFile(source, target, path, created) {
         await sourceHandle?.close().catch(() => { });
     }
 }
-async function copyUntracked(source, target, paths, created) {
+async function copyUntracked(source: string, target: string, paths: string[], created: FilesystemOperationRecord[]): Promise<void> {
     for (const path of paths)
         await copyRegularFile(source, target, path, created);
 }
-function sameCreatedFile(stats, record) {
+function sameCreatedFile(stats: BigIntStats, record: FilesystemOperationRecord): boolean {
     return record.expected !== undefined
         && stats.isFile()
         && stats.dev === record.dev
@@ -504,8 +619,8 @@ function sameCreatedFile(stats, record) {
         && stats.size === record.expected.size
         && stats.mtimeNs === record.expected.mtimeNs;
 }
-async function rollbackMutation(target, patch, created, spawn) {
-    const residuals = [];
+async function rollbackMutation(target: string, patch: string, created: FilesystemOperationRecord[], spawn: Spawn | undefined): Promise<string[]> {
+    const residuals: string[] = [];
     for (const record of [...created].reverse()) {
         try {
             await safeAncestor(target, record.path, { create: false });
@@ -532,7 +647,7 @@ async function rollbackMutation(target, patch, created, spawn) {
     }
     return residuals;
 }
-async function faultAfterRollback(runState, error, target, patch, created, spawn) {
+async function faultAfterRollback(runState: WorktreeRunState, error: unknown, target: string, patch: string, created: FilesystemOperationRecord[], spawn: Spawn | undefined): Promise<never> {
     const residuals = await rollbackMutation(target, patch, created, spawn);
     runState.faulted = true;
     try {
@@ -544,7 +659,7 @@ async function faultAfterRollback(runState, error, target, patch, created, spawn
     const rollback = residuals.length ? `rollback residual: ${residuals.join('; ')}` : 'rollback completed';
     throw new Error(`${error instanceof Error ? error.message : String(error)}; ${rollback}`, { cause: error });
 }
-async function integrateWriterWorktreeUnlocked({ runId, itemId, spawn, stateRegistry, }) {
+async function integrateWriterWorktreeUnlocked({ runId, itemId, spawn, stateRegistry, }: WriterWorktreeOptions & { stateRegistry: WorktreeRegistry }): Promise<IntegrationResult> {
     const runState = stateFor(runId, stateRegistry);
     if (runState.finalized || runState.faulted)
         throw new Error('worktree run cannot integrate more items');
@@ -560,7 +675,7 @@ async function integrateWriterWorktreeUnlocked({ runId, itemId, spawn, stateRegi
     if (overlap.length)
         throw new Error(`writer changes overlap previously integrated paths: ${overlap.join(', ')}`);
     const patch = await trackedPatch(item.path, spawn);
-    const created = [];
+    const created: FilesystemOperationRecord[] = [];
     let patchApplied = false;
     try {
         await applyPatch(runState.integrationPath, patch, spawn, true);
@@ -582,7 +697,7 @@ async function integrateWriterWorktreeUnlocked({ runId, itemId, spawn, stateRegi
     }
     return { itemId, changedPaths: [...changes.all], integrationPath: runState.integrationPath };
 }
-async function finalizeWorktreeRunUnlocked({ runId, spawn, stateRegistry, }) {
+async function finalizeWorktreeRunUnlocked({ runId, spawn, stateRegistry, }: BaseRunOptions & { stateRegistry: WorktreeRegistry }): Promise<FinalizationResult> {
     const runState = stateFor(runId, stateRegistry);
     if (runState.finalized || runState.faulted)
         throw new Error('worktree run cannot be finalized');
@@ -610,7 +725,7 @@ async function finalizeWorktreeRunUnlocked({ runId, spawn, stateRegistry, }) {
     const patch = await trackedPatch(runState.integrationPath, spawn);
     await rejectSymlinks(runState.integrationPath, changes.all);
     await applyPatch(runState.repository, patch, spawn, true);
-    const created = [];
+    const created: FilesystemOperationRecord[] = [];
     let patchApplied = false;
     try {
         await applyPatch(runState.repository, patch, spawn, false);
@@ -625,7 +740,7 @@ async function finalizeWorktreeRunUnlocked({ runId, spawn, stateRegistry, }) {
     }
     return { runId, changedPaths: changes.all, finalized: true };
 }
-async function recoverWorktreeRunUnlocked({ directory, runId, worktreeRoot, spawn, stateRegistry = registry(), }) {
+async function recoverWorktreeRunUnlocked({ directory, runId, worktreeRoot, spawn, stateRegistry = registry(), }: RecoverWorktreeRunOptions): Promise<WorktreeRun> {
     safeId(runId, 'runId');
     if (stateRegistry.has(runId))
         throw new Error(`worktree run already exists: ${runId}`);
@@ -657,8 +772,8 @@ async function recoverWorktreeRunUnlocked({ directory, runId, worktreeRoot, spaw
     if (await realpath(integrationPath) !== integrationPath)
         throw new Error('integration worktree path is not canonical');
     const persistedItems = metadata.items;
-    const items = new Map();
-    const integratedPaths = new Set();
+    const items = new Map<string, WorktreeItem>();
+    const integratedPaths = new Set<string>();
     for (const persisted of persistedItems) {
         assertUnknownRecord(persisted, 'writer worktree metadata item');
         const persistedItemId = safeId(persisted.itemId, 'itemId');
@@ -711,7 +826,7 @@ async function recoverWorktreeRunUnlocked({ directory, runId, worktreeRoot, spaw
     if (metadata.finalized && [...items.values()].some((item) => !item.integrated)) {
         throw new Error('finalized worktree run metadata contains unintegrated writers');
     }
-    const runState = {
+    const runState: WorktreeRunState = {
         runId,
         repository,
         baseSha,
@@ -726,7 +841,7 @@ async function recoverWorktreeRunUnlocked({ directory, runId, worktreeRoot, spaw
     stateRegistry.set(runId, runState);
     return publicRun(runState);
 }
-async function cleanupWorktreeRunUnlocked({ runId, spawn, stateRegistry, }) {
+async function cleanupWorktreeRunUnlocked({ runId, spawn, stateRegistry, }: BaseRunOptions & { stateRegistry: WorktreeRegistry }): Promise<CleanupResult> {
     const runState = stateFor(runId, stateRegistry);
     if (!runState.finalized)
         throw new Error('refusing to remove worktrees before successful finalization');
@@ -746,14 +861,14 @@ async function cleanupWorktreeRunUnlocked({ runId, spawn, stateRegistry, }) {
     stateRegistry.delete(runId);
     return { runId, cleaned: true };
 }
-export function worktreeRunSnapshot(runId, stateRegistry = registry()) {
+export function worktreeRunSnapshot(runId: string, stateRegistry: WorktreeRegistry = registry()): WorktreeRun {
     return publicRun(stateFor(runId, stateRegistry));
 }
-export function resetWorktreeRegistryForTests(stateRegistry = registry()) {
+export function resetWorktreeRegistryForTests(stateRegistry: WorktreeRegistry = registry()): void {
     stateRegistry.clear();
 }
-export async function readWorktreeMetadata(path) {
-    let metadata;
+export async function readWorktreeMetadata(path: string): Promise<Record<string, unknown>> {
+    let metadata: unknown;
     try {
         metadata = JSON.parse(await readFile(path, 'utf8'));
     }
@@ -767,27 +882,27 @@ export async function readWorktreeMetadata(path) {
     }
     return metadata;
 }
-export async function createWorktreeRun(options) {
+export async function createWorktreeRun(options: CreateWorktreeRunOptions): Promise<WorktreeRun> {
     const stateRegistry = options.stateRegistry ?? registry();
     return withRunLock(options.runId, () => createWorktreeRunUnlocked({ ...options, stateRegistry }));
 }
-export async function createWriterWorktree(options) {
+export async function createWriterWorktree(options: CreateWriterWorktreeOptions): Promise<WorktreeItem> {
     const stateRegistry = options.stateRegistry ?? registry();
     return withRunLock(options.runId, () => createWriterWorktreeUnlocked({ ...options, stateRegistry }));
 }
-export async function integrateWriterWorktree(options) {
+export async function integrateWriterWorktree(options: WriterWorktreeOptions): Promise<IntegrationResult> {
     const stateRegistry = options.stateRegistry ?? registry();
     return withRunLock(options.runId, () => integrateWriterWorktreeUnlocked({ ...options, stateRegistry }));
 }
-export async function finalizeWorktreeRun(options) {
+export async function finalizeWorktreeRun(options: BaseRunOptions): Promise<FinalizationResult> {
     const stateRegistry = options.stateRegistry ?? registry();
     return withRunLock(options.runId, () => finalizeWorktreeRunUnlocked({ ...options, stateRegistry }));
 }
-export async function recoverWorktreeRun(options) {
+export async function recoverWorktreeRun(options: RecoverWorktreeRunOptions): Promise<WorktreeRun> {
     const stateRegistry = options.stateRegistry ?? registry();
     return withRunLock(options.runId, () => recoverWorktreeRunUnlocked({ ...options, stateRegistry }));
 }
-export async function cleanupWorktreeRun(options) {
+export async function cleanupWorktreeRun(options: BaseRunOptions): Promise<CleanupResult> {
     const stateRegistry = options.stateRegistry ?? registry();
     return withRunLock(options.runId, () => cleanupWorktreeRunUnlocked({ ...options, stateRegistry }));
 }

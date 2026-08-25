@@ -24,6 +24,12 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const AGENT_LIST_OUTPUT_MARKER = 'NARU_AGENT_LIST_OUTPUT_MARKER';
 const DEBUG_CONFIG_OUTPUT_MARKER = 'NARU_DEBUG_CONFIG_OUTPUT_MARKER';
 
+interface FakeOpenCodeOptions {
+  agentListOutputBytes?: number;
+  debugConfigOutputBytes?: number;
+  failDebugConfig?: boolean;
+}
+
 test('compatibility policy fixes approved targets without inventing Git or gh floors', () => {
   assert.deepEqual(COMPATIBILITY_POLICY.release.opencode, { floor: '1.18.4', current: '1.18.4' });
   assert.deepEqual(COMPATIBILITY_POLICY.targets.platforms.map(target => target.id), ['macos-arm64', 'ubuntu-x64']);
@@ -85,7 +91,11 @@ test('OpenCode command allowlist contains only provider-free inspection and loca
   for (const forbidden of ['auth', 'model', 'run', 'prompt']) assert.doesNotMatch(serialized, new RegExp(`"${forbidden}"`));
 });
 
-async function fakeOpenCode(directory, { agentListOutputBytes = 0, debugConfigOutputBytes = 0, failDebugConfig = false } = {}) {
+async function fakeOpenCode(directory: string, {
+  agentListOutputBytes = 0,
+  debugConfigOutputBytes = 0,
+  failDebugConfig = false,
+}: FakeOpenCodeOptions = {}): Promise<string> {
   const executable = path.join(directory, 'fake-opencode.mjs');
   const source = `#!${process.execPath}
 import http from 'node:http';
@@ -124,7 +134,7 @@ else if (args[0] === 'serve' && args[1] === '--hostname' && args[2] === '127.0.0
 
 test('provider-free fake OpenCode smoke isolates environment, checks depth/default-off, and cleans up', async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-compat-test-'));
-  let disposable;
+  let disposable: string | undefined;
   try {
     const fake = await fakeOpenCode(temporary, {
       agentListOutputBytes: 128 * 1024,
@@ -145,7 +155,10 @@ test('provider-free fake OpenCode smoke isolates environment, checks depth/defau
     assert.equal(report.capabilities.dashboard.nativeTuiLoad, 'omitted');
     assert.doesNotMatch(JSON.stringify(report), new RegExp(AGENT_LIST_OUTPUT_MARKER));
     assert.doesNotMatch(JSON.stringify(report), new RegExp(DEBUG_CONFIG_OUTPUT_MARKER));
-    await assert.rejects(lstat(disposable), error => error?.code === 'ENOENT');
+    assert.ok(disposable);
+    await assert.rejects(lstat(disposable), (error: unknown) => (
+      error instanceof Error && 'code' in error && error.code === 'ENOENT'
+    ));
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
@@ -161,7 +174,7 @@ test('failed tool output is redacted from bounded evidence', async () => {
       platformEvidence: { platform: 'darwin', arch: 'arm64', osId: null, wsl: false },
     });
     assert.equal(report.status, 'failed-local-smoke');
-    assert.equal(report.checks.find(check => check.id === 'opencode-debug-config').status, 'failed');
+    assert.equal(report.checks.find(check => check.id === 'opencode-debug-config')?.status, 'failed');
     assert.doesNotMatch(JSON.stringify(report), /SUPER_SECRET_VALUE/);
   } finally {
     await rm(temporary, { recursive: true, force: true });
