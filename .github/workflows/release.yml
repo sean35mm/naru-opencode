@@ -51,7 +51,7 @@ jobs:
           set -euo pipefail
           stage="naru-${version}"
           mkdir -p "dist/${stage}"
-          cp -R agents skills bin install.sh bootstrap.sh \
+          cp -R agents commands skills bin install.sh bootstrap.sh \
                 naru-runtime.example.json VERSION LICENSE README.md "dist/${stage}/"
           cp -R .naru-build/tools .naru-build/plugins "dist/${stage}/"
           chmod 755 "dist/${stage}/bin/naru" "dist/${stage}/install.sh" "dist/${stage}/bootstrap.sh"
@@ -66,13 +66,13 @@ jobs:
           set -euo pipefail
           # A broad `git add` once committed build output; refuse to ship junk.
           if tar -tzf "dist/naru-${version}.tar.gz" \
-             | grep -Ev "^naru-${version}/(agents|skills|tools|plugins|bin)/" \
+             | grep -Ev "^naru-${version}/(agents|commands|skills|tools|plugins|bin)/" \
              | grep -Ev "^naru-${version}/(install\.sh|bootstrap\.sh|naru-runtime\.example\.json|VERSION|LICENSE|README\.md)$" \
              | grep -Ev "^naru-${version}/$" \
              | grep -q .; then
             echo "tarball contains unexpected entries:" >&2
             tar -tzf "dist/naru-${version}.tar.gz" \
-              | grep -Ev "^naru-${version}/(agents|skills|tools|plugins|bin)/" \
+              | grep -Ev "^naru-${version}/(agents|commands|skills|tools|plugins|bin)/" \
               | grep -Ev "^naru-${version}/(install\.sh|bootstrap\.sh|naru-runtime\.example\.json|VERSION|LICENSE|README\.md)$" \
               | grep -Ev "^naru-${version}/$" >&2
             exit 1
@@ -97,6 +97,7 @@ jobs:
           # Install through the CLI, which is the path real users take.
           HOME="${work}/home" "${root}/bin/naru" install --apply
           test -f "${work}/home/.config/opencode/agents/naru-orchestrator.md"
+          test -f "${work}/home/.config/opencode/commands/naru.md"
           test -f "${work}/home/.config/opencode/tools/naru-doctor.js"
           # Release installs must be pinned copies, never symlinks into
           # ~/.naru/versions, which upgrades supersede and users may prune.

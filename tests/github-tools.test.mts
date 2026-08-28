@@ -14,6 +14,9 @@ import {
   digestSnapshot,
   digestEvidence,
   digestRawFileBatch,
+  digestRecoveryBatch,
+  digestRecoveredContent,
+  hashString,
   digestFeedbackPage,
 } from '../tools/naru-lib/github.mjs';
 import type {
@@ -49,6 +52,8 @@ const NON_POSTING_AGENTS = Object.freeze([
 
 const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
+const HEAD_OWNER = 'owner';
+const HEAD_REPO = 'repo';
 
 type JsonObject = Record<string, unknown>;
 
@@ -64,8 +69,8 @@ interface RawPullFile extends NormalizedPullFile {
 
 interface PullMetadataFixture extends NormalizedPullMetadata {
   number: number;
-  head: { sha: string; ref: string; repo: undefined };
-  base: { sha: string; ref: string; repo: undefined };
+  head: { sha: string; ref: string; repo: { name: string; owner: { login: string } } };
+  base: { sha: string; ref: string; repo: { name: string; owner: { login: string } } };
   changed_files: number;
 }
 
@@ -104,6 +109,7 @@ interface TestReviewPayload {
     id: string;
     snapshotId?: string;
     baseSha: string;
+    diffBaseSha: string;
     headSha: string;
     feedbackDigest: string;
     evidenceDigest: string;
@@ -113,6 +119,7 @@ interface TestReviewPayload {
   coverage: {
     ledger: TestCoverageEntry[];
     fileBatches: Array<{ paths: string[]; batchDigest: string }>;
+    recoveryBatches: Array<{ paths: string[]; recoveryBatchDigest: string }>;
     feedbackPages: Array<{ kind: FeedbackKind; page: number; pageDigest: string }>;
     feedbackAcknowledged: boolean;
     feedbackDigest: string;
@@ -122,6 +129,9 @@ interface TestReviewPayload {
   submissionMode: string;
   summary: string;
   submissionPolicy: string;
+  reviewProfile: string;
+  outputMode: string;
+  objectiveAssessment: { source: string; status: string; confidence: string; summary: string; rationale: string };
   conclusion: string;
   findings: TestFinding[];
   supersedes?: { reviewId: number; digest: string };
@@ -151,6 +161,9 @@ interface TestPostData {
   commentsPosted: number;
   droppedComments: Array<Record<string, unknown>>;
   droppedFindings: Array<{ reason: string; suppressedFromPosting?: boolean; retainedForDecision?: boolean; eligibleBlocker?: boolean }>;
+  objectiveAssessment: { source: string; status: string; confidence: string; summary: string; rationale: string };
+  derivedConclusion: string;
+  droppedBlocker: boolean;
   [key: string]: unknown;
 }
 
@@ -166,6 +179,14 @@ interface TestPostResult {
 interface JsonSchemaNode {
   type?: string;
   description: string;
+  minLength?: number;
+  maxLength?: number;
+  minItems?: number;
+  maxItems?: number;
+  minimum?: number;
+  maximum?: number;
+  pattern?: string;
+  uniqueItems?: boolean;
   required?: string[];
   additionalProperties?: boolean;
   enum?: unknown[];
@@ -237,7 +258,7 @@ function pullMeta(
   base = BASE,
   changedFiles = 1,
   number = 42,
-  overrides: { title?: string; body?: string; state?: string; draft?: unknown; author?: string } = {},
+  overrides: { title?: string; body?: string; state?: string; draft?: unknown; author?: string; headOwner?: string; headRepo?: string } = {},
 ): PullMetadataFixture {
   return {
     number,
@@ -247,8 +268,8 @@ function pullMeta(
     draft: Object.hasOwn(overrides, 'draft') ? overrides.draft as boolean : false,
     html_url: `https://github.com/owner/repo/pull/${number}`,
     user: { login: overrides.author ?? 'author' },
-    head: { sha: head, ref: 'feature', repo: undefined },
-    base: { sha: base, ref: 'main', repo: undefined },
+    head: { sha: head, ref: 'feature', repo: { name: overrides.headRepo ?? HEAD_REPO, owner: { login: overrides.headOwner ?? HEAD_OWNER } } },
+    base: { sha: base, ref: 'main', repo: { name: 'repo', owner: { login: 'owner' } } },
     changed_files: changedFiles,
   };
 }
@@ -311,11 +332,13 @@ function coverageLedger(
     const patchComplete = typeof file.patch === 'string'
       && validate.isSafeRelativePath(file.filename)
       && (file.previous_filename === undefined || validate.isSafeRelativePath(file.previous_filename));
-    const blocked = !patchComplete || (limited && index === 0);
+    const recovered = !patchComplete && !file.filename.endsWith('.png')
+      && ['added', 'removed', 'modified', 'renamed'].includes(file.status);
+    const blocked = (!patchComplete && !recovered) || (limited && index === 0);
     return {
       path: file.filename,
       status: blocked ? 'blocked' : 'reviewed',
-      evidence: blocked ? 'none' : 'current-patch',
+      evidence: blocked ? 'none' : recovered ? 'recovered-patch' : 'current-patch',
       ...(blocked ? { note: !patchComplete ? 'patch evidence is unavailable' : limitation } : {}),
     };
   });
@@ -328,10 +351,35 @@ function provenance(
   issueComments: NormalizedFeedback[],
 ) {
   const fileBatches: Array<{ paths: string[]; batchDigest: string }> = [];
+  const recoveryBatches: Array<{ paths: string[]; recoveryBatchDigest: string }> = [];
   for (let index = 0; index < files.length; index += 100) {
     const chunk = files.slice(index, index + 100);
     const paths = chunk.map(file => file.filename);
     fileBatches.push({ paths, batchDigest: digestRawFileBatch(identity, paths, chunk) });
+    const summaries = chunk.map(evidenceFile);
+    for (const summary of summaries) {
+      if (summary.patchEvidence.reason !== 'missing-patch') continue;
+      const raw = chunk.find(file => file.filename === summary.filename)!;
+      const basePath = raw.status === 'added' ? null : raw.status === 'renamed' ? raw.previous_filename ?? null : raw.filename;
+      const headPath = raw.status === 'removed' ? null : raw.filename;
+      if (raw.filename.endsWith('.png')) {
+        summary.recoveryEvidence = {
+          status: 'unavailable', reason: 'binary-or-invalid-utf8',
+          base: { path: basePath, bytes: 0, digest: null, absent: basePath === null },
+          head: { path: headPath, bytes: 0, digest: null, absent: headPath === null },
+        };
+      } else {
+        const sides = {
+          base: { path: basePath, bytes: basePath === null ? 0 : 4, digest: basePath === null ? null : hashString('old\n'), absent: basePath === null },
+          head: { path: headPath, bytes: headPath === null ? 0 : 4, digest: headPath === null ? null : hashString('new\n'), absent: headPath === null },
+        };
+        summary.recoveryEvidence = {
+          status: 'complete', reason: 'complete', ...sides,
+          contentDigest: digestRecoveredContent(identity, raw.filename, raw.status, sides),
+        };
+      }
+    }
+    recoveryBatches.push({ paths, recoveryBatchDigest: digestRecoveryBatch(identity, paths, summaries) });
   }
   const normalize = (item: NormalizedFeedback) => ({
     id: item.id, state: item.state, commitId: item.commit_id, body: item.body ?? '', author: item.user?.login,
@@ -350,7 +398,7 @@ function provenance(
       feedbackPages.push({ kind, page, pageDigest: digestFeedbackPage(identity, kind, page, items.slice(index, index + 100).map(normalize)) });
     }
   }
-  return { fileBatches, feedbackPages };
+  return { fileBatches, recoveryBatches, feedbackPages };
 }
 function fixtureIdentity(
   head: string,
@@ -364,10 +412,10 @@ function fixtureIdentity(
 ): PullIdentity {
   const meta = pullMeta(head, base, files.length);
   return {
-    owner: 'owner', repo: 'repo', number: 42, baseSha: base, headSha: head,
-    snapshotId: snapshotId('owner', 'repo', 42, head, base, files),
-    feedbackDigest: digestSnapshot(meta, files, reviews, reviewComments, issueComments),
-    evidenceDigest: digestEvidence(head, base, files.map(evidenceFile)),
+    owner: 'owner', repo: 'repo', number: 42, baseSha: base, diffBaseSha: base, headOwner: HEAD_OWNER, headRepo: HEAD_REPO, headSha: head,
+    snapshotId: snapshotId('owner', 'repo', 42, head, base, files, base, HEAD_OWNER, HEAD_REPO),
+    feedbackDigest: digestSnapshot(meta, files, reviews, reviewComments, issueComments, base, HEAD_OWNER, HEAD_REPO),
+    evidenceDigest: digestEvidence(head, base, files.map(evidenceFile), base, HEAD_OWNER, HEAD_REPO),
   };
 }
 
@@ -424,6 +472,14 @@ function snapshotHandlers({
   };
   return [
     { match: (argv) => argv[3] === 'GET' && argv[4] === 'user', reply: response({ login: actor }) },
+    { match: (argv) => argv[3] === 'GET' && has(argv, '/compare/'), reply: (argv) => {
+      const comparison = argv.find(item => item.includes('/compare/'))?.match(/compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})/);
+      return response({ merge_base_commit: { sha: comparison?.[1] }, base_commit: { sha: comparison?.[1] }, head_commit: { sha: comparison?.[2] } });
+    } },
+    { match: (argv) => argv[3] === 'GET' && has(argv, '/commits/'), reply: (argv) => {
+      const sha = argv.at(-1)?.match(/\/commits\/([0-9a-f]{40})/)?.[1];
+      return response({ sha });
+    } },
     {
       match: (argv) => argv[3] === 'GET' && has(argv, `pulls/${number}`) && !has(argv, '/files') && !has(argv, '/reviews') && !has(argv, '/comments'),
       reply: metadataReply ?? response(meta),
@@ -466,6 +522,18 @@ function snapshotHandlers({
         ...(jq.includes(',patch}') ? { patch: file.patch } : {}),
       })));
     } },
+    { match: (argv) => argv[3] === 'GET' && has(argv, '/contents/'), reply: (argv) => {
+      const endpoint = argv.at(-1) ?? '';
+      const ref = endpoint.match(/[?&]ref=([0-9a-f]{40})/)?.[1];
+      const encodedPath = endpoint.match(/\/contents\/(.+)\?ref=/)?.[1] ?? '';
+      const path = encodedPath.split('/').map(decodeURIComponent).join('/');
+      const file = files.find(item => item.filename === path || item.previous_filename === path);
+      const absent = !file || (ref === (meta as PullMetadataFixture).base.sha && file.status === 'added')
+        || (ref === (meta as PullMetadataFixture).head.sha && file.status === 'removed');
+      if (absent) return response({ message: 'Not Found', status: '404' }, false);
+      const content = file.filename.endsWith('.png') ? Buffer.from([0xff]) : Buffer.from(ref === (meta as PullMetadataFixture).head.sha ? 'new\n' : 'old\n');
+      return response({ encoding: 'base64', size: content.length, content: content.toString('base64') });
+    } },
     { match: (argv) => argv[3] === 'GET' && has(argv, `pulls/${number}/reviews`), reply: feedbackReply(reviews) },
     { match: (argv) => argv[3] === 'GET' && has(argv, `pulls/${number}/comments`), reply: feedbackReply(reviewComments) },
     { match: (argv) => argv[3] === 'GET' && has(argv, `issues/${number}/comments`), reply: feedbackReply(issueComments) },
@@ -476,6 +544,8 @@ interface ReviewInputOptions {
   number?: number;
   head?: string;
   base?: string;
+  headOwner?: string;
+  headRepo?: string;
   files?: RawPullFile[];
   reviews?: NormalizedFeedback[];
   reviewComments?: NormalizedFeedback[];
@@ -485,12 +555,15 @@ interface ReviewInputOptions {
   snapshotComplete?: boolean;
   comments?: TestFinding[];
   body?: string;
+  metaOverrides?: Parameters<typeof pullMeta>[4];
 }
 
 function reviewInput({
   number = 42,
   head = HEAD,
   base = BASE,
+  headOwner = HEAD_OWNER,
+  headRepo = HEAD_REPO,
   files = [changedFile()],
   reviews = [],
   reviewComments = [],
@@ -500,21 +573,25 @@ function reviewInput({
   snapshotComplete = true,
   comments,
   body = '## Verdict\n\nNo actionable findings.',
+  metaOverrides = {},
 }: ReviewInputOptions = {}): TestReviewInput {
-  const meta = pullMeta(head, base, files.length, number);
-  const feedbackDigest = digestSnapshot(meta, files, reviews, reviewComments, issueComments);
-  const identity = { owner: 'owner', repo: 'repo', number, baseSha: base, headSha: head,
-    snapshotId: snapshotId('owner', 'repo', number, head, base, files), feedbackDigest,
-    evidenceDigest: digestEvidence(head, base, files.map(evidenceFile)) };
+  const meta = pullMeta(head, base, files.length, number, { ...metaOverrides, headOwner, headRepo });
+  const feedbackDigest = digestSnapshot(meta, files, reviews, reviewComments, issueComments, base, headOwner, headRepo);
+  const identity = { owner: 'owner', repo: 'repo', number, baseSha: base, diffBaseSha: base, headOwner, headRepo, headSha: head,
+    snapshotId: snapshotId('owner', 'repo', number, head, base, files, base, headOwner, headRepo), feedbackDigest,
+    evidenceDigest: digestEvidence(head, base, files.map(evidenceFile), base, headOwner, headRepo) };
   const limited = status !== 'complete' || degraded || snapshotComplete === false
-    || files.some(file => typeof file.patch !== 'string');
+    || files.some(file => typeof file.patch !== 'string' && file.filename.endsWith('.png'));
   return {
     reviewResult: {
-      schemaVersion: 4,
+      schemaVersion: 5,
       target: { owner: 'owner', repo: 'repo', pullNumber: number },
       snapshot: {
         id: identity.snapshotId,
         baseSha: base,
+        diffBaseSha: base,
+        headOwner,
+        headRepo,
         headSha: head,
         feedbackDigest,
         evidenceDigest: identity.evidenceDigest,
@@ -529,6 +606,9 @@ function reviewInput({
       submissionMode: limited ? 'limited' : 'complete',
       summary: body,
       submissionPolicy: 'comment-only',
+      reviewProfile: 'standard',
+      outputMode: 'detailed',
+      objectiveAssessment: { source: 'pull-request', status: 'unclear', confidence: 'Medium', summary: 'Objective is unclear.', rationale: 'Test fixture.' },
       conclusion: 'informational',
       findings: comments ?? [{
         path: 'src/index.js',
@@ -556,6 +636,8 @@ function reviewInputV3({
   number = 42,
   head = HEAD,
   base = BASE,
+  headOwner = HEAD_OWNER,
+  headRepo = HEAD_REPO,
   files = [changedFile()],
   reviews = [],
   reviewComments = [],
@@ -568,21 +650,25 @@ function reviewInputV3({
   conclusion = 'informational',
   findings = [],
   body = '## Verdict\n\nReview findings are listed below.',
+  metaOverrides = {},
 }: FormalReviewInputOptions = {}): TestReviewInput {
-  const meta = pullMeta(head, base, files.length, number);
-  const feedbackDigest = digestSnapshot(meta, files, reviews, reviewComments, issueComments);
-  const identity = { owner: 'owner', repo: 'repo', number, baseSha: base, headSha: head,
-    snapshotId: snapshotId('owner', 'repo', number, head, base, files), feedbackDigest,
-    evidenceDigest: digestEvidence(head, base, files.map(evidenceFile)) };
+  const meta = pullMeta(head, base, files.length, number, { ...metaOverrides, headOwner, headRepo });
+  const feedbackDigest = digestSnapshot(meta, files, reviews, reviewComments, issueComments, base, headOwner, headRepo);
+  const identity = { owner: 'owner', repo: 'repo', number, baseSha: base, diffBaseSha: base, headOwner, headRepo, headSha: head,
+    snapshotId: snapshotId('owner', 'repo', number, head, base, files, base, headOwner, headRepo), feedbackDigest,
+    evidenceDigest: digestEvidence(head, base, files.map(evidenceFile), base, headOwner, headRepo) };
   const limited = posture === 'limited' || snapshotComplete === false
-    || files.some(file => typeof file.patch !== 'string');
+    || files.some(file => typeof file.patch !== 'string' && file.filename.endsWith('.png'));
   return {
     reviewResult: {
-      schemaVersion: 4,
+      schemaVersion: 5,
       target: { owner: 'owner', repo: 'repo', pullNumber: number },
       snapshot: {
         id: identity.snapshotId,
         baseSha: base,
+        diffBaseSha: base,
+        headOwner,
+        headRepo,
         headSha: head,
         feedbackDigest,
         evidenceDigest: identity.evidenceDigest,
@@ -597,6 +683,9 @@ function reviewInputV3({
       submissionMode: limited ? 'limited' : 'complete',
       summary: body,
       submissionPolicy,
+      reviewProfile: 'standard',
+      outputMode: 'detailed',
+      objectiveAssessment: { source: 'pull-request', status: 'unclear', confidence: 'Medium', summary: 'Objective is unclear.', rationale: 'Test fixture.' },
       conclusion,
       findings,
     },
@@ -855,19 +944,33 @@ test('valid added, modified, renamed, removed, and binary files preserve legitim
   assert.match(requiredAt(snapshot.files, 3).sha ?? '', /^[0-9a-f]{40}$/);
 });
 
+test('compact manifest exposes bounded objective text under its content identity', async () => {
+  const title = 'T'.repeat(700);
+  const body = 'B'.repeat(20_000);
+  const handlers = snapshotHandlers({ meta: pullMeta(HEAD, BASE, 1, 42, { title, body }) });
+  const manifest = await pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: fakeSpawn(handlers).spawn });
+  assert.ok(manifest.pull.title.length <= 512);
+  assert.ok(manifest.pull.body.length <= 16 * 1024);
+  assert.match(manifest.pull.title, /truncated/);
+  assert.match(manifest.pull.body, /truncated/);
+  assert.deepEqual(manifest.pull.objectiveText, { titleTruncated: true, bodyTruncated: true, complete: false });
+  assert.match(manifest.pull.contentDigest, /^[0-9a-f]{64}$/);
+  assert.ok(manifest.warnings.some(warning => warning.includes('objective text was bounded')));
+});
+
 test('rename source path binds snapshot, feedback, evidence, and batch identities', async () => {
   const head = '44'.repeat(20);
   const first = { ...changedFile('src/renamed.js'), status: 'renamed', previous_filename: 'src/old-a.js' };
   const second = { ...first, previous_filename: 'src/old-b.js' };
   const meta = pullMeta(head);
   const firstIdentity = {
-    owner: 'owner', repo: 'repo', number: 42, baseSha: BASE, headSha: head,
+    owner: 'owner', repo: 'repo', number: 42, baseSha: BASE, diffBaseSha: BASE, headOwner: HEAD_OWNER, headRepo: HEAD_REPO, headSha: head,
     snapshotId: snapshotId('owner', 'repo', 42, head, BASE, [first]),
     feedbackDigest: digestSnapshot(meta, [first], [], [], []),
     evidenceDigest: digestEvidence(head, BASE, [first]),
   };
   const secondIdentity = {
-    owner: 'owner', repo: 'repo', number: 42, baseSha: BASE, headSha: head,
+    owner: 'owner', repo: 'repo', number: 42, baseSha: BASE, diffBaseSha: BASE, headOwner: HEAD_OWNER, headRepo: HEAD_REPO, headSha: head,
     snapshotId: snapshotId('owner', 'repo', 42, head, BASE, [second]),
     feedbackDigest: digestSnapshot(meta, [second], [], [], []),
     evidenceDigest: digestEvidence(head, BASE, [second]),
@@ -893,7 +996,7 @@ test('rename source path binds snapshot, feedback, evidence, and batch identitie
   assert.notEqual(firstManifest.evidenceDigest, secondManifest.evidenceDigest);
 });
 
-test('same-head rename source drift rejects stale v4 provenance without POST', async () => {
+test('same-head rename source drift rejects stale v5 provenance without POST', async () => {
   const head = '45'.repeat(20);
   const reviewed = { ...changedFile(), status: 'renamed', previous_filename: 'src/original-a.js' };
   const drifted = { ...reviewed, previous_filename: 'src/original-b.js' };
@@ -908,7 +1011,7 @@ test('same-head rename source drift rejects stale v4 provenance without POST', a
   assert.equal(fake.calls.some(call => call.argv.includes('POST')), false);
 });
 
-test('formal v4 posting cannot derive complete evidence from malformed file metadata', async () => {
+test('formal v5 posting cannot derive complete evidence from malformed file metadata', async () => {
   const head = '43'.repeat(20);
   const files = [{ ...changedFile(), sha: undefined }];
   const fake = fakeSpawn([
@@ -944,14 +1047,14 @@ test('strict review payload validates nested schema and rejects unknown fields',
   }), /unknown fields/);
 });
 
-test('v4 payload validation enforces version-specific findings and rejects caller events', () => {
+test('v5 payload validation enforces version-specific findings and rejects caller events', () => {
   const input = reviewInputV3({ findings: [
     { body: 'General observation', priority: 'P3', severity: 'Low', confidence: 'Medium' },
     { path: 'src/index.js', body: 'Path-level blocker', priority: 'P1', severity: 'High', confidence: 'High' },
     { path: 'src/index.js', line: 1, side: 'RIGHT', body: 'Inline issue', priority: 'P2', severity: 'Medium', confidence: 'High' },
   ] });
   const canonical = validateReviewPayload(input);
-  assert.equal(canonical.schemaVersion, 4);
+  assert.equal(canonical.schemaVersion, 5);
   assert.equal(canonical.findings.length, 3);
   assert.throws(() => validateReviewPayload({
     reviewResult: { ...input.reviewResult, event: 'APPROVE' },
@@ -964,6 +1067,168 @@ test('v4 payload validation enforces version-specific findings and rejects calle
   const callerAssertsPosture = reviewInputV3({ posture: 'limited' });
   callerAssertsPosture.reviewResult.coverage.complete = false;
   assert.throws(() => validateReviewPayload(callerAssertsPosture), /unknown fields/);
+});
+
+test('release-critical v5 filters findings and enforces mechanically derived conclusion', () => {
+  const clear = reviewInputV3({ findings: [], conclusion: 'clear' });
+  clear.reviewResult.reviewProfile = 'release-critical';
+  clear.reviewResult.outputMode = 'concise';
+  clear.reviewResult.objectiveAssessment = {
+    source: 'pull-request', status: 'met', confidence: 'High', summary: 'Objective met.', rationale: 'All manifest evidence supports it.',
+  };
+  const validatedClear = validateReviewPayload(clear);
+  assert.equal(validatedClear.schemaVersion, 5);
+  if (validatedClear.schemaVersion !== 5) throw new Error('expected v5');
+  assert.equal(validatedClear.conclusion, 'clear');
+
+  const disallowed = [
+    { priority: 'P2', severity: 'High', confidence: 'High' },
+    { priority: 'P1', severity: 'Medium', confidence: 'High' },
+    { priority: 'P1', severity: 'High', confidence: 'Low' },
+  ];
+  for (const fields of disallowed) {
+    const input = structuredClone(clear);
+    input.reviewResult.conclusion = 'informational';
+    input.reviewResult.findings = [{ body: 'Risk', ...fields } as TestFinding];
+    assert.throws(() => validateReviewPayload(input), /release-critical findings/);
+  }
+
+  const mismatch = structuredClone(clear);
+  mismatch.reviewResult.conclusion = 'informational';
+  assert.throws(() => validateReviewPayload(mismatch), /mechanically derived conclusion=clear/);
+});
+
+test('release-critical objective miss blocks without an invented finding', async () => {
+  const head = '4'.repeat(40);
+  const input = reviewInputV3({ head, findings: [], submissionPolicy: 'select-state', conclusion: 'blocking' });
+  input.reviewResult.reviewProfile = 'release-critical';
+  input.reviewResult.outputMode = 'concise';
+  input.reviewResult.objectiveAssessment = {
+    source: 'pull-request', status: 'missed', confidence: 'High', summary: 'Objective missed.', rationale: 'The required behavior is absent.',
+  };
+  let posted = {} as PostedReview;
+  const fake = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(head) }),
+    { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = parsePostedReview(options); return response({ id: 880 }); } },
+  ]);
+  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(posted.event, 'REQUEST_CHANGES');
+  assert.equal(result.data.derivedConclusion, 'blocking');
+  assert.equal(result.data.objectiveAssessment.status, 'missed');
+  assert.match(posted.body, /Release-critical review: blocked/);
+});
+
+test('release-critical medium-confidence risk stays COMMENT and clear approval is quiet', async () => {
+  const mediumHead = '5'.repeat(40);
+  const medium = reviewInputV3({ head: mediumHead, submissionPolicy: 'select-state', conclusion: 'informational', findings: [
+    { path: 'src/index.js', body: 'Credible release risk.', priority: 'P1', severity: 'High', confidence: 'Medium' },
+  ] });
+  medium.reviewResult.reviewProfile = 'release-critical';
+  medium.reviewResult.outputMode = 'concise';
+  medium.reviewResult.objectiveAssessment = { source: 'pull-request', status: 'met', confidence: 'High', summary: 'Objective met.', rationale: 'Evidence supports it.' };
+  let mediumPost = {} as PostedReview;
+  const mediumFake = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(mediumHead) }),
+    { match: argv => argv.includes('POST'), reply: (_argv, options) => { mediumPost = parsePostedReview(options); return response({ id: 881 }); } },
+  ]);
+  assert.equal((await postReview(medium, { agent: 'naru-orchestrator' }, { spawn: mediumFake.spawn })).ok, true);
+  assert.equal(mediumPost.event, 'COMMENT');
+  assert.match(mediumPost.body, /Release-critical review: unresolved/);
+
+  const clearHead = '6'.repeat(40);
+  const clear = reviewInputV3({ head: clearHead, submissionPolicy: 'select-state', conclusion: 'clear', findings: [] });
+  clear.reviewResult.reviewProfile = 'release-critical';
+  clear.reviewResult.outputMode = 'concise';
+  clear.reviewResult.objectiveAssessment = { source: 'pull-request', status: 'met', confidence: 'High', summary: 'Objective met.', rationale: 'Evidence supports it.' };
+  let clearPost = {} as PostedReview;
+  const clearFake = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(clearHead) }),
+    { match: argv => argv.includes('POST'), reply: (_argv, options) => { clearPost = parsePostedReview(options); return response({ id: 882 }); } },
+  ]);
+  assert.equal((await postReview(clear, { agent: 'naru-orchestrator' }, { spawn: clearFake.spawn })).ok, true);
+  assert.equal(clearPost.event, 'APPROVE');
+  assert.match(clearPost.body, /Release-critical review: clear\./);
+  assert.doesNotMatch(clearPost.body, /## Verdict/);
+});
+
+test('truncated pull-request objective text forces release-critical uncertainty and COMMENT in both directions', async () => {
+  const cases = [
+    { seed: 'c1', status: 'met', conclusion: 'clear' },
+    { seed: 'c2', status: 'missed', conclusion: 'blocking' },
+  ];
+  for (const item of cases) {
+    const head = item.seed.repeat(20);
+    const metaOverrides = { title: 'T'.repeat(700), body: 'B'.repeat(20_000) };
+    const input = reviewInputV3({ head, metaOverrides, findings: [], submissionPolicy: 'select-state', conclusion: item.conclusion });
+    input.reviewResult.reviewProfile = 'release-critical';
+    input.reviewResult.outputMode = 'concise';
+    input.reviewResult.objectiveAssessment = {
+      source: 'pull-request', status: item.status, confidence: 'High', summary: `Objective ${item.status}.`, rationale: 'Caller assessment.',
+    };
+    let posted = {} as PostedReview;
+    const fake = fakeSpawn([
+      ...snapshotHandlers({ meta: pullMeta(head, BASE, 1, 42, metaOverrides) }),
+      { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = parsePostedReview(options); return response({ id: Number.parseInt(item.seed, 16) }); } },
+    ]);
+    const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(posted.event, 'COMMENT');
+    assert.equal(result.data.derivedConclusion, 'informational');
+    assert.deepEqual(
+      { source: result.data.objectiveAssessment.source, status: result.data.objectiveAssessment.status, confidence: result.data.objectiveAssessment.confidence },
+      { source: 'pull-request', status: 'unclear', confidence: 'Low' },
+    );
+    assert.match(posted.body, /Release-critical review: unresolved/);
+    assert.match(posted.body, /objective text is incomplete/);
+  }
+});
+
+test('bounded current-request objective remains formally eligible when PR objective text is truncated', async () => {
+  const head = 'c3'.repeat(20);
+  const metaOverrides = { title: 'T'.repeat(700) };
+  const input = reviewInputV3({ head, metaOverrides, findings: [], submissionPolicy: 'select-state', conclusion: 'clear' });
+  input.reviewResult.reviewProfile = 'release-critical';
+  input.reviewResult.outputMode = 'concise';
+  input.reviewResult.objectiveAssessment = {
+    source: 'current-request', status: 'met', confidence: 'High', summary: 'Requested objective met.', rationale: 'Bounded current request and evidence agree.',
+  };
+  let posted = {} as PostedReview;
+  const fake = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(head, BASE, 1, 42, metaOverrides) }),
+    { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = parsePostedReview(options); return response({ id: 195 }); } },
+  ]);
+  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(posted.event, 'APPROVE');
+  assert.equal(result.data.objectiveAssessment.source, 'current-request');
+});
+
+test('release-critical blockers with stale paths or invalid lines downgrade to final COMMENT', async () => {
+  const cases: Array<{ seed: string; finding: TestFinding }> = [
+    { seed: 'c4', finding: { path: 'src/removed.js', body: 'Stale path blocker.', priority: 'P1', severity: 'High', confidence: 'High' } },
+    { seed: 'c5', finding: { path: 'src/index.js', line: 999, side: 'RIGHT', body: 'Invalid line blocker.', priority: 'P1', severity: 'High', confidence: 'High' } },
+  ];
+  for (const item of cases) {
+    const head = item.seed.repeat(20);
+    const input = reviewInputV3({ head, findings: [item.finding], submissionPolicy: 'select-state', conclusion: 'blocking' });
+    input.reviewResult.reviewProfile = 'release-critical';
+    input.reviewResult.outputMode = 'concise';
+    input.reviewResult.objectiveAssessment = {
+      source: 'pull-request', status: 'met', confidence: 'High', summary: 'Objective met.', rationale: 'Complete objective text.',
+    };
+    let posted = {} as PostedReview;
+    const fake = fakeSpawn([
+      ...snapshotHandlers({ meta: pullMeta(head) }),
+      { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = parsePostedReview(options); return response({ id: Number.parseInt(item.seed, 16) }); } },
+    ]);
+    const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(posted.event, 'COMMENT');
+    assert.equal(result.data.derivedConclusion, 'informational');
+    assert.equal(result.data.droppedBlocker, true);
+    assert.match(posted.body, /Release-critical review: unresolved/);
+  }
 });
 
 test('review payload accepts aliases but rejects dual canonical and alias keys', () => {
@@ -1315,7 +1580,7 @@ test('REQUEST_CHANGES requires a final eligible blocker and otherwise falls back
   }
 });
 
-test('v4 renders every non-inline finding safely and refuses redacted paths', async () => {
+test('v5 renders every non-inline finding safely and refuses redacted paths', async () => {
   const head = '35'.repeat(20);
   let posted = {} as PostedReview;
   const { spawn } = fakeSpawn([
@@ -1711,7 +1976,7 @@ test('post tool refuses a prior marker after same-head feedback identity changes
   assert.match(conflictResult.error, /different Naru review/);
 });
 
-test('v4 dedupe binds same-head reviews to base and evidence identities', async () => {
+test('v5 dedupe binds same-head reviews to base and evidence identities', async () => {
   const cases: Array<[string, (head: string) => TestReviewInput, (head: string) => SpawnHandler[]]> = [
     ['35', head => reviewInput({ head, base: 'a1'.repeat(20) }), head => snapshotHandlers({ meta: pullMeta(head, 'a1'.repeat(20)) })],
     ['36', head => {
@@ -1739,7 +2004,29 @@ test('v4 dedupe binds same-head reviews to base and evidence identities', async 
   }
 });
 
-test('v4 dedupe binds provenance digests and canonicalizes declaration ordering', async () => {
+test('v5 dedupe identity binds profile, output mode, and objective assessment', async () => {
+  const head = '34'.repeat(20);
+  const initialInput = reviewInputV3({ head, findings: [], conclusion: 'informational' });
+  const initial = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(head) }),
+    { match: argv => argv.includes('POST'), reply: response({ id: 340 }) },
+  ]);
+  assert.equal((await postReview(initialInput, { agent: 'naru-orchestrator' }, { spawn: initial.spawn })).ok, true);
+
+  const changed = reviewInputV3({ head, findings: [], conclusion: 'clear' });
+  changed.reviewResult.reviewProfile = 'release-critical';
+  changed.reviewResult.outputMode = 'concise';
+  changed.reviewResult.objectiveAssessment = {
+    source: 'pull-request', status: 'met', confidence: 'High', summary: 'Objective met.', rationale: 'Manifest evidence supports it.',
+  };
+  const changedFake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head) }));
+  const result = await postReview(changed, { agent: 'naru-orchestrator' }, { spawn: changedFake.spawn });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /different Naru review/);
+  assert.equal(changedFake.calls.some(call => call.argv.includes('POST')), false);
+});
+
+test('v5 dedupe binds provenance digests and canonicalizes declaration ordering', async () => {
   const head = '37'.repeat(20);
   const files = [changedFile('src/index.js'), changedFile('src/other.js')];
   const reviews = [{ id: 71, state: 'COMMENTED', commit_id: head, body: 'prior feedback', user: { login: 'reviewer' } }];
@@ -1748,6 +2035,9 @@ test('v4 dedupe binds provenance digests and canonicalizes declaration ordering'
   const identity = {
     owner: 'owner', repo: 'repo', number: 42,
     baseSha: input.reviewResult.snapshot.baseSha,
+    diffBaseSha: input.reviewResult.snapshot.diffBaseSha,
+    headOwner: HEAD_OWNER,
+    headRepo: HEAD_REPO,
     headSha: input.reviewResult.snapshot.headSha,
     snapshotId: input.reviewResult.snapshot.id,
     feedbackDigest: input.reviewResult.snapshot.feedbackDigest,
@@ -1757,6 +2047,10 @@ test('v4 dedupe binds provenance digests and canonicalizes declaration ordering'
     paths: [file.filename],
     batchDigest: digestRawFileBatch(identity, [file.filename], [file]),
   }));
+  input.reviewResult.coverage.recoveryBatches = files.map(file => ({
+    paths: [file.filename],
+    recoveryBatchDigest: digestRecoveryBatch(identity, [file.filename], [evidenceFile(file)]),
+  }));
   const initial = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files, reviews, issueComments }),
     { match: argv => argv.includes('POST'), reply: response({ id: 73 }) },
@@ -1765,6 +2059,7 @@ test('v4 dedupe binds provenance digests and canonicalizes declaration ordering'
 
   const reordered = structuredClone(input);
   reordered.reviewResult.coverage.fileBatches.reverse();
+  reordered.reviewResult.coverage.recoveryBatches.reverse();
   reordered.reviewResult.coverage.feedbackPages.reverse();
   const identical = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files, reviews, issueComments }));
   const identicalResult = await postReview(reordered, { agent: 'naru-orchestrator' }, { spawn: identical.spawn });
@@ -1780,7 +2075,7 @@ test('v4 dedupe binds provenance digests and canonicalizes declaration ordering'
   assert.equal(changed.calls.some(call => call.argv.includes('POST')), false);
 });
 
-test('v4 dedupe canonicalizes semantically identical coverage ledger ordering', async () => {
+test('v5 dedupe canonicalizes semantically identical coverage ledger ordering', async () => {
   const head = '38'.repeat(20);
   const files = [changedFile('src/index.js'), changedFile('src/other.js')];
   const input = reviewInput({ head, files, comments: [] });
@@ -1799,7 +2094,7 @@ test('v4 dedupe canonicalizes semantically identical coverage ledger ordering', 
   assert.equal(repeated.calls.some(call => call.argv.includes('POST')), false);
 });
 
-test('v4 dedupe binds coverage ledger status, evidence, and reason', async () => {
+test('v5 dedupe binds coverage ledger status, evidence, and reason', async () => {
   const head = '39'.repeat(20);
   const files = [changedFile('src/index.js')];
   const input = reviewInput({ head, files, comments: [] });
@@ -1936,7 +2231,8 @@ test('post tool schema exposes the exact nested review contract and aliases', ()
   const reviewSchema = (githubPostReviewTool.args.input as JsonSchemaNode).properties.reviewResult;
   assert.ok(reviewSchema);
   assert.deepEqual(reviewSchema.required, [
-    'schemaVersion', 'target', 'snapshot', 'coverage', 'submissionMode', 'summary', 'submissionPolicy', 'conclusion', 'findings',
+    'schemaVersion', 'target', 'snapshot', 'coverage', 'submissionMode', 'summary', 'submissionPolicy',
+    'reviewProfile', 'outputMode', 'objectiveAssessment', 'conclusion', 'findings',
   ]);
   assert.equal(reviewSchema.additionalProperties, false);
   const targetSchema = requiredProperty(reviewSchema.properties, 'target');
@@ -1945,13 +2241,14 @@ test('post tool schema exposes the exact nested review contract and aliases', ()
   const findingsSchema = requiredProperty(reviewSchema.properties, 'findings');
   const submissionPolicySchema = requiredProperty(reviewSchema.properties, 'submissionPolicy');
   const submissionModeSchema = requiredProperty(reviewSchema.properties, 'submissionMode');
+  const objectiveSchema = requiredProperty(reviewSchema.properties, 'objectiveAssessment');
   assert.deepEqual(Object.keys(targetSchema.properties), ['owner', 'repo', 'pullNumber', 'number']);
   assert.deepEqual(targetSchema.required, ['owner', 'repo']);
   assert.deepEqual(Object.keys(snapshotSchema.properties), [
-    'id', 'snapshotId', 'baseSha', 'headSha', 'feedbackDigest', 'evidenceDigest', 'warnings',
+    'id', 'snapshotId', 'baseSha', 'diffBaseSha', 'headOwner', 'headRepo', 'headSha', 'feedbackDigest', 'evidenceDigest', 'warnings',
   ]);
   assert.deepEqual(snapshotSchema.required, [
-    'baseSha', 'headSha', 'feedbackDigest', 'evidenceDigest', 'warnings',
+    'baseSha', 'diffBaseSha', 'headOwner', 'headRepo', 'headSha', 'feedbackDigest', 'evidenceDigest', 'warnings',
   ]);
   assert.match(targetSchema.description, /exactly one of pullNumber or number/);
   assert.match(requiredProperty(targetSchema.properties, 'pullNumber').description, /exactly one/);
@@ -1962,17 +2259,49 @@ test('post tool schema exposes the exact nested review contract and aliases', ()
   assert.equal(targetSchema.oneOf, undefined);
   assert.equal(snapshotSchema.oneOf, undefined);
   assert.deepEqual(coverageSchema.required, [
-    'ledger', 'fileBatches', 'feedbackPages', 'feedbackAcknowledged', 'feedbackDigest',
+    'ledger', 'fileBatches', 'recoveryBatches', 'feedbackPages', 'feedbackAcknowledged', 'feedbackDigest',
   ]);
   assert.deepEqual(requiredProperty(coverageSchema.properties, 'ledger').items.required, ['path', 'status', 'evidence']);
   assert.deepEqual(requiredProperty(coverageSchema.properties, 'fileBatches').items.required, ['paths', 'batchDigest']);
+  assert.deepEqual(requiredProperty(coverageSchema.properties, 'recoveryBatches').items.required, ['paths', 'recoveryBatchDigest']);
   assert.deepEqual(requiredProperty(coverageSchema.properties, 'feedbackPages').items.required, ['kind', 'page', 'pageDigest']);
-  assert.deepEqual(requiredProperty(reviewSchema.properties, 'schemaVersion').enum, [4]);
+  assert.deepEqual(requiredProperty(reviewSchema.properties, 'schemaVersion').enum, [5]);
   assert.deepEqual(findingsSchema.items.required, ['body', 'priority', 'severity', 'confidence']);
   assert.match(findingsSchema.description, /path-level/);
   assert.match(submissionPolicySchema.description, /current-message authorization/);
   assert.match(submissionPolicySchema.description, /comment-only allows COMMENT/);
   assert.match(submissionModeSchema.description, /derived only from the current user request/);
+  assert.deepEqual(objectiveSchema.required, ['source', 'status', 'confidence', 'summary', 'rationale']);
+  const ownerSchema = requiredProperty(targetSchema.properties, 'owner');
+  const repoSchema = requiredProperty(targetSchema.properties, 'repo');
+  const ledgerSchema = requiredProperty(coverageSchema.properties, 'ledger');
+  const fileBatchesSchema = requiredProperty(coverageSchema.properties, 'fileBatches');
+  const recoveryBatchesSchema = requiredProperty(coverageSchema.properties, 'recoveryBatches');
+  const feedbackPagesSchema = requiredProperty(coverageSchema.properties, 'feedbackPages');
+  const pathSchema = requiredProperty(ledgerSchema.items.properties, 'path');
+  assert.deepEqual({ min: ownerSchema.minLength, max: ownerSchema.maxLength }, { min: 1, max: 39 });
+  assert.deepEqual({ min: repoSchema.minLength, max: repoSchema.maxLength }, { min: 1, max: 100 });
+  assert.ok(ownerSchema.pattern && new RegExp(ownerSchema.pattern).test('safe-owner'));
+  assert.ok(repoSchema.pattern && new RegExp(repoSchema.pattern).test('safe.repo'));
+  assert.equal(pathSchema.maxLength, 4096);
+  assert.ok(pathSchema.pattern && new RegExp(pathSchema.pattern).test('src/index.ts'));
+  assert.equal(pathSchema.pattern && new RegExp(pathSchema.pattern).test('../secret'), false);
+  assert.equal(pathSchema.pattern && new RegExp(pathSchema.pattern).test('.git/config'), false);
+  assert.equal(requiredProperty(snapshotSchema.properties, 'warnings').maxItems, 100);
+  assert.equal(ledgerSchema.maxItems, 3000);
+  assert.equal(fileBatchesSchema.maxItems, 3000);
+  assert.equal(recoveryBatchesSchema.maxItems, 3000);
+  assert.equal(feedbackPagesSchema.maxItems, 3000);
+  assert.equal(fileBatchesSchema.items.properties.paths?.maxItems, 100);
+  assert.equal(fileBatchesSchema.items.properties.paths?.uniqueItems, true);
+  assert.equal(findingsSchema.maxItems, 100);
+  assert.deepEqual(
+    { summary: requiredProperty(reviewSchema.properties, 'summary').maxLength, body: requiredProperty(findingsSchema.items.properties, 'body').maxLength },
+    { summary: 8192, body: 32768 },
+  );
+  assert.equal(requiredProperty(ledgerSchema.items.properties, 'note').maxLength, 4096);
+  assert.equal(requiredProperty(objectiveSchema.properties, 'summary').maxLength, 2048);
+  assert.equal(requiredProperty(objectiveSchema.properties, 'rationale').maxLength, 4096);
   assert.equal(reviewSchema.properties.event, undefined);
   const visit = (value: unknown): void => {
     if (!value || typeof value !== 'object') return;
@@ -2168,7 +2497,7 @@ test('initial submissionMode still refuses derived limited coverage', async () =
   assert.equal(fake.calls.some(call => call.argv.includes('POST')), false);
 });
 
-test('v4 609-file/37-missing incident manifest stays metadata-only with patch evidence unknown', async () => {
+test('v5 609-file/37-missing incident manifest stays metadata-only with patch evidence unknown', async () => {
   const head = '91'.repeat(20);
   const files = Array.from({ length: 609 }, (_, index) => index < 37
     ? { ...changedFile(`src/missing-${index}.js`), patch: undefined }
@@ -2187,7 +2516,7 @@ test('v4 609-file/37-missing incident manifest stays metadata-only with patch ev
   assert.equal(Object.hasOwn(result.data.files[0], 'patch'), false);
 });
 
-test('v4 posting reacquires multiple finite batches and never uses the monolithic pull snapshot', async () => {
+test('v5 posting reacquires multiple finite batches and never uses the monolithic pull snapshot', async () => {
   const head = '90'.repeat(20);
   const files = Array.from({ length: 101 }, (_, index) => changedFile(`src/file-${index}.js`));
   const fake = fakeSpawn([
@@ -2206,7 +2535,7 @@ test('v4 posting reacquires multiple finite batches and never uses the monolithi
   assert.equal(fake.calls.filter(call => call.argv.includes('POST')).length, 1);
 });
 
-test('v4 posting acquires a 3000-file, 30-batch review with linear file-list traffic', async () => {
+test('v5 posting acquires a 3000-file, 30-batch review with linear file-list traffic', async () => {
   const head = '89'.repeat(20);
   const files = Array.from({ length: 3000 }, (_, index) => changedFile(`src/scale-${index}.js`));
   const fake = fakeSpawn([
@@ -2284,9 +2613,9 @@ test('midstream evidence failure stops later pages and prevents POST', async () 
   assert.equal(fake.calls.some(call => call.argv.includes('POST')), false);
 });
 
-test('v4 3000-file partition reconciliation uses set membership without repeated array scans', async () => {
+test('v5 3000-file partition reconciliation uses set membership without repeated array scans', async () => {
   const source = await readFile(new URL('../tools/naru-lib/review.mjs', import.meta.url), 'utf8');
-  const start = source.indexOf('async function boundedV4Evidence');
+  const start = source.indexOf('async function boundedV5Evidence');
   const end = source.indexOf('const identity = manifestIdentity(first)', start);
   assert.ok(start >= 0 && end > start);
   const reconciliation = source.slice(start, end);
@@ -2297,13 +2626,13 @@ test('v4 3000-file partition reconciliation uses set membership without repeated
   assert.doesNotMatch(reconciliation, /\.includes\(/);
 });
 
-test('v4 posting reconstructs scattered declared batches from one ordered evidence acquisition', async () => {
+test('v5 posting reconstructs scattered declared batches from one ordered evidence acquisition', async () => {
   const head = '8a'.repeat(20);
   const files = Array.from({ length: 33 }, (_, index) => changedFile(`src/scattered-${index}.js`));
   const input = reviewInput({ head, files, comments: [] });
   const identity = {
     owner: 'owner', repo: 'repo', number: 42,
-    baseSha: input.reviewResult.snapshot.baseSha, headSha: head,
+    baseSha: input.reviewResult.snapshot.baseSha, diffBaseSha: input.reviewResult.snapshot.diffBaseSha, headOwner: HEAD_OWNER, headRepo: HEAD_REPO, headSha: head,
     snapshotId: input.reviewResult.snapshot.id,
     feedbackDigest: input.reviewResult.snapshot.feedbackDigest,
     evidenceDigest: input.reviewResult.snapshot.evidenceDigest,
@@ -2312,6 +2641,10 @@ test('v4 posting reconstructs scattered declared batches from one ordered eviden
   input.reviewResult.coverage.fileBatches = groups.map(group => {
     const paths = group.map(file => file.filename);
     return { paths, batchDigest: digestRawFileBatch(identity, paths, group) };
+  });
+  input.reviewResult.coverage.recoveryBatches = groups.map(group => {
+    const paths = group.map(file => file.filename);
+    return { paths, recoveryBatchDigest: digestRecoveryBatch(identity, paths, group.map(evidenceFile)) };
   });
   const fake = fakeSpawn([
     ...snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }),
@@ -2324,7 +2657,7 @@ test('v4 posting reconstructs scattered declared batches from one ordered eviden
   assert.equal(evidenceReads.length, 6);
 });
 
-test('internal v4 evidence reapplies the 16 MiB aggregate limit per declared batch', async () => {
+test('internal v5 evidence reapplies the 16 MiB aggregate limit per declared batch', async () => {
   const head = '8b'.repeat(20);
   const files = Array.from({ length: 17 }, (_, index) => ({
     ...changedFile(`src/aggregate-${index}.js`, `@@ -1 +1 @@\n ${'x'.repeat(1024 * 1024 - 128)}`),
@@ -2347,14 +2680,18 @@ test('internal v4 evidence reapplies the 16 MiB aggregate limit per declared bat
 
 test('line-map parsing accepts the exact 1024-entry boundary and stops at boundary plus one', async () => {
   const head = 'a4'.repeat(20);
-  const files = [denseContextFile('src/exact-lines.js', 512), denseContextFile('src/over-lines.js', 2048)];
+  const over = {
+    ...changedFile('src/over-lines.js', `@@ -1,512 +1,513 @@\n${' x\n'.repeat(512)}+extra`),
+    additions: 1, deletions: 0, changes: 1,
+  };
+  const files = [denseContextFile('src/exact-lines.js', 512), over];
   const target = { owner: 'owner', repo: 'repo', number: 42 };
   const manifest = await pullManifest(target, {
     spawn: fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files })).spawn,
   });
   const paths = files.map(file => file.filename);
   const metrics: EvidencePageMetrics[] = [];
-  const batch = await pullFilesAtHead({ ...target, baseSha: manifest.baseSha, headSha: manifest.headSha,
+  const batch = await pullFilesAtHead({ ...target, baseSha: manifest.baseSha, diffBaseSha: manifest.diffBaseSha, headOwner: manifest.headOwner, headRepo: manifest.headRepo, headSha: manifest.headSha,
     snapshotId: manifest.snapshotId, feedbackDigest: manifest.feedbackDigest,
     evidenceDigest: manifest.evidenceDigest, paths }, {
     spawn: fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files })).spawn,
@@ -2364,9 +2701,10 @@ test('line-map parsing accepts the exact 1024-entry boundary and stops at bounda
   const overFile = requiredAt(batch.files, 1);
   assert.equal(exactFile.patchEvidence.reason, 'complete');
   assert.equal(exactFile.lineMap.left.length + exactFile.lineMap.right.length, 1024);
-  assert.equal(overFile.patchEvidence.reason, 'per-file-line-map-limit');
+  assert.equal(overFile.patchEvidence.reason, 'complete');
+  assert.equal(overFile.patchEvidence.status, 'complete');
   assert.deepEqual(overFile.lineMap, { left: [], right: [], hunks: [] });
-  assert.equal(overFile.patch, undefined);
+  assert.equal(typeof overFile.patch, 'string');
   assert.equal(metrics.length, 1);
   assert.equal(requiredAt(metrics, 0).visitedPatchLines, 513 + 514);
   assert.equal(requiredAt(metrics, 0).retainedLineMapEntries, 1024);
@@ -2378,6 +2716,200 @@ test('line-map parsing accepts the exact 1024-entry boundary and stops at bounda
   assert.doesNotMatch(parser, /patch\.split\(/);
 });
 
+test('v5 binds compare merge-base separately from base-ref freshness identity', async () => {
+  const head = 'a8'.repeat(20);
+  const diffBase = 'd8'.repeat(20);
+  const files = [changedFile()];
+  const compare: SpawnHandler = {
+    match: argv => argv[3] === 'GET' && has(argv, '/compare/'),
+    reply: response({ merge_base_commit: { sha: diffBase }, base_commit: { sha: BASE }, head_commit: { sha: head } }),
+  };
+  const manifest = await pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, {
+    spawn: fakeSpawn([compare, ...snapshotHandlers({ meta: pullMeta(head), files })]).spawn,
+  });
+  assert.equal(manifest.baseSha, BASE);
+  assert.equal(manifest.diffBaseSha, diffBase);
+  assert.notEqual(manifest.snapshotId, snapshotId('owner', 'repo', 42, head, BASE, files, BASE));
+  assert.notEqual(manifest.evidenceDigest, digestEvidence(head, BASE, files, BASE));
+});
+
+test('v5 rejects compare responses whose head commit is not the requested head', async () => {
+  const head = 'a7'.repeat(20);
+  const handlers = [
+    {
+      match: (argv: string[]) => argv[3] === 'GET' && has(argv, '/compare/'),
+      reply: response({ merge_base_commit: { sha: BASE }, base_commit: { sha: BASE }, head_commit: { sha: '0'.repeat(40) } }),
+    },
+    ...snapshotHandlers({ meta: pullMeta(head) }),
+  ];
+  await assert.rejects(
+    pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: fakeSpawn(handlers).spawn }),
+    /not bound to the requested base\/head SHAs/,
+  );
+});
+
+test('v5 fails closed when pull metadata omits the head repository identity', async () => {
+  const meta = pullMeta();
+  meta.head.repo = undefined as never;
+  await assert.rejects(
+    pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: fakeSpawn(snapshotHandlers({ meta })).spawn }),
+    /missing valid head repository identity/,
+  );
+});
+
+test('missing-patch recovery is exact-SHA and status-aware for modify, add, delete, and rename', async () => {
+  const head = 'a9'.repeat(20);
+  const files = [
+    { ...changedFile('src/modified.js'), patch: undefined },
+    { ...changedFile('src/added.js'), patch: undefined, status: 'added', additions: 1, deletions: 0, changes: 1 },
+    { ...changedFile('src/deleted.js'), patch: undefined, status: 'removed', additions: 0, deletions: 1, changes: 1 },
+    { ...changedFile('src/renamed.js'), patch: undefined, status: 'renamed', previous_filename: 'src/old.js' },
+  ];
+  const handlers = snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files });
+  const manifest = await pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: fakeSpawn(handlers).spawn });
+  const paths = files.map(file => file.filename);
+  const fake = fakeSpawn(handlers);
+  const batch = await pullFilesAtHead({ ...manifest, paths }, { spawn: fake.spawn });
+  assert.equal(batch.files.every(file => file.recoveryEvidence?.status === 'complete'), true);
+  assert.deepEqual(requiredAt(batch.files, 1).recoveryEvidence?.base, { path: null, bytes: 0, digest: null, absent: true });
+  assert.deepEqual(requiredAt(batch.files, 2).recoveryEvidence?.head, { path: null, bytes: 0, digest: null, absent: true });
+  assert.equal(requiredAt(batch.files, 3).recoveryEvidence?.base.path, 'src/old.js');
+  assert.equal(fake.calls.filter(call => has(call.argv, '/contents/')).length, 8);
+  assert.equal(fake.calls.filter(call => has(call.argv, '/commits/')).length, 2);
+});
+
+test('missing-patch recovery binds base and fork-head sides to their exact repositories', async () => {
+  const head = 'af'.repeat(20);
+  const files = [
+    { ...changedFile('src/modified.js'), patch: undefined },
+    { ...changedFile('src/added.js'), patch: undefined, status: 'added', additions: 1, deletions: 0, changes: 1 },
+    { ...changedFile('src/deleted.js'), patch: undefined, status: 'removed', additions: 0, deletions: 1, changes: 1 },
+    { ...changedFile('src/renamed.js'), patch: undefined, status: 'renamed', previous_filename: 'src/old.js' },
+  ];
+  const meta = pullMeta(head, BASE, files.length, 42, { headOwner: 'fork-owner', headRepo: 'fork-repo' });
+  const handlers = snapshotHandlers({ meta, files });
+  const manifest = await pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: fakeSpawn(handlers).spawn });
+  assert.equal(manifest.headOwner, 'fork-owner');
+  assert.equal(manifest.headRepo, 'fork-repo');
+  const sameRepoManifest = await pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, {
+    spawn: fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files })).spawn,
+  });
+  assert.notEqual(manifest.snapshotId, sameRepoManifest.snapshotId);
+  assert.notEqual(manifest.feedbackDigest, sameRepoManifest.feedbackDigest);
+  assert.notEqual(manifest.evidenceDigest, sameRepoManifest.evidenceDigest);
+  const fake = fakeSpawn(handlers);
+  const batch = await pullFilesAtHead({ ...manifest, paths: files.map(file => file.filename) }, { spawn: fake.spawn });
+  assert.equal(batch.files.every(file => file.recoveryEvidence?.status === 'complete'), true);
+  const exactReads = fake.calls.filter(call => has(call.argv, '/commits/') || has(call.argv, '/contents/'))
+    .map(call => call.argv.at(-1) ?? '');
+  assert.equal(exactReads.some(endpoint => endpoint.includes(`repos/owner/repo/commits/${BASE}`)), true);
+  assert.equal(exactReads.some(endpoint => endpoint.includes(`repos/fork-owner/fork-repo/commits/${head}`)), true);
+  assert.equal(exactReads.filter(endpoint => endpoint.includes('repos/owner/repo/contents/')).length, 4);
+  assert.equal(exactReads.filter(endpoint => endpoint.includes('repos/fork-owner/fork-repo/contents/')).length, 4);
+});
+
+test('v5 fork identity is required by posting freshness and bound into its marker', async () => {
+  const head = 'ad'.repeat(20);
+  const headOwner = 'fork-owner';
+  const headRepo = 'fork-repo';
+  const input = reviewInput({ head, headOwner, headRepo, comments: [] });
+  let posted = {} as PostedReview;
+  const fake = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(head, BASE, 1, 42, { headOwner, headRepo }) }),
+    { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = parsePostedReview(options); return response({ id: 1199 }); } },
+  ]);
+  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  assert.equal(result.ok, true, result.error);
+  assert.match(posted.body, /headRepo=fork-owner\/fork-repo/);
+
+  const stale = structuredClone(input);
+  stale.reviewResult.snapshot.headRepo = 'other-fork';
+  const rejected = await postReview(stale, { agent: 'naru-orchestrator' }, {
+    spawn: fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, 1, 42, { headOwner, headRepo }) })).spawn,
+  });
+  assert.match(rejected.error, /headRepo mismatch|snapshot ID mismatch/);
+});
+
+test('missing-patch recovery rejects an unresolvable exact commit before interpreting absent files', async () => {
+  const head = 'ae'.repeat(20);
+  const files = [{ ...changedFile('src/added.js'), patch: undefined, status: 'added', additions: 1, deletions: 0, changes: 1 }];
+  const handlers = snapshotHandlers({ meta: pullMeta(head), files });
+  const manifest = await pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: fakeSpawn(handlers).spawn });
+  const fake = fakeSpawn([
+    { match: argv => argv[3] === 'GET' && has(argv, `/commits/${BASE}`), reply: response({ message: 'Not Found', status: '404' }, false) },
+    ...handlers,
+  ]);
+  await assert.rejects(
+    pullFilesAtHead({ ...manifest, paths: ['src/added.js'] }, { spawn: fake.spawn }),
+  );
+  assert.equal(fake.calls.some(call => has(call.argv, '/contents/')), false);
+});
+
+test('missing-patch recovery fails closed on invalid encoding, oversize, unexpected absence, and binary text', async () => {
+  const cases: Array<[string, ProcessResult, RegExp]> = [
+    ['invalid', response({ encoding: 'base64', size: 1, content: '***' }), /binary-or-invalid-utf8/],
+    ['oversize', response({ encoding: 'base64', size: 1024 * 1024 + 1, content: '' }), /per-side-byte-limit/],
+    ['absent', response({ message: 'Not Found', status: '404' }, false), /unexpected-absence/],
+    ['binary', response({ encoding: 'base64', size: 1, content: '/w==' }), /binary-or-invalid-utf8/],
+  ];
+  for (const [seed, contentReply, reason] of cases) {
+    const head = hashString(seed).slice(0, 40);
+    const files = [{ ...changedFile(`src/${seed}.js`), patch: undefined }];
+    const handlers = snapshotHandlers({ meta: pullMeta(head), files });
+    const manifest = await pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: fakeSpawn(handlers).spawn });
+    const fake = fakeSpawn([
+      { match: argv => argv[3] === 'GET' && has(argv, '/contents/'), reply: contentReply },
+      ...handlers,
+    ]);
+    const batch = await pullFilesAtHead({ ...manifest, paths: [requiredAt(files, 0).filename] }, { spawn: fake.spawn });
+    assert.equal(requiredAt(batch.files, 0).recoveryEvidence?.status, 'unavailable', seed);
+    assert.match(requiredAt(batch.files, 0).recoveryEvidence?.reason ?? '', reason, seed);
+  }
+});
+
+test('v5 posting reacquires recovered content in both freshness passes and rejects recovery digest tampering', async () => {
+  const head = 'aa'.repeat(20);
+  const files = [{ ...changedFile('src/recovered.js'), patch: undefined }];
+  const input = reviewInput({ head, files, comments: [] });
+  const fake = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(head), files }),
+    { match: argv => argv.includes('POST'), reply: response({ id: 1100 }) },
+  ]);
+  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.data.evidencePosture, 'complete');
+  assert.equal(fake.calls.filter(call => has(call.argv, '/contents/')).length, 4);
+
+  const tampered = structuredClone(input);
+  requiredAt(tampered.reviewResult.coverage.recoveryBatches, 0).recoveryBatchDigest = 'f'.repeat(64);
+  const rejected = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), files }));
+  const rejectedResult = await postReview(tampered, { agent: 'naru-orchestrator' }, { spawn: rejected.spawn });
+  assert.match(rejectedResult.error, /recovery batch digest mismatch/);
+  assert.equal(rejected.calls.some(call => call.argv.includes('POST')), false);
+});
+
+test('recovered text supports path-level decisions but never unvalidated inline locations', async () => {
+  const head = 'ab'.repeat(20);
+  const files = [{ ...changedFile('src/recovered.js'), patch: undefined }];
+  let posted = {} as PostedReview;
+  const input = reviewInputV3({
+    head, files, posture: 'complete', submissionPolicy: 'request-changes-if-blocked', conclusion: 'blocking',
+    findings: [
+      { path: 'src/recovered.js', body: 'Path-level blocker', priority: 'P1', severity: 'High', confidence: 'High' },
+      { path: 'src/recovered.js', line: 1, side: 'RIGHT', body: 'No validated map', priority: 'P2', severity: 'Medium', confidence: 'High' },
+    ],
+  });
+  const fake = fakeSpawn([
+    ...snapshotHandlers({ meta: pullMeta(head), files }),
+    { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = parsePostedReview(options); return response({ id: 1101 }); } },
+  ]);
+  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(posted.event, 'REQUEST_CHANGES');
+  assert.equal(posted.comments.length, 0);
+  assert.match(posted.body, /line and side are not present in the current patch/);
+});
+
 test('the 16384-entry batch ceiling follows requested order with public/internal digest parity', async () => {
   const head = 'a5'.repeat(20);
   const files = Array.from({ length: 17 }, (_, index) => denseContextFile(`src/batch-lines-${index}.js`, 512));
@@ -2387,7 +2919,7 @@ test('the 16384-entry batch ceiling follows requested order with public/internal
     spawn: fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files })).spawn,
   });
   const publicMetrics: EvidencePageMetrics[] = [];
-  const publicBatch = await pullFilesAtHead({ ...target, baseSha: manifest.baseSha, headSha: manifest.headSha,
+  const publicBatch = await pullFilesAtHead({ ...target, baseSha: manifest.baseSha, diffBaseSha: manifest.diffBaseSha, headOwner: manifest.headOwner, headRepo: manifest.headRepo, headSha: manifest.headSha,
     snapshotId: manifest.snapshotId, feedbackDigest: manifest.feedbackDigest,
     evidenceDigest: manifest.evidenceDigest, paths }, {
     spawn: fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files })).spawn,
@@ -2409,9 +2941,9 @@ test('the 16384-entry batch ceiling follows requested order with public/internal
     + file.lineMap.left.length + file.lineMap.right.length, 0), 16_384);
   const overflowFile = requiredAt(publicBatch.files, 16);
   assert.equal(overflowFile.filename, requiredAt(paths, 16));
-  assert.equal(overflowFile.patchEvidence.reason, 'batch-line-map-limit');
+  assert.equal(overflowFile.patchEvidence.reason, 'complete');
   assert.deepEqual(overflowFile.lineMap, { left: [], right: [], hunks: [] });
-  assert.equal(overflowFile.patch, undefined);
+  assert.equal(typeof overflowFile.patch, 'string');
   assert.equal(publicMetrics.every(metric => metric.retainedLineMapHunkObjects === 0), true);
   assert.equal(internalMetrics.every(metric => metric.retainedLineMapHunkObjects === 0), true);
   assert.equal(publicMetrics.at(-1)?.retainedLineMapEntries, 17 * 1024);
@@ -2446,7 +2978,7 @@ test('3000 dense files retain only capped flat numeric line entries and zero hun
   assert.ok(Math.max(...metrics.map(metric => metric.visitedPatchLines)) <= 16 * 513);
   for (const batch of acquired.batches) {
     assert.equal(batch.files.slice(0, 16).every(file => file.patchEvidence.reason === 'complete'), true);
-    assert.equal(batch.files.slice(16).every(file => file.patchEvidence.reason === 'batch-line-map-limit'), true);
+    assert.equal(batch.files.slice(16).every(file => file.patchEvidence.reason === 'complete'), true);
     assert.equal(batch.files.reduce((total, file) => total
       + file.lineMap.left.length + file.lineMap.right.length, 0), 16_384);
     assert.equal(batch.files.every(file => file.patch === undefined && file.lineMap.hunks.length === 0), true);
@@ -2455,7 +2987,7 @@ test('3000 dense files retain only capped flat numeric line entries and zero hun
   assert.doesNotMatch(source, /SUMMARY_LINE_MAP_HUNKS/);
 });
 
-test('complete-mode formal posting refuses line-map-limited evidence before POST', async () => {
+test('complete-mode formal posting accepts valid line-map-limited evidence without inline locations', async () => {
   const head = 'a7'.repeat(20);
   const files = [denseContextFile('src/formal-lines.js', 2048)];
   const input = reviewInput({ head, files, comments: [] });
@@ -2464,12 +2996,12 @@ test('complete-mode formal posting refuses line-map-limited evidence before POST
     { match: argv => argv.includes('POST'), reply: response({ id: 1001 }) },
   ]);
   const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
-  assert.match(result.error, /submissionMode=limited/);
-  assert.equal(result.postAttempted, false);
-  assert.equal(fake.calls.some(call => call.argv.includes('POST')), false);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.data.evidencePosture, 'complete');
+  assert.equal(fake.calls.filter(call => call.argv.includes('POST')).length, 1);
 });
 
-test('v4 pull-files batches are exact-head, safe, distinct, bounded, and inventory-bound', async () => {
+test('v5 pull-files batches are exact-head, safe, distinct, bounded, and inventory-bound', async () => {
   const head = '92'.repeat(20);
   const files = [changedFile('src/a.js'), changedFile('src/b.js')];
   const identity = fixtureIdentity(head, files);
@@ -2515,7 +3047,7 @@ test('internal one-pass evidence produces the same declared batch digest as publ
   const paths = ['src/equivalent-20.js', 'src/equivalent-0.js', 'src/equivalent-11.js'];
   const publicFake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }));
   const publicBatch = await pullFilesAtHead({
-    ...target, baseSha: manifest.baseSha, headSha: manifest.headSha, snapshotId: manifest.snapshotId,
+    ...target, baseSha: manifest.baseSha, diffBaseSha: manifest.diffBaseSha, headOwner: manifest.headOwner, headRepo: manifest.headRepo, headSha: manifest.headSha, snapshotId: manifest.snapshotId,
     feedbackDigest: manifest.feedbackDigest, evidenceDigest: manifest.evidenceDigest, paths,
   }, { spawn: publicFake.spawn });
   const internalFake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }));
@@ -2559,7 +3091,7 @@ test('reversed 17-file near-limit batch has identical public/internal aggregate 
   const manifestFake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }));
   const manifest = await pullManifest(target, { spawn: manifestFake.spawn });
   const publicFake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }));
-  const publicBatch = await pullFilesAtHead({ ...target, baseSha: manifest.baseSha, headSha: manifest.headSha,
+  const publicBatch = await pullFilesAtHead({ ...target, baseSha: manifest.baseSha, diffBaseSha: manifest.diffBaseSha, headOwner: manifest.headOwner, headRepo: manifest.headRepo, headSha: manifest.headSha,
     snapshotId: manifest.snapshotId, feedbackDigest: manifest.feedbackDigest, evidenceDigest: manifest.evidenceDigest, paths },
   { spawn: publicFake.spawn });
   const internalFake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }));
@@ -2594,7 +3126,7 @@ test('public pull-files rejects selected immutable metadata mismatches', async (
     paths: ['src/metadata.js'] }, { spawn: fake.spawn }), /metadata changed/);
 });
 
-test('v4 pull-feedback reads one advertised page with manifest-bound metadata and body digest', async () => {
+test('v5 pull-feedback reads one advertised page with manifest-bound metadata and body digest', async () => {
   const head = '94'.repeat(20);
   const files = [changedFile()];
   const reviews = Array.from({ length: 101 }, (_, index) => ({
@@ -2810,7 +3342,7 @@ test('compact GitHub acquisition reports stdout truncation before JSON parsing',
   assert.doesNotMatch(result.error, /non-JSON/);
 });
 
-test('v4 ledger and feedback acknowledgement are exact and caller completeness is forbidden', async () => {
+test('v5 ledger and feedback acknowledgement are exact and caller completeness is forbidden', async () => {
   const head = '94'.repeat(20);
   const files = [changedFile('src/a.js'), changedFile('src/b.js')];
   const baseInput = reviewInputV3({ head, files });
@@ -2836,7 +3368,7 @@ test('v4 ledger and feedback acknowledgement are exact and caller completeness i
   }
 });
 
-test('legacy v2 and v3 payloads are recognized but cannot create reviews', async () => {
+test('legacy v2, v3, and v4 payloads are recognized but cannot create reviews', async () => {
   const v3 = {
     reviewResult: {
       schemaVersion: 3,
@@ -2854,13 +3386,22 @@ test('legacy v2 and v3 payloads are recognized but cannot create reviews', async
       coverage: { complete: true, limitations: [] }, body: 'Legacy', inlineComments: [], skippedInlineComments: [],
     },
   };
-  for (const input of [v2, v3]) {
-    assert.ok([2, 3].includes(validateReviewPayload(input).schemaVersion));
+  const v4 = structuredClone(reviewInput());
+  v4.reviewResult.schemaVersion = 4;
+  delete (v4.reviewResult.snapshot as { diffBaseSha?: string }).diffBaseSha;
+  delete (v4.reviewResult.snapshot as { headOwner?: string }).headOwner;
+  delete (v4.reviewResult.snapshot as { headRepo?: string }).headRepo;
+  delete (v4.reviewResult.coverage as { recoveryBatches?: unknown }).recoveryBatches;
+  delete (v4.reviewResult as { reviewProfile?: string }).reviewProfile;
+  delete (v4.reviewResult as { outputMode?: string }).outputMode;
+  delete (v4.reviewResult as { objectiveAssessment?: unknown }).objectiveAssessment;
+  for (const input of [v2, v3, v4]) {
+    assert.ok([2, 3, 4].includes(validateReviewPayload(input).schemaVersion));
     let io = 0;
     const result = await postReview(input, { agent: 'naru-orchestrator' }, {
       spawn: async () => { io += 1; throw new Error('unexpected I/O'); },
     });
-    assert.match(result.error, /schema v2\/v3/);
+    assert.match(result.error, /schemas v2\/v3\/v4/);
     assert.equal(result.correctable, true);
     assert.equal(result.postAttempted, false);
     assert.equal(io, 0);
@@ -3043,7 +3584,7 @@ test('ambiguous supersession recovery stays unknown without one conflict-free ex
   }
 });
 
-test('same-head limited v4 can be superseded once, while legacy predecessors are rejected', async () => {
+test('same-head limited v5 can be superseded once, while legacy predecessors are rejected', async () => {
   const head = '99'.repeat(20);
   const missingFiles = [{ ...changedFile(), patch: undefined }];
   let limitedBody = '';
@@ -3064,7 +3605,7 @@ test('same-head limited v4 can be superseded once, while legacy predecessors are
   completeInput.reviewResult.supersedes = { reviewId: 901, digest };
   const completeResult = await postReview(completeInput, { agent: 'naru-orchestrator' }, { spawn: complete.spawn });
   assert.equal(completeResult.ok, true, completeResult.error);
-  assert.match(completeBody, /v=4 posture=complete supersedes=901/);
+  assert.match(completeBody, /v=5 posture=complete supersedes=901/);
   assert.equal(complete.calls.filter(call => call.argv.includes('POST')).length, 1);
 
   const legacyHead = '9a'.repeat(20);
@@ -3074,14 +3615,15 @@ test('same-head limited v4 can be superseded once, while legacy predecessors are
   const rejectedInput = reviewInputV3({ head: legacyHead, reviews: [legacy] });
   rejectedInput.reviewResult.supersedes = { reviewId: 903, digest: legacyDigest };
   const rejectedResult = await postReview(rejectedInput, { agent: 'naru-orchestrator' }, { spawn: rejected.spawn });
-  assert.match(rejectedResult.error, /limited v4 COMMENT/);
+  assert.match(rejectedResult.error, /limited v4\/v5 COMMENT/);
   assert.equal(rejected.calls.some(call => call.argv.includes('POST')), false);
 });
 
 test('review policy docs lock authorization, formal gates, and one-POST terminal behavior', async () => {
-  const [orchestrator, skill, readme, userGuide, agentsGuide, reviewLane, visualGuide] = await Promise.all([
+  const [orchestrator, skill, command, readme, userGuide, agentsGuide, reviewLane, visualGuide] = await Promise.all([
     readFile(new URL('../agents/naru-orchestrator.md', import.meta.url), 'utf8'),
     readFile(new URL('../skills/naru-review/SKILL.md', import.meta.url), 'utf8'),
+    readFile(new URL('../commands/naru.md', import.meta.url), 'utf8'),
     readFile(new URL('../README.md', import.meta.url), 'utf8'),
     readFile(new URL('../docs/user-guide.md', import.meta.url), 'utf8'),
     readFile(new URL('../docs/src/content/docs/workflows/agents.md', import.meta.url), 'utf8'),
@@ -3089,10 +3631,27 @@ test('review policy docs lock authorization, formal gates, and one-POST terminal
     readFile(new URL('../naru-visual-guide.html', import.meta.url), 'utf8'),
   ]);
 
+  assert.match(command, /native command invocation itself explicitly authorizes automatic `select-state`/i);
+  assert.match(command, /generic post\/comment\/submit wording remains comment-only/i);
+  for (const policy of [orchestrator, skill, readme, userGuide, reviewLane]) {
+    assert.match(policy, /defaultDecision[\s\S]{0,400}automatic[\s\S]{0,200}(?:only|never)/i);
+    assert.match(
+      policy,
+      /generic (?:post\/comment\/submit wording|posting language|current request to post, comment, or submit)[\s\S]{0,100}(?:`?comment-only`?|`?COMMENT`?)/i,
+    );
+    assert.match(policy, /truncat[\s\S]{0,180}(?:Low-confidence )?`?unclear`?[\s\S]{0,180}`?COMMENT`?/i);
+  }
+
   for (const publicDoc of [readme, userGuide, visualGuide]) {
     assert.doesNotMatch(publicDoc, /tool that posts a pull-request review can only leave a comment/i);
     assert.doesNotMatch(publicDoc, /One `COMMENT`-only attempt/i);
     assert.doesNotMatch(publicDoc, /comment-only (?:<b>by construction<\/b>|tool|posting tool)/i);
+  }
+
+  for (const policy of [orchestrator, skill, readme, userGuide, reviewLane]) {
+    assert.match(policy, /never create|do not create|never creates/i);
+    assert.match(policy, /GitHub or Linear|GitHub\/Linear|follow-up tickets/i);
+    assert.match(policy, /separate(?:ly)? (?:exact )?(?:current )?(?:user )?(?:message|request|action)/i);
   }
 
   for (const policy of [orchestrator, skill, readme, userGuide, agentsGuide, reviewLane]) {
@@ -3101,7 +3660,7 @@ test('review policy docs lock authorization, formal gates, and one-POST terminal
     assert.match(policy, /approve if clear/i);
     assert.match(policy, /request changes if blocked/i);
     assert.match(policy, /appropriate review decision|select-state/i);
-    assert.match(policy, /limited(?: v3| v4| patch)? evidence[\s\S]{0,100}`?COMMENT`?/i);
+    assert.match(policy, /limited(?: v3| v4| v5| patch)? evidence[\s\S]{0,100}`?COMMENT`?/i);
   }
 
   for (const policy of [orchestrator, skill, reviewLane]) {
@@ -3127,17 +3686,17 @@ test('review policy docs lock authorization, formal gates, and one-POST terminal
     assert.match(policy, /P0\/P1/);
     assert.match(policy, /Critical\/High/);
     assert.match(policy, /High(?:-|\s)confidence/i);
-    assert.match(policy, /complete current(?:-|\s)patch evidence/i);
+    assert.match(policy, /complete current(?:-|\s)patch(?: or validated recovered path)? evidence/i);
     assert.match(policy, /formal[\s\S]{0,80}(?:gate|ineligib)[\s\S]{0,80}(?:downgrade|downgrades)[\s\S]{0,40}`COMMENT`/i);
     assert.match(policy, /inventory[\s\S]{0,80}feedback[\s\S]{0,100}(?:refus|unpostable)/i);
   }
   for (const policy of [userGuide, reviewLane]) {
-    assert.match(policy, /(?:schema )?v4[\s\S]{0,100}(?:required|only contract)[\s\S]{0,80}new (?:review )?mutation|only contract[\s\S]{0,80}new review/i);
-    assert.match(policy, /(?:historical[\s\S]{0,160}v2\/v3|v2\/v3[\s\S]{0,120}historical)[\s\S]{0,80}compatibility/i);
+    assert.match(policy, /(?:schema )?v5[\s\S]{0,100}(?:required|only contract)[\s\S]{0,80}new (?:review )?mutation|only contract[\s\S]{0,80}new review/i);
+    assert.match(policy, /(?:historical[\s\S]{0,160}v2\/v3\/v4|v2\/v3\/v4[\s\S]{0,120}historical)[\s\S]{0,80}compatibility/i);
   }
   for (const policy of [orchestrator, skill]) {
-    assert.match(policy, /v2\/v3[\s\S]{0,100}(?:legacy|compatibility)/i);
-    assert.match(policy, /v4[\s\S]{0,80}(?:canonical|only contract)/i);
+    assert.match(policy, /v2\/v3\/v4[\s\S]{0,100}(?:historical|compatibility)/i);
+    assert.match(policy, /v5[\s\S]{0,80}(?:canonical|only contract)/i);
     assert.match(policy, /(?:current-user[\s\S]{0,160}submissionMode|submissionMode[\s\S]{0,200}current user)/i);
   }
 

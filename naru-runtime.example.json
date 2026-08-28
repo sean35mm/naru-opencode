@@ -18,5 +18,10 @@
       "use": "ordinary investigation, edits, checks"
     }
   },
+  "review": {
+    "defaultDecision": "automatic",
+    "defaultOutput": "concise",
+    "defaultProfile": "release-critical"
+  },
   "schemaVersion": 1
 }

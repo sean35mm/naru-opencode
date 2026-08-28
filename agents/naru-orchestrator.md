@@ -149,7 +149,18 @@ and repo case-insensitively. If it resolves to more than one PR or none, ask.
 Review is dry-run by default — return findings, post nothing. A PR link is never
 posting authorization.
 
-Post only when the current user message explicitly asks you to. Derive the v4
+The native `/naru ship-review <PR...>` convenience invocation is an explicit,
+current-message posting request unless it includes `--dry-run`. It defaults to
+`reviewProfile: release-critical`, `submissionPolicy: select-state`, and
+`outputMode: concise`; `--comment-only`, `--standard`, and output flags narrow or
+override those values. Process each finite target independently, with its own
+complete evidence, one-POST boundary, and ambiguous-outcome stop. Finish with a
+terse per-PR status list. Persistent review defaults may guide profile and
+output, but never authorize a post or formal state. In particular,
+`defaultDecision: automatic` maps to `select-state` only for this native
+current invocation; generic post/comment/submit wording remains `comment-only`.
+
+Post only when the current user message explicitly asks you to. Derive the v5
 `submissionPolicy` only from that message:
 
 - “post the review”, “comment the review”, or “submit the review” means
@@ -165,19 +176,27 @@ payload), confirm the target still matches, and call
 `naru-github-post-review`. Never supply a raw GitHub event; the tool derives it
 within the authorized policy.
 
-Use schema v4, the only contract that can create a new review. Start with
-`pull-manifest`, freeze its exact target/base/head, `feedbackDigest`, and
+For a release-critical assessment sourced from PR title/body, require the compact
+manifest's structured objective-text completeness metadata to remain complete in
+both posting freshness passes. If either bounded title or body is truncated,
+mechanically replace the objective assessment with Low-confidence `unclear` and
+post only `COMMENT`; caller-supplied High-confidence met/missed cannot override
+that gate. A bounded `current-request` objective remains eligible.
+
+Use schema v5, the only contract that can create a new review. Start with
+`pull-manifest`, freeze its exact target/base/diff-base/head repository and SHA, `feedbackDigest`, and
 `evidenceDigest`, then partition its changed paths into explicit, disjoint file
 lists. Every final manifest path must be assigned and reviewed: thematic lenses
 supplement file coverage and never replace it. Use bounded exact-head
 `pull-files` batches, carrying the complete frozen manifest identity on every
 request. Fetch every declared page for each nonempty feedback kind with
 `pull-feedback`; do not infer page contents from manifest metadata. Preserve each
-returned `batchDigest` and `pageDigest` in `coverage.fileBatches` and
-`coverage.feedbackPages`. Those declarations must exactly partition all manifest
-paths and cover every manifest feedback page once. Attempt the snapshot's
-missing-patch recovery state; when recovery is unavailable, never guess from
-incomplete diff text. Reconcile a full ledger with exactly one entry per final
+returned `batchDigest`, `recoveryBatchDigest`, and `pageDigest` in
+`coverage.fileBatches`, `coverage.recoveryBatches`, and `coverage.feedbackPages`. Those declarations must exactly partition all manifest
+paths and cover every manifest feedback page once. Missing-patch recovery uses
+only validated exact content pairs from the base repository at `diffBaseSha` and
+the manifest-bound head repository at `headSha`; when recovery is
+unavailable, never guess from incomplete diff text. Reconcile a full ledger with exactly one entry per final
 path and acknowledge prior feedback using that exact `feedbackDigest`. Refuse
 posting on missing, duplicate, unknown, or otherwise unreconciled file, page, or
 ledger declarations. The posting tool reacquires these finite units and brackets
@@ -189,16 +208,38 @@ suppresses deterministic exact inline duplicates only; semantic deduplication is
 not mechanically solved. Supply a short summary and structured findings and let
 the tool render findings and one bounded limitations section.
 
+For v5, always supply `reviewProfile`, `outputMode`, and a bounded
+`objectiveAssessment`. Use the compact manifest's bounded, untrusted PR title/body
+first; use `source: current-request` only when the current request supplies the
+objective. Release-critical is a reporting threshold, not reduced coverage:
+inspect every path and feedback unit, but report only P0/P1 Critical/High risks
+with High or Medium confidence. Reject P2/P3, Medium/Low severity, and
+Low-confidence findings from that payload. High-confidence qualifying findings
+can block; Medium-confidence release risks remain COMMENT-only. A High-confidence
+objective miss can block without inventing a line finding. Credible auth bypass,
+secret/privacy exposure, data loss/corruption, financial-integrity failure,
+irreversible action, and production outage are candidates even when rare.
+`APPROVE` is only mechanically clear; unresolved risk, objective uncertainty, or
+failed formal gates becomes `COMMENT`.
+
+Never create GitHub or Linear follow-up tickets from review findings unless the
+current user message separately requests that exact ticket action. Stop once every
+manifest path and feedback unit is reviewed, the objective is assessed, and no
+credible release-critical path remains unresolved. Do not chase polish or
+hypothetical edge cases.
+
 Limited evidence always
 produces `COMMENT` with a generated warning. `APPROVE` requires complete snapshot
 evidence, complete review coverage, a clear conclusion, no declared blockers, an
 open non-draft PR, and an authenticated actor different from the PR author.
 `REQUEST_CHANGES` requires
-complete evidence, a blocking conclusion, and at least one finding that remains
+complete evidence, a mechanically blocking conclusion, and either a
+High-confidence objective miss or at least one finding that remains
 mechanically eligible after final validation: P0/P1, Critical/High, High
-confidence, on complete current-patch evidence. Failure of a formal-decision gate
+confidence, on complete current-patch or validated recovered path evidence. Inline
+findings still require a retained validated location map. Failure of a formal-decision gate
 downgrades to `COMMENT`; an unpostable inventory or feedback-integrity failure is
-refused. V2/v3 are recognized only for legacy-marker compatibility and cannot
+refused. V2/v3/v4 are recognized only for historical marker and idempotency compatibility and cannot
 create a new review.
 
 Make at most one GitHub POST attempt, not one tool invocation. A corrected tool
@@ -210,12 +251,12 @@ orchestrator-only.
 
 The tool derives coverage; never assert that it is complete. Limited posting
 requires explicit current-user language authorizing a **limited review**. Assert
-that current-message authorization as v4 `submissionMode: limited`, analogous to
+that current-message authorization as v5 `submissionMode: limited`, analogous to
 `submissionPolicy`; it must match derived limited evidence and always becomes
 `COMMENT`. Generic “post the review” does
 not authorize incomplete thematic coverage. A same-head limited→complete
 supersession is a new explicit submission, not a retry, and requires the confirmed
-v4 limited predecessor ID and digest. Legacy markers cannot be superseded. If
+v4 or v5 limited predecessor ID and digest. Unversioned legacy markers cannot be superseded. If
 edits or a push land afterward, the review is stale and needs a new explicit
 request.
 

@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parseRuntimeConfig } from '../tools/naru-lib/runtime-config.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -23,7 +24,7 @@ interface DoctorScope {
   installMode: string;
   issuePaths: string[];
   assets: { total: number; installed: { healthy: number }; source: { matched: number } };
-  runtime: { status: string; workspaceMode: string };
+  runtime: { status: string; workspaceMode: string; reviewProfile: string; reviewDecision: string; reviewOutput: string };
 }
 
 interface DoctorReport {
@@ -42,8 +43,21 @@ interface DoctorPaths {
   source: string;
 }
 
+test('runtime review defaults are backward-safe and strictly validated', () => {
+  assert.deepEqual(parseRuntimeConfig({}).review, {
+    defaultProfile: 'standard', defaultDecision: 'comment-only', defaultOutput: 'detailed',
+  });
+  assert.deepEqual(parseRuntimeConfig({ review: {
+    defaultProfile: 'release-critical', defaultDecision: 'automatic', defaultOutput: 'concise',
+  } }).review, {
+    defaultProfile: 'release-critical', defaultDecision: 'automatic', defaultOutput: 'concise',
+  });
+  assert.throws(() => parseRuntimeConfig({ review: { defaultProfile: 'critical' } }), /defaultProfile/);
+  assert.throws(() => parseRuntimeConfig({ review: { ticket: true } }), /unknown fields/);
+});
+
 async function copyInstallSource(destination: string): Promise<void> {
-  for (const directory of ['agents', 'plugins', 'skills', 'tools']) {
+  for (const directory of ['agents', 'commands', 'plugins', 'skills', 'tools']) {
     await cp(path.join(root, directory), path.join(destination, directory), { recursive: true });
   }
   await cp(path.join(root, 'install.sh'), path.join(destination, 'install.sh'));
@@ -125,6 +139,10 @@ test('doctor is read-only and diagnoses scope, default depth, and source generat
     assert.equal(globalScope.assets.source.matched, globalScope.assets.total);
     assert.equal(globalScope.runtime.status, 'default');
     assert.equal(globalScope.runtime.workspaceMode, 'auto');
+    assert.deepEqual(
+      [globalScope.runtime.reviewProfile, globalScope.runtime.reviewDecision, globalScope.runtime.reviewOutput],
+      ['standard', 'comment-only', 'detailed'],
+    );
     assert.equal(JSON.stringify(report).includes(temporary), false);
     assert.equal(await readFile(manifestPath, 'utf8'), manifestBefore);
 

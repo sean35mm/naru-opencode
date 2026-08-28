@@ -11,6 +11,8 @@ const MAX_COMMENTS = 100;
 const MAX_WARNINGS = 100;
 const MAX_RENDERED_FINDINGS_LENGTH = 48 * 1024;
 const MAX_SUMMARY_LENGTH = 8192;
+const MAX_OBJECTIVE_SUMMARY_LENGTH = 2048;
+const MAX_OBJECTIVE_RATIONALE_LENGTH = 4096;
 const MAX_COVERAGE_ENTRIES = 3000;
 const MAX_LIMITATION_EXAMPLES = 5;
 const MAX_GH_BYTES = 32 * 1024 * 1024;
@@ -35,20 +37,29 @@ export type SubmissionPolicy = 'comment-only' | 'approve-if-clear' | 'request-ch
 export type SubmissionMode = 'complete' | 'limited';
 export type ReviewConclusion = 'informational' | 'clear' | 'blocking';
 export type ReviewEvent = 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES';
+export type ReviewProfile = 'standard' | 'release-critical';
+export type OutputMode = 'concise' | 'detailed';
+export interface ObjectiveAssessment {
+    source: 'pull-request' | 'current-request'; status: 'met' | 'missed' | 'unclear';
+    confidence: Confidence; summary: string; rationale: string;
+}
 export interface ReviewTarget { owner: string; repo: string; number: number }
 export interface ReviewSnapshotV2V3 { id: string; baseSha: string; headSha: string; feedbackDigest: string; complete: boolean; warnings: string[] }
 export interface ReviewSnapshotV4 { id: string; baseSha: string; headSha: string; feedbackDigest: string; evidenceDigest: string; warnings: string[] }
+export interface ReviewSnapshotV5 extends ReviewSnapshotV4 { diffBaseSha: string; headOwner: string; headRepo: string }
 export interface CoverageV2 { complete: boolean; limitations: string[]; posture?: never; ledger?: never }
 export interface CoverageV3 { posture: SubmissionMode; limitations: string[]; ledger?: never }
 export type CoverageStatus = 'reviewed' | 'blocked' | 'excluded';
 export type CoverageEvidence = 'current-patch' | 'recovered-patch' | 'alternate' | 'none';
 export interface CoverageLedgerEntry { path: string; status: CoverageStatus; evidence: CoverageEvidence; note?: string }
 export interface DeclaredFileBatch { paths: string[]; batchDigest: string }
+export interface DeclaredRecoveryBatch { paths: string[]; recoveryBatchDigest: string }
 export interface DeclaredFeedbackPage { kind: FeedbackKind; page: number; pageDigest: string }
 export interface CoverageV4 {
     ledger: CoverageLedgerEntry[]; fileBatches: DeclaredFileBatch[]; feedbackPages: DeclaredFeedbackPage[];
     feedbackAcknowledged: true; feedbackDigest: string; limitations?: never; posture?: never;
 }
+export interface CoverageV5 extends CoverageV4 { recoveryBatches: DeclaredRecoveryBatch[] }
 interface FindingCore { body: string; priority: Priority; severity: Severity; confidence: Confidence }
 export type ReviewFinding = FindingCore & (
     | { path?: undefined; line?: undefined; side?: undefined }
@@ -60,7 +71,8 @@ export interface SkippedInlineComment { path: string; line: number; side: Review
 export interface ReviewPayloadV2 { schemaVersion: 2; target: ReviewTarget; snapshot: ReviewSnapshotV2V3; coverage: CoverageV2; body: string; summary?: never; submissionMode?: never; inlineComments: InlineComment[]; skippedInlineComments: SkippedInlineComment[]; findings?: never; supersedes?: never }
 export interface ReviewPayloadV3 { schemaVersion: 3; target: ReviewTarget; snapshot: ReviewSnapshotV2V3; coverage: CoverageV3; body: string; summary?: never; submissionMode?: never; submissionPolicy: SubmissionPolicy; conclusion: ReviewConclusion; findings: ReviewFinding[]; supersedes?: never }
 export interface ReviewPayloadV4 { schemaVersion: 4; target: ReviewTarget; snapshot: ReviewSnapshotV4; coverage: CoverageV4; body?: never; inlineComments?: never; submissionMode: SubmissionMode; summary: string; submissionPolicy: SubmissionPolicy; conclusion: ReviewConclusion; findings: ReviewFinding[]; supersedes?: { reviewId: number; digest: string } }
-export type ReviewPayload = ReviewPayloadV2 | ReviewPayloadV3 | ReviewPayloadV4;
+export interface ReviewPayloadV5 { schemaVersion: 5; target: ReviewTarget; snapshot: ReviewSnapshotV5; coverage: CoverageV5; body?: never; inlineComments?: never; submissionMode: SubmissionMode; summary: string; submissionPolicy: SubmissionPolicy; reviewProfile: ReviewProfile; outputMode: OutputMode; objectiveAssessment: ObjectiveAssessment; conclusion: ReviewConclusion; findings: ReviewFinding[]; supersedes?: { reviewId: number; digest: string } }
+export type ReviewPayload = ReviewPayloadV2 | ReviewPayloadV3 | ReviewPayloadV4 | ReviewPayloadV5;
 export interface LocationValidation { valid: InlineComment[]; dropped: Array<{ comment: InlineComment; reason: string }> }
 export interface FindingValidation {
     validInline: ReviewFinding[]; invalid: Array<{ finding: ReviewFinding; reason: string | undefined }>;
@@ -71,6 +83,7 @@ export interface SubmissionDecision {
     event: ReviewEvent; evidencePosture: SubmissionMode; limitations: string[];
     limitationDetails?: Array<string | { path: string; reason: string; [key: string]: unknown }>;
     droppedBlocker?: boolean; authorizationPolicy: SubmissionPolicy; droppedFindings?: DroppedFinding[];
+    reviewProfile?: ReviewProfile; outputMode?: OutputMode; objectiveAssessment?: ObjectiveAssessment; derivedConclusion?: ReviewConclusion;
 }
 export interface DroppedFinding { finding: ReviewFinding; reason: string; fingerprint?: string; suppressedFromPosting?: true; retainedForDecision?: true; eligibleBlocker?: boolean }
 export type PostOutcomeState =
@@ -95,7 +108,7 @@ interface RuntimeSnapshot extends PullIdentity {
     reviewability: { status: 'complete' | 'limited-comment' | 'manifest' | 'unpostable'; inventoryComplete: boolean; feedbackComplete: boolean; patchesComplete: boolean; limitations: string[] };
     completeness: { allFilesIncluded: boolean; feedbackComplete: boolean; patchesComplete: boolean; [key: string]: unknown };
 }
-type ReviewMarker = { reviewId: unknown; url?: string | undefined; state?: string | undefined; author?: string | undefined; owner: string; repo: string; number: number; headSha: string; digest: string; version?: number | undefined; posture?: string | undefined; supersedes?: number | undefined };
+type ReviewMarker = { reviewId: unknown; url?: string | undefined; state?: string | undefined; author?: string | undefined; owner: string; repo: string; number: number; headOwner?: string | undefined; headRepo?: string | undefined; headSha: string; digest: string; version?: number | undefined; posture?: string | undefined; supersedes?: number | undefined };
 const postLocks = new Map<string, PostLock>();
 const postRecords = new Map<string, PostRecord>();
 function hash(value: string): string {
@@ -135,8 +148,10 @@ function isCoverageStatus(value: unknown): value is CoverageStatus { return type
 function isCoverageEvidence(value: unknown): value is CoverageEvidence { return typeof value === 'string' && ['current-patch', 'recovered-patch', 'alternate', 'none'].includes(value); }
 function isSubmissionPolicy(value: unknown): value is SubmissionPolicy { return typeof value === 'string' && Object.hasOwn(SUBMISSION_POLICY_EVENTS, value); }
 function isConclusion(value: unknown): value is ReviewConclusion { return typeof value === 'string' && ['informational', 'clear', 'blocking'].includes(value); }
+function isReviewProfile(value: unknown): value is ReviewProfile { return value === 'standard' || value === 'release-critical'; }
+function isOutputMode(value: unknown): value is OutputMode { return value === 'concise' || value === 'detailed'; }
 function isFeedbackKind(value: unknown): value is FeedbackKind { return typeof value === 'string' && ['reviews', 'review-comments', 'issue-comments'].includes(value); }
-function isSchemaVersion(value: unknown): value is 2 | 3 | 4 { return value === 2 || value === 3 || value === 4; }
+function isSchemaVersion(value: unknown): value is 2 | 3 | 4 | 5 { return value === 2 || value === 3 || value === 4 || value === 5; }
 function requireStringArray(value: unknown, name: string, max: number): string[] {
     if (!Array.isArray(value) || value.length > max)
         throw new Error(`${name} must be an array with at most ${max} items`);
@@ -219,6 +234,21 @@ function validateV4Snapshot(raw: unknown): ReviewSnapshotV4 {
         warnings: requireStringArray(requireField(raw, 'warnings', isUnknownArray), 'reviewResult.snapshot.warnings', MAX_WARNINGS),
     };
 }
+function validateV5Snapshot(raw: unknown): ReviewSnapshotV5 {
+    assertPlainObject(raw, 'reviewResult.snapshot');
+    validateAllowedKeys(raw, ['id', 'baseSha', 'diffBaseSha', 'headOwner', 'headRepo', 'headSha', 'feedbackDigest', 'evidenceDigest', 'warnings']);
+    return {
+        id: requireField(raw, 'id', isSnapshotId),
+        baseSha: requireField(raw, 'baseSha', is40HexSha),
+        diffBaseSha: requireField(raw, 'diffBaseSha', is40HexSha),
+        headOwner: requireField(raw, 'headOwner', isSafeOwner),
+        headRepo: requireField(raw, 'headRepo', isSafeRepo),
+        headSha: requireField(raw, 'headSha', is40HexSha),
+        feedbackDigest: requireField(raw, 'feedbackDigest', isDigest),
+        evidenceDigest: requireField(raw, 'evidenceDigest', isDigest),
+        warnings: requireStringArray(requireField(raw, 'warnings', isUnknownArray), 'reviewResult.snapshot.warnings', MAX_WARNINGS),
+    };
+}
 function validateCoverageEntry(raw: unknown, index: number): CoverageLedgerEntry {
     assertPlainObject(raw, `reviewResult.coverage.ledger[${index}]`);
     validateAllowedKeys(raw, ['path', 'status', 'evidence', 'note']);
@@ -231,9 +261,9 @@ function validateCoverageEntry(raw: unknown, index: number): CoverageLedgerEntry
         entry.note = requireField(raw, 'note', value => isBoundedText(value, 4096));
     return entry;
 }
-function validateV4Coverage(raw: unknown, feedbackDigest: string): CoverageV4 {
+function validateV4Coverage(raw: unknown, feedbackDigest: string, version: 4 | 5 = 4): CoverageV4 | CoverageV5 {
     assertPlainObject(raw, 'reviewResult.coverage');
-    validateAllowedKeys(raw, ['ledger', 'fileBatches', 'feedbackPages', 'feedbackAcknowledged', 'feedbackDigest']);
+    validateAllowedKeys(raw, ['ledger', 'fileBatches', 'feedbackPages', 'feedbackAcknowledged', 'feedbackDigest', ...(version === 5 ? ['recoveryBatches'] : [])]);
     const ledgerRaw = requireField(raw, 'ledger', isUnknownArray);
     if (ledgerRaw.length > MAX_COVERAGE_ENTRIES)
         throw new Error(`coverage ledger exceeds ${MAX_COVERAGE_ENTRIES}`);
@@ -265,7 +295,21 @@ function validateV4Coverage(raw: unknown, feedbackDigest: string): CoverageV4 {
             pageDigest: requireField(page, 'pageDigest', isDigest),
         };
     });
-    return { ledger, fileBatches, feedbackPages, feedbackAcknowledged, feedbackDigest: acknowledgedDigest };
+    const common = { ledger, fileBatches, feedbackPages, feedbackAcknowledged, feedbackDigest: acknowledgedDigest };
+    if (version === 4)
+        return common;
+    const recoveryRaw = requireField(raw, 'recoveryBatches', isUnknownArray);
+    if (recoveryRaw.length > MAX_COVERAGE_ENTRIES)
+        throw new Error('recoveryBatches is too large');
+    const recoveryBatches = recoveryRaw.map((batch, index) => {
+        assertPlainObject(batch, `reviewResult.coverage.recoveryBatches[${index}]`);
+        validateAllowedKeys(batch, ['paths', 'recoveryBatchDigest']);
+        const paths = requireStringArray(requireField(batch, 'paths', isUnknownArray), `reviewResult.coverage.recoveryBatches[${index}].paths`, 100);
+        if (paths.length === 0 || paths.some(path => !isSafeRelativePath(path)) || new Set(paths).size !== paths.length)
+            throw new Error(`reviewResult.coverage.recoveryBatches[${index}].paths must contain 1-100 distinct safe paths`);
+        return { paths, recoveryBatchDigest: requireField(batch, 'recoveryBatchDigest', isDigest) };
+    });
+    return { ...common, recoveryBatches };
 }
 function validateComment(raw: unknown, index: number): InlineComment {
     assertPlainObject(raw, `reviewResult.inlineComments[${index}]`);
@@ -311,24 +355,43 @@ function validateFinding(raw: unknown, index: number): ReviewFinding {
     }
     return finding as ReviewFinding;
 }
+function validateObjectiveAssessment(raw: unknown): ObjectiveAssessment {
+    assertPlainObject(raw, 'reviewResult.objectiveAssessment');
+    validateAllowedKeys(raw, ['source', 'status', 'confidence', 'summary', 'rationale']);
+    return {
+        source: requireField(raw, 'source', (value: unknown): value is ObjectiveAssessment['source'] => value === 'pull-request' || value === 'current-request'),
+        status: requireField(raw, 'status', (value: unknown): value is ObjectiveAssessment['status'] => value === 'met' || value === 'missed' || value === 'unclear'),
+        confidence: requireField(raw, 'confidence', isConfidence),
+        summary: requireField(raw, 'summary', (value: unknown): value is string => isBoundedText(value, MAX_OBJECTIVE_SUMMARY_LENGTH)),
+        rationale: requireField(raw, 'rationale', (value: unknown): value is string => isBoundedText(value, MAX_OBJECTIVE_RATIONALE_LENGTH)),
+    };
+}
+export function deriveV5Conclusion(reviewProfile: ReviewProfile, objective: ObjectiveAssessment, findings: ReviewFinding[]): ReviewConclusion {
+    if (reviewProfile !== 'release-critical') return 'informational';
+    if (findings.some(isApprovalBlocker) || (objective.status === 'missed' && objective.confidence === 'High')) return 'blocking';
+    if (findings.length === 0 && objective.status === 'met' && objective.confidence === 'High') return 'clear';
+    return 'informational';
+}
 export function validateReviewPayload(raw: unknown): ReviewPayload {
     assertPlainObject(raw, 'input');
     validateAllowedKeys(raw, ['reviewResult']);
     const result = requireField(raw, 'reviewResult', isUnknownRecord);
     assertPlainObject(result, 'reviewResult');
     if (!isSchemaVersion(result.schemaVersion))
-        throw new Error('reviewResult.schemaVersion must be 2, 3, or 4');
+        throw new Error('reviewResult.schemaVersion must be 2, 3, 4, or 5');
     const version = result.schemaVersion;
     validateAllowedKeys(result, version === 2
         ? ['schemaVersion', 'target', 'snapshot', 'coverage', 'body', 'inlineComments', 'skippedInlineComments']
         : version === 3
             ? ['schemaVersion', 'target', 'snapshot', 'coverage', 'body', 'submissionPolicy', 'conclusion', 'findings']
-            : ['schemaVersion', 'target', 'snapshot', 'coverage', 'submissionMode', 'summary', 'submissionPolicy', 'conclusion', 'findings', 'supersedes']);
+            : version === 5
+                ? ['schemaVersion', 'target', 'snapshot', 'coverage', 'submissionMode', 'summary', 'submissionPolicy', 'reviewProfile', 'outputMode', 'objectiveAssessment', 'conclusion', 'findings', 'supersedes']
+                : ['schemaVersion', 'target', 'snapshot', 'coverage', 'submissionMode', 'summary', 'submissionPolicy', 'conclusion', 'findings', 'supersedes']);
     const target = validateTarget(normalizeTargetAliases(requireField(result, 'target', isUnknownRecord)));
     const snapshotRaw = normalizeSnapshotAliases(requireField(result, 'snapshot', isUnknownRecord));
-    if (version === 4) {
-        const snapshot = validateV4Snapshot(snapshotRaw);
-        const coverage = validateV4Coverage(requireField(result, 'coverage', isUnknownRecord), snapshot.feedbackDigest);
+    if (version === 4 || version === 5) {
+        const snapshot = version === 5 ? validateV5Snapshot(snapshotRaw) : validateV4Snapshot(snapshotRaw);
+        const coverage = validateV4Coverage(requireField(result, 'coverage', isUnknownRecord), snapshot.feedbackDigest, version);
         const submissionMode = requireField(result, 'submissionMode', isCoveragePosture);
         const summary = requireField(result, 'summary', (value: unknown): value is string => isBoundedText(value, MAX_SUMMARY_LENGTH));
         if (/<!--\s*naru-review:/i.test(summary))
@@ -347,18 +410,36 @@ export function validateReviewPayload(raw: unknown): ReviewPayload {
                 digest: requireField(result.supersedes, 'digest', isDigest),
             };
         }
-        return {
-            schemaVersion: 4,
+        const findings = findingsRaw.map(validateFinding);
+        if (version === 5) {
+            const reviewProfile = requireField(result, 'reviewProfile', isReviewProfile);
+            const outputMode = requireField(result, 'outputMode', isOutputMode);
+            const objectiveAssessment = validateObjectiveAssessment(requireField(result, 'objectiveAssessment', isUnknownRecord));
+            if (reviewProfile === 'release-critical') {
+                const rejected = findings.find(finding => !['P0', 'P1'].includes(finding.priority)
+                    || !['Critical', 'High'].includes(finding.severity) || finding.confidence === 'Low');
+                if (rejected) throw new Error('release-critical findings allow only P0/P1 Critical/High risks with High or Medium confidence');
+                const derived = deriveV5Conclusion(reviewProfile, objectiveAssessment, findings);
+                if (conclusion !== derived) throw new Error(`release-critical conclusion must match mechanically derived conclusion=${derived}`);
+            }
+            return {
+                schemaVersion: 5, target, snapshot: snapshot as ReviewSnapshotV5, coverage: coverage as CoverageV5,
+                submissionMode, summary, submissionPolicy, reviewProfile, outputMode, objectiveAssessment, conclusion, findings,
+                ...(supersedes === undefined ? {} : { supersedes }),
+            };
+        }
+        const common = {
             target,
             snapshot,
-            coverage,
+            coverage: coverage as CoverageV5,
             submissionMode,
             summary,
             submissionPolicy,
             conclusion,
-            findings: findingsRaw.map(validateFinding),
+            findings,
             ...(supersedes === undefined ? {} : { supersedes }),
         };
+        return { ...common, schemaVersion: 4, snapshot: snapshot as ReviewSnapshotV4, coverage: coverage as CoverageV4 };
     }
     const snapshot = validateSnapshot(snapshotRaw);
     const body = requireField(result, 'body', (value: unknown): value is string => isBoundedText(value, MAX_BODY_LENGTH - 256));
@@ -428,47 +509,72 @@ function markerDigest(payload: ReviewPayload, comments: InlineComment[] | Review
             })).sort(compareCanonical),
         },
     } : {};
+    const v5Evidence = payload.schemaVersion === 5 ? {
+        snapshotIdentity: {
+            baseSha: payload.snapshot.baseSha,
+            diffBaseSha: payload.snapshot.diffBaseSha,
+            headOwner: payload.snapshot.headOwner,
+            headRepo: payload.snapshot.headRepo,
+            headSha: payload.snapshot.headSha,
+            id: payload.snapshot.id,
+            feedbackDigest: payload.snapshot.feedbackDigest,
+            evidenceDigest: payload.snapshot.evidenceDigest,
+        },
+        boundedProvenance: {
+            fileBatches: payload.coverage.fileBatches.map(batch => ({ paths: [...batch.paths], batchDigest: batch.batchDigest })).sort(compareCanonical),
+            recoveryBatches: payload.coverage.recoveryBatches.map(batch => ({ paths: [...batch.paths], recoveryBatchDigest: batch.recoveryBatchDigest })).sort(compareCanonical),
+            feedbackPages: payload.coverage.feedbackPages.map(page => ({ kind: page.kind, page: page.page, pageDigest: page.pageDigest })).sort(compareCanonical),
+        },
+    } : {};
     return hash(JSON.stringify({
         ...legacy,
         ...v4Evidence,
+        ...v5Evidence,
         schemaVersion: payload.schemaVersion,
         event: decision.event,
         evidencePosture: decision.evidencePosture,
         limitations: decision.limitations,
         coveragePosture: payload.coverage.posture ?? decision.evidencePosture,
-        coverageLedger: (payload as ReviewPayloadV4).coverage.ledger.map(entry => ({
+        coverageLedger: (payload as ReviewPayloadV4 | ReviewPayloadV5).coverage.ledger.map(entry => ({
             path: entry.path,
             status: entry.status,
             evidence: entry.evidence,
             ...(entry.note === undefined ? {} : { note: entry.note }),
         })).sort(compareCanonical),
-        submissionMode: (payload as ReviewPayloadV4).submissionMode,
-        conclusion: payload.conclusion,
+        submissionMode: (payload as ReviewPayloadV4 | ReviewPayloadV5).submissionMode,
+        conclusion: decision.derivedConclusion ?? payload.conclusion,
         submissionPolicy: payload.submissionPolicy,
         authorizationPolicy: decision.authorizationPolicy,
+        reviewProfile: payload.schemaVersion === 5 ? payload.reviewProfile : undefined,
+        outputMode: payload.schemaVersion === 5 ? payload.outputMode : undefined,
+        objectiveAssessment: payload.schemaVersion === 5 ? decision.objectiveAssessment : undefined,
         findings: payload.findings,
         renderedFindings,
     }));
 }
 function markerTag(payload: ReviewPayload, digest: string): string {
     const { owner, repo, number } = payload.target;
+    if (payload.schemaVersion === 5) {
+        const supersedes = payload.supersedes ? ` supersedes=${payload.supersedes.reviewId}` : '';
+        return `<!-- naru-review:${owner}/${repo}#${number} head=${payload.snapshot.headSha} headRepo=${payload.snapshot.headOwner}/${payload.snapshot.headRepo} digest=${digest} v=5 posture=${payload.submissionMode}${supersedes} -->`;
+    }
     if (payload.schemaVersion === 4) {
         const supersedes = payload.supersedes ? ` supersedes=${payload.supersedes.reviewId}` : '';
-        return `<!-- naru-review:${owner}/${repo}#${number} head=${payload.snapshot.headSha} digest=${digest} v=4 posture=${payload.submissionMode}${supersedes} -->`;
+        return `<!-- naru-review:${owner}/${repo}#${number} head=${payload.snapshot.headSha} digest=${digest} v=${payload.schemaVersion} posture=${payload.submissionMode}${supersedes} -->`;
     }
     return `<!-- naru-review:${owner}/${repo}#${number} head=${payload.snapshot.headSha} digest=${digest} -->`;
 }
 function extractMarker(body: unknown): Omit<ReviewMarker, 'reviewId'> | null {
     if (typeof body !== 'string')
         return null;
-    const match = body.match(/<!--\s*naru-review:([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)#(\d+) head=([0-9a-f]{40}) digest=([0-9a-f]{64})(?: v=(\d+) posture=(complete|limited)(?: supersedes=(\d+))?)?\s*-->/i);
+    const match = body.match(/<!--\s*naru-review:([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)#(\d+) head=([0-9a-f]{40})(?: headRepo=([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+))? digest=([0-9a-f]{64})(?: v=(\d+) posture=(complete|limited)(?: supersedes=(\d+))?)?\s*-->/i);
     if (!match)
         return null;
     const owner = match[1];
     const repo = match[2];
     const number = Number(match[3]);
     const headSha = match[4];
-    const digest = match[5];
+    const digest = match[7];
     if (!owner || !repo || !headSha || !digest)
         return null;
     return {
@@ -477,9 +583,11 @@ function extractMarker(body: unknown): Omit<ReviewMarker, 'reviewId'> | null {
         number,
         headSha,
         digest,
-        ...(match[6] ? { version: Number(match[6]) } : {}),
-        ...(match[7] ? { posture: match[7] } : {}),
-        ...(match[8] ? { supersedes: Number(match[8]) } : {}),
+        ...(match[5] ? { headOwner: match[5] } : {}),
+        ...(match[6] ? { headRepo: match[6] } : {}),
+        ...(match[8] ? { version: Number(match[8]) } : {}),
+        ...(match[9] ? { posture: match[9] } : {}),
+        ...(match[10] ? { supersedes: Number(match[10]) } : {}),
     };
 }
 function markersOnHead(reviews: Array<NormalizedReviewItem | NormalizedCommentItem>, target: ReviewTarget, headSha: string, actor: string): ReviewMarker[] {
@@ -501,40 +609,49 @@ function markersOnHead(reviews: Array<NormalizedReviewItem | NormalizedCommentIt
     }
     return matches;
 }
-function recoveredMarkerOnHead(reviews: Array<NormalizedReviewItem | NormalizedCommentItem>, target: ReviewTarget, headSha: string, actor: string, payload: ReviewPayloadV4, digest: string): ReviewMarker | null {
+function markerMatchesHeadRepository(marker: ReviewMarker, payload: ReviewPayloadV5): boolean {
+    return marker.version !== 5 || (marker.headOwner?.toLowerCase() === payload.snapshot.headOwner.toLowerCase()
+        && marker.headRepo?.toLowerCase() === payload.snapshot.headRepo.toLowerCase());
+}
+function recoveredMarkerOnHead(reviews: Array<NormalizedReviewItem | NormalizedCommentItem>, target: ReviewTarget, headSha: string, actor: string, payload: ReviewPayloadV5, digest: string): ReviewMarker | null {
     const markers = markersOnHead(reviews, target, headSha, actor);
     const supersedes = payload.supersedes;
     const expected = markers.filter(item => item.digest === digest
         && item.version === payload.schemaVersion
+        && item.headOwner?.toLowerCase() === payload.snapshot.headOwner.toLowerCase()
+        && item.headRepo?.toLowerCase() === payload.snapshot.headRepo.toLowerCase()
         && item.posture === payload.submissionMode
         && (!supersedes || item.supersedes === supersedes.reviewId));
     if (expected.length !== 1)
         return null;
     const predecessors = supersedes ? markers.filter(item => item.reviewId === supersedes.reviewId
-        && item.digest === supersedes.digest && item.version === 4 && item.posture === 'limited'
+        && item.digest === supersedes.digest && (item.version === 4 || item.version === 5) && item.posture === 'limited'
+        && markerMatchesHeadRepository(item, payload)
         && item.supersedes === undefined) : [];
     if (supersedes && predecessors.length !== 1)
         return null;
     const conflicts = markers.filter(item => item !== expected[0] && item !== predecessors[0]);
     return conflicts.length === 0 ? expected[0] ?? null : null;
 }
-function validateSupersession(payload: ReviewPayloadV4, reviews: Array<NormalizedReviewItem | NormalizedCommentItem>, actor: string, decision: SubmissionDecision): ReviewMarker | null {
+function validateSupersession(payload: ReviewPayloadV5, reviews: Array<NormalizedReviewItem | NormalizedCommentItem>, actor: string, decision: SubmissionDecision): ReviewMarker | null {
     const supersedes = payload.supersedes;
     if (!supersedes)
         return null;
-    if (payload.schemaVersion !== 4 || payload.submissionMode !== 'complete' || decision.evidencePosture !== 'complete')
-        throw new Error('supersession requires a new complete v4 review');
+    if (payload.submissionMode !== 'complete' || decision.evidencePosture !== 'complete')
+        throw new Error('supersession requires a new complete v5 review');
     const markers = markersOnHead(reviews, payload.target, payload.snapshot.headSha, actor);
-    const predecessors = markers.filter(item => item.reviewId === supersedes.reviewId && item.digest === supersedes.digest);
+    const predecessors = markers.filter(item => item.reviewId === supersedes.reviewId && item.digest === supersedes.digest
+        && markerMatchesHeadRepository(item, payload));
     if (predecessors.length !== 1)
         throw new Error('supersession predecessor is missing or ambiguous');
     const predecessor = predecessors[0];
     if (predecessor === undefined)
         throw new Error('supersession predecessor is missing');
-    if (predecessor.version !== 4 || predecessor.posture !== 'limited'
+    if ((predecessor.version !== 4 && predecessor.version !== 5) || predecessor.posture !== 'limited'
         || !['COMMENT', 'COMMENTED'].includes(String(predecessor.state).toUpperCase()))
-        throw new Error('supersession predecessor must be a limited v4 COMMENT');
-    const eligiblePredecessors = markers.filter(item => item.version === 4 && item.posture === 'limited'
+        throw new Error('supersession predecessor must be a limited v4/v5 COMMENT');
+    const eligiblePredecessors = markers.filter(item => (item.version === 4 || item.version === 5) && item.posture === 'limited'
+        && markerMatchesHeadRepository(item, payload)
         && ['COMMENT', 'COMMENTED'].includes(String(item.state).toUpperCase()));
     if (eligiblePredecessors.length !== 1)
         throw new Error('supersession predecessor is ambiguous');
@@ -544,6 +661,12 @@ function validateSupersession(payload: ReviewPayloadV4, reviews: Array<Normalize
 }
 function targetKey(target: ReviewTarget): string {
     return `${target.owner.toLowerCase()}/${target.repo.toLowerCase()}#${target.number}`;
+}
+function postKey(payload: ReviewPayload): string {
+    const target = targetKey(payload.target);
+    return payload.schemaVersion === 5
+        ? `${target}:${payload.snapshot.headOwner.toLowerCase()}/${payload.snapshot.headRepo.toLowerCase()}`
+        : target;
 }
 async function withPostLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
     let entry = postLocks.get(key);
@@ -599,6 +722,11 @@ function alreadyPosted(reviewId: unknown, reviewUrl: string | undefined, decisio
         limitations: decision.limitations,
         droppedFindings: decision.droppedFindings ?? [],
         submissionPolicy: decision.authorizationPolicy,
+        reviewProfile: decision.reviewProfile,
+        outputMode: decision.outputMode,
+        objectiveAssessment: decision.objectiveAssessment,
+        derivedConclusion: decision.derivedConclusion,
+        droppedBlocker: decision.droppedBlocker,
     }));
 }
 function recordedPostResult(key: string, payload: ReviewPayload, actor: string, digest: string, unknownOnly = false) {
@@ -636,9 +764,12 @@ function validateCurrentComments(comments: InlineComment[], snapshot: RuntimeSna
     }
     return { valid, dropped };
 }
-function isCompletePatch(file: RuntimeEvidenceFile | undefined): boolean {
+function isCurrentPatchComplete(file: RuntimeEvidenceFile | undefined): boolean {
     return Boolean(file && !file.patchRedacted && !file.patchTruncated && file.patchAvailable
         && (!file.patchEvidence || file.patchEvidence.status === 'complete'));
+}
+function isCompleteEvidence(file: RuntimeEvidenceFile | undefined): boolean {
+    return isCurrentPatchComplete(file) || file?.recoveryEvidence?.status === 'complete';
 }
 function isApprovalBlocker(finding: ReviewFinding): boolean {
     return (finding.priority === 'P0' || finding.priority === 'P1')
@@ -659,8 +790,8 @@ function validateCurrentFindings(findings: ReviewFinding[], snapshot: RuntimeSna
         let invalidLocation = false;
         if (!finding.path)
             reason = 'no path or inline location was supplied';
-        else if (!isCompletePatch(file)) {
-            reason = 'current path does not have complete patch evidence';
+        else if (!isCompleteEvidence(file)) {
+            reason = `current path evidence is unavailable: ${file?.recoveryEvidence?.reason ?? file?.patchEvidence?.reason ?? 'missing-file'}`;
             invalidLocation = true;
         }
         else if (finding.line !== undefined) {
@@ -729,7 +860,7 @@ function suppressExactPriorFindings(findings: ReviewFinding[], snapshot: Runtime
     }
     return { kept, dropped };
 }
-function reconcileV4Coverage(payload: ReviewPayloadV4, snapshot: RuntimeSnapshot): { posture: SubmissionMode; limitations: Array<{ path: string; status: CoverageStatus; evidence: CoverageEvidence; reason: string }> } {
+function reconcileV5Coverage(payload: ReviewPayloadV5, snapshot: RuntimeSnapshot): { posture: SubmissionMode; limitations: Array<{ path: string; status: CoverageStatus; evidence: CoverageEvidence; reason: string }> } {
     const inventory = new Map(snapshot.files.map(file => [file.filename, file]));
     const seen = new Set();
     for (const entry of payload.coverage.ledger) {
@@ -745,17 +876,15 @@ function reconcileV4Coverage(payload: ReviewPayloadV4, snapshot: RuntimeSnapshot
     const limitations: Array<{ path: string; status: CoverageStatus; evidence: CoverageEvidence; reason: string }> = [];
     for (const entry of payload.coverage.ledger) {
         const file = inventory.get(entry.path);
-        const currentComplete = entry.status === 'reviewed' && entry.evidence === 'current-patch' && isCompletePatch(file);
-        // Recovered evidence is accepted only when the snapshot itself carries a
-        // future centrally validated recovery record. Current snapshots explicitly do not.
+        const currentComplete = entry.status === 'reviewed' && entry.evidence === 'current-patch' && isCurrentPatchComplete(file);
         const recoveredComplete = entry.status === 'reviewed' && entry.evidence === 'recovered-patch'
             && file?.recoveryEvidence?.status === 'complete';
         if (!currentComplete && !recoveredComplete)
-            limitations.push({ path: entry.path, status: entry.status, evidence: entry.evidence, reason: entry.note ?? file?.patchEvidence?.reason ?? 'incomplete-review-evidence' });
+            limitations.push({ path: entry.path, status: entry.status, evidence: entry.evidence, reason: entry.note ?? file?.recoveryEvidence?.reason ?? file?.patchEvidence?.reason ?? 'incomplete-review-evidence' });
     }
     const posture = limitations.length === 0 ? 'complete' : 'limited';
     if (payload.submissionMode !== posture)
-        throw new Error(`${posture} derived coverage requires v4 submissionMode=${posture}; submissionMode is an orchestrator assertion derived only from the current user's explicit review request`);
+        throw new Error(`${posture} derived coverage requires v5 submissionMode=${posture}; submissionMode is an orchestrator assertion derived only from the current user's explicit review request`);
     return { posture, limitations };
 }
 function boundedSafeMarkdown(value: unknown, max: number): string {
@@ -811,7 +940,15 @@ function composeReviewBody(payload: ReviewPayload, decision: SubmissionDecision,
     const limitedBanner = decision.evidencePosture === 'limited'
         ? '> [!WARNING]\n> **Limited review:** Explicitly authorized as a COMMENT because complete file evidence was unavailable.'
         : '';
-    const parts = [marker, limitedBanner, payload.summary ?? payload.body, findingsSection, limitationsSection].filter(Boolean);
+    let summary = payload.summary ?? payload.body;
+    if (payload.schemaVersion === 5 && payload.reviewProfile === 'release-critical' && payload.outputMode === 'concise') {
+        const conclusion = decision.derivedConclusion ?? payload.conclusion;
+        const state = conclusion === 'clear' ? 'clear' : conclusion === 'blocking' ? 'blocked' : 'unresolved';
+        summary = state === 'clear'
+            ? 'Release-critical review: clear.'
+            : `## Release-critical review: ${state}\n\n${summary}`;
+    }
+    const parts = [marker, limitedBanner, summary, findingsSection, limitationsSection].filter(Boolean);
     const body = parts.join('\n\n');
     if (body.length > MAX_BODY_LENGTH)
         throw new Error(`composed review body exceeds ${MAX_BODY_LENGTH} characters`);
@@ -819,10 +956,16 @@ function composeReviewBody(payload: ReviewPayload, decision: SubmissionDecision,
 }
 function snapshotEvidenceDigest(snapshot: RuntimeSnapshot): string {
     return hash(JSON.stringify({
+        baseSha: snapshot.baseSha,
+        diffBaseSha: snapshot.diffBaseSha,
+        headOwner: snapshot.headOwner,
+        headRepo: snapshot.headRepo,
+        headSha: snapshot.headSha,
         state: snapshot.pull?.state,
         draft: snapshot.pull?.draft,
         author: snapshot.pull?.author,
         contentDigest: snapshot.pull?.contentDigest,
+        objectiveText: snapshot.pull?.objectiveText,
         reviewability: snapshot.reviewability,
         files: snapshot.files.map(file => ({
             filename: file.filename,
@@ -832,12 +975,13 @@ function snapshotEvidenceDigest(snapshot: RuntimeSnapshot): string {
             patchTruncated: file.patchTruncated,
             patchRedacted: file.patchRedacted,
             lineMap: file.lineMap,
+            recoveryEvidence: file.recoveryEvidence,
         })),
     }));
 }
 async function currentSnapshot(payload: ReviewPayload, spawn?: Spawn): Promise<RuntimeSnapshot> {
-    if (payload.schemaVersion === 4)
-        return boundedV4Evidence(payload, spawn);
+    if (payload.schemaVersion === 5)
+        return boundedV5Evidence(payload, spawn);
     return pullSnapshot({
         owner: payload.target.owner,
         repo: payload.target.repo,
@@ -847,22 +991,29 @@ async function currentSnapshot(payload: ReviewPayload, spawn?: Spawn): Promise<R
 function manifestIdentity(manifest: PullManifest): PullIdentity {
     return {
         owner: manifest.owner, repo: manifest.repo, number: manifest.number,
-        baseSha: manifest.baseSha, headSha: manifest.headSha, snapshotId: manifest.snapshotId,
+        baseSha: manifest.baseSha, diffBaseSha: manifest.diffBaseSha, headOwner: manifest.headOwner, headRepo: manifest.headRepo, headSha: manifest.headSha, snapshotId: manifest.snapshotId,
         feedbackDigest: manifest.feedbackDigest, evidenceDigest: manifest.evidenceDigest,
     };
 }
-function assertPayloadManifest(payload: ReviewPayloadV4, manifest: PullManifest): void {
+function assertPayloadManifest(payload: ReviewPayloadV5, manifest: PullManifest): void {
     const expected = {
         owner: payload.target.owner, repo: payload.target.repo, number: payload.target.number,
-        baseSha: payload.snapshot.baseSha, headSha: payload.snapshot.headSha, snapshotId: payload.snapshot.id,
+        baseSha: payload.snapshot.baseSha, diffBaseSha: payload.snapshot.diffBaseSha, headOwner: payload.snapshot.headOwner, headRepo: payload.snapshot.headRepo, headSha: payload.snapshot.headSha, snapshotId: payload.snapshot.id,
         feedbackDigest: payload.snapshot.feedbackDigest, evidenceDigest: payload.snapshot.evidenceDigest,
     };
     for (const [field, value] of Object.entries(expected)) {
         if (manifest[field] !== value)
             throw new Error(`bounded manifest ${field} mismatch`);
     }
+    const objectiveText = manifest.pull.objectiveText;
+    if (typeof objectiveText.titleTruncated !== 'boolean'
+        || typeof objectiveText.bodyTruncated !== 'boolean'
+        || typeof objectiveText.complete !== 'boolean'
+        || objectiveText.complete !== (!objectiveText.titleTruncated && !objectiveText.bodyTruncated)) {
+        throw new Error('bounded manifest objective completeness metadata is invalid');
+    }
 }
-async function boundedV4Evidence(payload: ReviewPayloadV4, spawn?: Spawn): Promise<RuntimeSnapshot> {
+async function boundedV5Evidence(payload: ReviewPayloadV5, spawn?: Spawn): Promise<RuntimeSnapshot> {
     const target = payload.target;
     const first = await pullManifest(target, { spawn });
     assertPayloadManifest(payload, first);
@@ -882,6 +1033,9 @@ async function boundedV4Evidence(payload: ReviewPayloadV4, spawn?: Spawn): Promi
     }
     if (hasUnknownPath || declaredPathSet.size !== manifestPaths.size)
         throw new Error('file batch declarations do not exactly partition the compact manifest');
+    if (payload.coverage.recoveryBatches.length !== payload.coverage.fileBatches.length
+        || payload.coverage.recoveryBatches.some((batch, index) => JSON.stringify(batch.paths) !== JSON.stringify(payload.coverage.fileBatches[index]?.paths)))
+        throw new Error('recovery batch declarations must exactly match file batch paths and order');
     const expectedPages = [];
     for (const [kind, count] of Object.entries(first.feedback))
         for (let page = 1; page <= count.pages; page += 1)
@@ -902,6 +1056,9 @@ async function boundedV4Evidence(payload: ReviewPayloadV4, spawn?: Spawn): Promi
             throw new Error('file batch acquisition is incomplete');
         if (batch.batchDigest !== declaration.batchDigest)
             throw new Error('file batch digest mismatch');
+        const recoveryDeclaration = payload.coverage.recoveryBatches[index];
+        if (!recoveryDeclaration || batch.recoveryBatchDigest !== recoveryDeclaration.recoveryBatchDigest)
+            throw new Error('recovery batch digest mismatch');
         files.push(...batch.files.map(file => {
             const { patch: _patch, bytesUsed: _bytesUsed, ...retained } = file;
             return retained;
@@ -918,9 +1075,9 @@ async function boundedV4Evidence(payload: ReviewPayloadV4, spawn?: Spawn): Promi
     assertPayloadManifest(payload, finalManifest);
     if (hash(JSON.stringify(first)) !== hash(JSON.stringify(finalManifest)))
         throw new Error('compact manifest changed during bounded evidence acquisition');
-    const patchesComplete = files.every(isCompletePatch);
-    const limitations = files.filter(file => !isCompletePatch(file))
-        .map(file => `${file.filename}: patch evidence ${file.patchEvidence?.reason ?? 'incomplete'}`);
+    const patchesComplete = files.every(isCompleteEvidence);
+    const limitations = files.filter(file => !isCompleteEvidence(file))
+        .map(file => `${file.filename}: evidence unavailable (${file.recoveryEvidence?.reason ?? file.patchEvidence?.reason ?? 'incomplete'})`);
     return {
         ...identity,
         pull: first.pull,
@@ -940,10 +1097,13 @@ async function boundedV4Evidence(payload: ReviewPayloadV4, spawn?: Spawn): Promi
         completeness: { allFilesIncluded: true, feedbackComplete: true, patchesComplete },
     };
 }
-async function boundedReviewsForRecovery(payload: ReviewPayloadV4, spawn?: Spawn): Promise<NormalizedCommentItem[]> {
+async function boundedReviewsForRecovery(payload: ReviewPayloadV5, spawn?: Spawn): Promise<NormalizedCommentItem[]> {
     const manifest = await pullManifest(payload.target, { spawn });
     if (manifest.headSha !== payload.snapshot.headSha
         || manifest.baseSha !== payload.snapshot.baseSha
+        || manifest.diffBaseSha !== payload.snapshot.diffBaseSha
+        || manifest.headOwner.toLowerCase() !== payload.snapshot.headOwner.toLowerCase()
+        || manifest.headRepo.toLowerCase() !== payload.snapshot.headRepo.toLowerCase()
         || manifest.snapshotId !== payload.snapshot.id
         || manifest.evidenceDigest !== payload.snapshot.evidenceDigest)
         return [];
@@ -965,6 +1125,11 @@ function snapshotIdentityError(payload: ReviewPayload, snapshot: RuntimeSnapshot
         return 'snapshot head SHA mismatch';
     if (snapshot.baseSha !== payload.snapshot.baseSha)
         return 'snapshot base SHA mismatch';
+    if (payload.schemaVersion === 5 && snapshot.diffBaseSha !== payload.snapshot.diffBaseSha)
+        return 'snapshot diff-base SHA mismatch';
+    if (payload.schemaVersion === 5 && (snapshot.headOwner.toLowerCase() !== payload.snapshot.headOwner.toLowerCase()
+        || snapshot.headRepo.toLowerCase() !== payload.snapshot.headRepo.toLowerCase()))
+        return 'snapshot head repository identity mismatch';
     return null;
 }
 function snapshotFreshnessError(payload: ReviewPayload, snapshot: RuntimeSnapshot): string | null {
@@ -972,7 +1137,7 @@ function snapshotFreshnessError(payload: ReviewPayload, snapshot: RuntimeSnapsho
         return 'snapshot ID mismatch';
     if (snapshot.feedbackDigest !== payload.snapshot.feedbackDigest)
         return 'snapshot feedback digest mismatch';
-    if (payload.schemaVersion === 4 && snapshot.evidenceDigest !== payload.snapshot.evidenceDigest)
+    if ((payload.schemaVersion === 4 || payload.schemaVersion === 5) && snapshot.evidenceDigest !== payload.snapshot.evidenceDigest)
         return 'snapshot evidence digest mismatch';
     if (payload.schemaVersion === 2 && !snapshot.complete)
         return 'current snapshot is incomplete; refusing to post';
@@ -987,6 +1152,30 @@ function reviewability(snapshot: RuntimeSnapshot) {
         feedbackComplete: Boolean(snapshot.completeness?.feedbackComplete),
         patchesComplete: Boolean(snapshot.completeness?.patchesComplete),
         limitations: snapshot.warnings ?? [],
+    };
+}
+function pullRequestObjectiveComplete(snapshot: RuntimeSnapshot): boolean {
+    const objectiveText = snapshot.pull?.objectiveText;
+    return isUnknownRecord(objectiveText)
+        && objectiveText.complete === true
+        && objectiveText.titleTruncated === false
+        && objectiveText.bodyTruncated === false;
+}
+function effectiveObjectiveAssessment(payload: ReviewPayloadV5, initialSnapshot: RuntimeSnapshot, finalSnapshot: RuntimeSnapshot): { assessment: ObjectiveAssessment; complete: boolean } {
+    if (payload.reviewProfile !== 'release-critical' || payload.objectiveAssessment.source === 'current-request')
+        return { assessment: payload.objectiveAssessment, complete: true };
+    const complete = pullRequestObjectiveComplete(initialSnapshot) && pullRequestObjectiveComplete(finalSnapshot);
+    if (complete)
+        return { assessment: payload.objectiveAssessment, complete: true };
+    return {
+        complete: false,
+        assessment: {
+            source: 'pull-request',
+            status: 'unclear',
+            confidence: 'Low',
+            summary: 'The pull-request objective text is incomplete.',
+            rationale: 'The compact manifest truncated the pull-request title or body, so it cannot support a formal objective decision.',
+        },
     };
 }
 function deriveReviewSubmission(payload: ReviewPayload, initialSnapshot: RuntimeSnapshot, finalSnapshot: RuntimeSnapshot, actor: string, validation: LocationValidation | FindingValidation): SubmissionDecision {
@@ -1004,34 +1193,50 @@ function deriveReviewSubmission(payload: ReviewPayload, initialSnapshot: Runtime
             authorizationPolicy: 'comment-only',
         };
     }
-    if (payload.schemaVersion === 4) {
-        const coverage = reconcileV4Coverage(payload, finalSnapshot);
+    if (payload.schemaVersion === 5) {
+        const coverage = reconcileV5Coverage(payload, finalSnapshot);
         const evidencePosture = coverage.posture === 'complete'
             && currentEvidence.status === 'complete' && finalEvidence.status === 'complete' ? 'complete' : 'limited';
         if (payload.submissionMode !== evidencePosture)
-            throw new Error(`${evidencePosture} derived evidence requires v4 submissionMode=${evidencePosture}; limited is authorized only by an explicit current-user limited-review request`);
+            throw new Error(`${evidencePosture} derived evidence requires v5 submissionMode=${evidencePosture}; limited is authorized only by an explicit current-user limited-review request`);
         // File-level snapshot limitations are already represented by the exact
         // coverage ledger. Do not duplicate them from both freshness snapshots.
-        const limitationDetails = coverage.limitations;
+        const effectiveObjective = effectiveObjectiveAssessment(payload, initialSnapshot, finalSnapshot);
+        const limitationDetails: Array<string | { path: string; status: CoverageStatus; evidence: CoverageEvidence; reason: string }> = [
+            ...coverage.limitations,
+            ...(!effectiveObjective.complete ? ['pull request objective text is incomplete; formal objective state is uncertain'] : []),
+        ];
         if (evidencePosture === 'limited' && limitationDetails.length === 0)
-            throw new Error('limited v4 review requires mechanically derived limitations');
+            throw new Error('limited v5 review requires mechanically derived limitations');
         const declaredBlockers = payload.findings.filter(isApprovalBlocker);
         const droppedBlocker = declaredBlockers.some(finding => !(validation as FindingValidation).eligibleBlockers.includes(finding));
+        const evidenceEligibleConclusion: ReviewConclusion = (validation as FindingValidation).eligibleBlockers.length > 0
+            || (effectiveObjective.assessment.status === 'missed' && effectiveObjective.assessment.confidence === 'High')
+            ? 'blocking'
+            : payload.findings.length === 0 && effectiveObjective.assessment.status === 'met' && effectiveObjective.assessment.confidence === 'High'
+                ? 'clear'
+                : 'informational';
+        const derivedConclusion = payload.reviewProfile === 'release-critical' ? evidenceEligibleConclusion : payload.conclusion;
         const formalEligible = evidencePosture === 'complete'
+            && effectiveObjective.complete
             && finalSnapshot.pull?.draft === false
             && typeof finalSnapshot.pull?.author === 'string'
             && finalSnapshot.pull.author.toLowerCase() !== actor.toLowerCase();
+        const hasBlockingReason = (validation as FindingValidation).eligibleBlockers.length > 0
+            || (payload.reviewProfile === 'release-critical'
+                && effectiveObjective.assessment.status === 'missed'
+                && effectiveObjective.assessment.confidence === 'High');
         let event: ReviewEvent = 'COMMENT';
         if (payload.submissionPolicy === 'approve-if-clear'
-            && formalEligible && payload.conclusion === 'clear' && declaredBlockers.length === 0 && !droppedBlocker)
+            && formalEligible && derivedConclusion === 'clear' && declaredBlockers.length === 0 && !droppedBlocker)
             event = 'APPROVE';
         else if (payload.submissionPolicy === 'request-changes-if-blocked'
-            && formalEligible && payload.conclusion === 'blocking' && (validation as FindingValidation).eligibleBlockers.length > 0)
+            && formalEligible && derivedConclusion === 'blocking' && hasBlockingReason)
             event = 'REQUEST_CHANGES';
         else if (payload.submissionPolicy === 'select-state') {
-            if (formalEligible && payload.conclusion === 'blocking' && (validation as FindingValidation).eligibleBlockers.length > 0)
+            if (formalEligible && derivedConclusion === 'blocking' && hasBlockingReason)
                 event = 'REQUEST_CHANGES';
-            else if (formalEligible && payload.conclusion === 'clear' && declaredBlockers.length === 0 && !droppedBlocker)
+            else if (formalEligible && derivedConclusion === 'clear' && declaredBlockers.length === 0 && !droppedBlocker)
                 event = 'APPROVE';
         }
         if (!SUBMISSION_POLICY_EVENTS[payload.submissionPolicy].has(event))
@@ -1039,8 +1244,12 @@ function deriveReviewSubmission(payload: ReviewPayload, initialSnapshot: Runtime
         return {
             event, evidencePosture, limitations: aggregateLimitations(limitationDetails).map(item => `${item.reason} (${item.count})`),
             limitationDetails, droppedBlocker, authorizationPolicy: payload.submissionPolicy,
+            reviewProfile: payload.reviewProfile, outputMode: payload.outputMode,
+            objectiveAssessment: effectiveObjective.assessment, derivedConclusion,
         };
     }
+    if (payload.schemaVersion === 4)
+        throw new Error('schema v4 cannot create a new review mutation');
     const payloadEvidenceLimited = payload.snapshot.complete !== true;
     if ((payloadEvidenceLimited || currentEvidence.status === 'limited-comment' || finalEvidence.status === 'limited-comment')
         && payload.coverage.posture !== 'limited') {
@@ -1088,7 +1297,7 @@ function deriveReviewSubmission(payload: ReviewPayload, initialSnapshot: Runtime
         authorizationPolicy: payload.submissionPolicy,
     };
 }
-async function postReviewLocked(payload: ReviewPayloadV4, spawn: Spawn | undefined, key: string) {
+async function postReviewLocked(payload: ReviewPayloadV5, spawn: Spawn | undefined, key: string) {
     let snapshot;
     try {
         snapshot = await currentSnapshot(payload, spawn);
@@ -1125,8 +1334,8 @@ async function postReviewLocked(payload: ReviewPayloadV4, spawn: Spawn | undefin
         return postError(`final ${finalFreshnessError}`, { correctable: true });
     if (snapshotEvidenceDigest(snapshot) !== snapshotEvidenceDigest(finalSnapshot))
         return postError('review evidence or pull request state changed during final validation; refusing to post', { correctable: true });
-    const initialDuplicates = payload.schemaVersion === 4 ? suppressExactPriorFindings(payload.findings, snapshot) : { kept: payload.findings, dropped: [] };
-    const finalDuplicates = payload.schemaVersion === 4 ? suppressExactPriorFindings(payload.findings, finalSnapshot) : initialDuplicates;
+    const initialDuplicates = suppressExactPriorFindings(payload.findings, snapshot);
+    const finalDuplicates = suppressExactPriorFindings(payload.findings, finalSnapshot);
     if (hash(JSON.stringify(initialDuplicates.dropped)) !== hash(JSON.stringify(finalDuplicates.dropped)))
         return postError('prior-feedback duplicate state changed during final validation; refusing to post', { correctable: true });
     const initialPostingValidation = (payload.schemaVersion as number) === 2
@@ -1137,12 +1346,8 @@ async function postReviewLocked(payload: ReviewPayloadV4, spawn: Spawn | undefin
         : validateCurrentFindings(finalDuplicates.kept, finalSnapshot);
     // Current-head exact duplicates are suppressed only from emitted comments.
     // They remain declared findings and are revalidated for formal decisions.
-    const initialDecisionValidation = payload.schemaVersion === 4
-        ? validateCurrentFindings(payload.findings, snapshot)
-        : initialPostingValidation;
-    const finalDecisionValidation = payload.schemaVersion === 4
-        ? validateCurrentFindings(payload.findings, finalSnapshot)
-        : finalPostingValidation;
+    const initialDecisionValidation = validateCurrentFindings(payload.findings, snapshot);
+    const finalDecisionValidation = validateCurrentFindings(payload.findings, finalSnapshot);
     const validationChanged = (payload.schemaVersion as number) === 2
         ? locationValidationDigest(finalPostingValidation as LocationValidation) !== locationValidationDigest(initialPostingValidation as LocationValidation)
         : findingValidationDigest(finalPostingValidation as FindingValidation) !== findingValidationDigest(initialPostingValidation as FindingValidation)
@@ -1189,10 +1394,8 @@ async function postReviewLocked(payload: ReviewPayloadV4, spawn: Spawn | undefin
         rememberPost(recordKey, {
             actor: actor.toLowerCase(), headSha: finalSnapshot.headSha, digest,
             status: 'succeeded', reviewId: matchingExisting.reviewId, reviewUrl: matchingExisting.url,
-            event: decision.event, evidencePosture: decision.evidencePosture,
-            limitations: decision.limitations,
+            ...decision,
             droppedFindings,
-            authorizationPolicy: decision.authorizationPolicy,
         });
         return alreadyPosted(matchingExisting.reviewId, matchingExisting.url, decision);
     }
@@ -1238,11 +1441,8 @@ async function postReviewLocked(payload: ReviewPayloadV4, spawn: Spawn | undefin
         headSha: finalSnapshot.headSha,
         digest,
         status: 'unknown',
-        event: decision.event,
-        evidencePosture: decision.evidencePosture,
-        limitations: decision.limitations,
+        ...decision,
         droppedFindings,
-        authorizationPolicy: decision.authorizationPolicy,
     });
     let postResult;
     try {
@@ -1265,11 +1465,8 @@ async function postReviewLocked(payload: ReviewPayloadV4, spawn: Spawn | undefin
                     status: 'succeeded',
                     reviewId: result.id,
                     reviewUrl,
-                    event: decision.event,
-                    evidencePosture: decision.evidencePosture,
-                    limitations: decision.limitations,
+                    ...decision,
                     droppedFindings,
-                    authorizationPolicy: decision.authorizationPolicy,
                 });
                 return postState(okEnvelope('naru-github-post-review', {
                     posted: true,
@@ -1282,6 +1479,11 @@ async function postReviewLocked(payload: ReviewPayloadV4, spawn: Spawn | undefin
                     evidencePosture: decision.evidencePosture,
                     limitations: decision.limitations,
                     submissionPolicy: decision.authorizationPolicy,
+                    reviewProfile: decision.reviewProfile,
+                    outputMode: decision.outputMode,
+                    objectiveAssessment: decision.objectiveAssessment,
+                    derivedConclusion: decision.derivedConclusion,
+                    droppedBlocker: decision.droppedBlocker,
                 }, {
                     warnings: droppedComments.length ? [`dropped ${droppedComments.length} invalid inline comments`] : [],
                 }), { postAttempted: true });
@@ -1293,9 +1495,7 @@ async function postReviewLocked(payload: ReviewPayloadV4, spawn: Spawn | undefin
     }
     // Never retry the mutation. A fresh read may only confirm whether it landed.
     try {
-        const reviews = payload.schemaVersion === 4
-            ? await boundedReviewsForRecovery(payload, spawn)
-            : (await currentSnapshot(payload, spawn)).reviews;
+        const reviews = await boundedReviewsForRecovery(payload, spawn);
         const recovered = recoveredMarkerOnHead(reviews, payload.target, finalSnapshot.headSha, actor, payload, digest);
         if (recovered) {
             rememberPost(recordKey, {
@@ -1305,11 +1505,8 @@ async function postReviewLocked(payload: ReviewPayloadV4, spawn: Spawn | undefin
                 status: 'succeeded',
                 reviewId: recovered.reviewId,
                 reviewUrl: recovered.url,
-                event: decision.event,
-                evidencePosture: decision.evidencePosture,
-                limitations: decision.limitations,
+                ...decision,
                 droppedFindings,
-                authorizationPolicy: decision.authorizationPolicy,
             });
             return postState(okEnvelope('naru-github-post-review', {
                 posted: true,
@@ -1323,6 +1520,11 @@ async function postReviewLocked(payload: ReviewPayloadV4, spawn: Spawn | undefin
                 evidencePosture: decision.evidencePosture,
                 limitations: decision.limitations,
                 submissionPolicy: decision.authorizationPolicy,
+                reviewProfile: decision.reviewProfile,
+                outputMode: decision.outputMode,
+                objectiveAssessment: decision.objectiveAssessment,
+                derivedConclusion: decision.derivedConclusion,
+                droppedBlocker: decision.droppedBlocker,
             }), { postAttempted: true });
         }
     }
@@ -1344,12 +1546,12 @@ export async function postReview(rawPayload: unknown, context: unknown, { spawn 
     catch (error) {
         return postError(`invalid input: ${safeError(error)}`, { correctable: true });
     }
-    if (payload.schemaVersion !== 4)
-        return postError('schema v2/v3 is recognized only for existing-marker compatibility; create a schema v4 review before posting', { correctable: true });
+    if (payload.schemaVersion !== 5)
+        return postError('schemas v2/v3/v4 are recognized only for historical marker and idempotency compatibility; create a schema v5 review before posting', { correctable: true });
     const preflightMarker = markerTag(payload, '0'.repeat(64));
     if (`${preflightMarker}\n${payload.summary}`.length > MAX_BODY_LENGTH)
         return postError(`composed review body exceeds ${MAX_BODY_LENGTH} characters`, { correctable: true });
-    const key = targetKey(payload.target);
+    const key = postKey(payload);
     try {
         return await withPostLock(key, () => postReviewLocked(payload, spawn, key));
     }

@@ -12,6 +12,7 @@ FIXTURE_PHYS=$(CDPATH= cd -- "$FIXTURE" && pwd -P)
 cp "$ROOT/install.sh" "$FIXTURE/install.sh"
 
 mkdir -p "$FIXTURE/agents"
+mkdir -p "$FIXTURE/commands"
 mkdir -p "$FIXTURE/plugins"
 mkdir -p "$FIXTURE/skills"
 mkdir -p "$FIXTURE/tools/naru-lib"
@@ -26,6 +27,7 @@ cp "$ROOT/agents/naru-orchestrator.md" "$FIXTURE/agents/naru-orchestrator.md"
 cp "$ROOT/agents/naru-reader.md" "$FIXTURE/agents/naru-reader.md"
 cp "$ROOT/agents/naru-runner.md" "$FIXTURE/agents/naru-runner.md"
 cp "$ROOT/agents/naru-writer.md" "$FIXTURE/agents/naru-writer.md"
+cp "$ROOT/commands/naru.md" "$FIXTURE/commands/naru.md"
 
 # Tools
 touch "$FIXTURE/tools/naru-git-read.js"
@@ -72,6 +74,7 @@ has_native_inventory() {
   install_root="$1"
   [ "$(find "$install_root/skills" \( -type f -o -type l \) -name SKILL.md | wc -l | tr -d ' ')" -eq 4 ] || return 1
   [ "$(find "$install_root/agents" \( -type f -o -type l \) -name 'naru-*.md' | wc -l | tr -d ' ')" -eq 4 ] || return 1
+  [ -f "$install_root/commands/naru.md" ] || return 1
   [ ! -e "$install_root/commands/naru-plan.md" ]
 }
 
@@ -128,14 +131,16 @@ mkdir -p "$T1"
 apply_install --dir "$T1"
 if is_link "$T1/skills/naru-plan/SKILL.md"; then pass "symlinked skill"; else fail "symlinked skill"; fi
 if is_link "$T1/agents/naru-orchestrator.md"; then pass "symlinked orchestrator"; else fail "symlinked orchestrator"; fi
-if has_native_inventory "$T1"; then pass "four skills and four agents installed"; else fail "four skills and four agents installed"; fi
+if is_link "$T1/commands/naru.md" && grep -q 'agent: naru-orchestrator' "$T1/commands/naru.md" && grep -q 'subtask: false' "$T1/commands/naru.md" && grep -q '\$ARGUMENTS' "$T1/commands/naru.md"; then pass "native command forwards arguments to the orchestrator"; else fail "native command forwards arguments to the orchestrator"; fi
+if grep -q -- '--dry-run' "$T1/commands/naru.md" && grep -q -- '--comment-only' "$T1/commands/naru.md" && grep -q -- '--standard' "$T1/commands/naru.md" && grep -q 'independently' "$T1/commands/naru.md"; then pass "ship-review command documents batch and override semantics"; else fail "ship-review command documents batch and override semantics"; fi
+if has_native_inventory "$T1"; then pass "native skills, agents, and command installed"; else fail "native skills, agents, and command installed"; fi
 if is_file "$T1/tools/naru-git-read.js" && is_file "$T1/tools/naru-doctor.js" && is_file "$T1/tools/package.json"; then pass "tools and doctor copy-pinned with ESM marker"; else fail "tools and doctor copy-pinned with ESM marker"; fi
 if is_dir "$T1/tools/naru-lib"; then pass "tool helper dir copy-pinned"; else fail "tool helper dir copy-pinned"; fi
 if is_file "$T1/tools/naru-worktree.js"; then pass "worktree runtime copy-pinned"; else fail "worktree runtime copy-pinned"; fi
 if is_file "$T1/naru-runtime.example.json"; then pass "runtime example copy-pinned"; else fail "runtime example copy-pinned"; fi
 if [ "$(grep -c '^  naru-worktree: allow$' "$T1/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$T1/agents/naru-writer.md"; then pass "global root and delegated runtime permissions"; else fail "global root and delegated runtime permissions"; fi
 if is_file "$T1/plugins/naru-dispatch.js" && [ "$(ls "$T1/plugins" | wc -l | tr -d " ")" = "1" ]; then pass "dispatch is the only plugin installed"; else fail "dispatch is the only plugin installed"; fi
-if [ ! -e "$T1/commands/naru" ] && [ ! -e "$T1/agents/naru" ] && [ ! -e "$T1/commands/naru-plan.md" ]; then pass "no retired Core paths installed"; else fail "no retired Core paths installed"; fi
+if [ -f "$T1/commands/naru.md" ] && [ ! -e "$T1/commands/naru-review.md" ] && [ ! -e "$T1/agents/naru" ] && [ ! -e "$T1/commands/naru-plan.md" ]; then pass "single convenience command installed and retired commands absent"; else fail "single convenience command installed and retired commands absent"; fi
 
 # 2. Copy mode.
 T2="$TMP/t2"

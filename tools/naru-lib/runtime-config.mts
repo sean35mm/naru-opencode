@@ -6,6 +6,9 @@ import { open } from 'node:fs/promises';
 import { basename } from 'node:path';
 const MAX_CONFIG_BYTES = 64 * 1024;
 const WORKSPACE_MODES = Object.freeze(['auto', 'shared', 'worktree'] as const);
+const REVIEW_PROFILES = Object.freeze(['standard', 'release-critical'] as const);
+const REVIEW_DECISIONS = Object.freeze(['automatic', 'comment-only'] as const);
+const REVIEW_OUTPUTS = Object.freeze(['concise', 'detailed'] as const);
 const MAX_CONCURRENT_WRITERS = 50;
 type UnknownRecord = Record<string, unknown>;
 
@@ -15,10 +18,16 @@ export interface RuntimeImplementationConfig {
     maxConcurrentWriters: number;
     cleanWorkspaceRequired: true;
 }
+export interface RuntimeReviewConfig {
+    defaultProfile: typeof REVIEW_PROFILES[number];
+    defaultDecision: typeof REVIEW_DECISIONS[number];
+    defaultOutput: typeof REVIEW_OUTPUTS[number];
+}
 
 export interface RuntimeConfig {
     schemaVersion: 1;
     implementation: RuntimeImplementationConfig;
+    review: RuntimeReviewConfig;
     models?: UnknownRecord;
 }
 
@@ -28,6 +37,11 @@ export const DEFAULT_RUNTIME_CONFIG = Object.freeze({
         workspaceMode: 'auto',
         maxConcurrentWriters: MAX_CONCURRENT_WRITERS,
         cleanWorkspaceRequired: true,
+    }),
+    review: Object.freeze({
+        defaultProfile: 'standard',
+        defaultDecision: 'comment-only',
+        defaultOutput: 'detailed',
     }),
 }) satisfies Readonly<RuntimeConfig>;
 function isPlainObject(value: unknown): value is UnknownRecord {
@@ -62,10 +76,10 @@ function enumOption<T extends string>(value: unknown, fallback: T, allowed: read
 }
 export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
     if (value === undefined || value === null) {
-        return { schemaVersion: 1, implementation: { ...DEFAULT_RUNTIME_CONFIG.implementation } };
+        return { schemaVersion: 1, implementation: { ...DEFAULT_RUNTIME_CONFIG.implementation }, review: { ...DEFAULT_RUNTIME_CONFIG.review } };
     }
     assertObject(value, 'naru runtime config');
-    assertAllowedKeys(value, ['implementation', 'models', 'schemaVersion'], 'naru runtime config');
+    assertAllowedKeys(value, ['implementation', 'models', 'review', 'schemaVersion'], 'naru runtime config');
     if (value.schemaVersion !== undefined && value.schemaVersion !== 1) {
         throw new Error('naru runtime config schemaVersion must be 1');
     }
@@ -81,6 +95,9 @@ export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
     if (value.models !== undefined && !isPlainObject(value.models)) {
         throw new Error('models must be a plain object of model classes');
     }
+    const review = value.review ?? {};
+    assertObject(review, 'review config');
+    assertAllowedKeys(review, Object.keys(DEFAULT_RUNTIME_CONFIG.review), 'review config');
     return {
         schemaVersion: 1,
         ...(value.models !== undefined ? { models: value.models } : {}),
@@ -88,6 +105,11 @@ export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
             workspaceMode: enumOption(implementation.workspaceMode, DEFAULT_RUNTIME_CONFIG.implementation.workspaceMode, WORKSPACE_MODES, 'implementation.workspaceMode'),
             maxConcurrentWriters: integerOption(implementation.maxConcurrentWriters, DEFAULT_RUNTIME_CONFIG.implementation.maxConcurrentWriters, 'implementation.maxConcurrentWriters', { minimum: 1, maximum: MAX_CONCURRENT_WRITERS }),
             cleanWorkspaceRequired: true,
+        },
+        review: {
+            defaultProfile: enumOption(review.defaultProfile, DEFAULT_RUNTIME_CONFIG.review.defaultProfile, REVIEW_PROFILES, 'review.defaultProfile'),
+            defaultDecision: enumOption(review.defaultDecision, DEFAULT_RUNTIME_CONFIG.review.defaultDecision, REVIEW_DECISIONS, 'review.defaultDecision'),
+            defaultOutput: enumOption(review.defaultOutput, DEFAULT_RUNTIME_CONFIG.review.defaultOutput, REVIEW_OUTPUTS, 'review.defaultOutput'),
         },
     };
 }

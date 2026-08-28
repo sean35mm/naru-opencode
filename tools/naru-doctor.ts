@@ -25,7 +25,7 @@ export interface DoctorOptions {
 interface DoctorIssue { code: string; scope: string; detail: string }
 interface ScopeCandidate { id: string; loadState: string; target: string }
 interface OpenCodeConfigState { status: 'absent' | 'invalid' | 'valid'; file: string | null; depth: number | null }
-interface RuntimeState { status: 'default' | 'custom-valid' | 'invalid'; workspaceMode: string | null; modelClasses?: string[] | null; modelsError?: string | null }
+interface RuntimeState { status: 'default' | 'custom-valid' | 'invalid'; workspaceMode: string | null; reviewProfile: string | null; reviewDecision: string | null; reviewOutput: string | null; modelClasses?: string[] | null; modelsError?: string | null }
 interface ScopeAssets {
     total: number;
     installed: Record<string, number>;
@@ -346,7 +346,7 @@ function countBy<T, K extends keyof T>(values: readonly T[], field: K): Record<s
 async function runtimeState(target: string): Promise<RuntimeState> {
     const file = path.join(target, 'naru-runtime.json');
     if (await statOrNull(file) === null) {
-        return { status: 'default', workspaceMode: 'auto' };
+        return { status: 'default', workspaceMode: 'auto', reviewProfile: 'standard', reviewDecision: 'comment-only', reviewOutput: 'detailed' };
     }
     try {
         const value = await loadRuntimeConfigFile(file);
@@ -365,12 +365,15 @@ async function runtimeState(target: string): Promise<RuntimeState> {
         return {
             status: 'custom-valid',
             workspaceMode: value.implementation.workspaceMode,
+            reviewProfile: value.review.defaultProfile,
+            reviewDecision: value.review.defaultDecision,
+            reviewOutput: value.review.defaultOutput,
             modelClasses,
             modelsError,
         };
     }
     catch {
-        return { status: 'invalid', workspaceMode: null, modelClasses: null, modelsError: null };
+        return { status: 'invalid', workspaceMode: null, reviewProfile: null, reviewDecision: null, reviewOutput: null, modelClasses: null, modelsError: null };
     }
 }
 async function inspectScope(candidate: ScopeCandidate, options: DoctorOptions, issues: DoctorIssue[]): Promise<ScopeReport> {
@@ -564,7 +567,7 @@ function renderPlain(report: DoctorReport): string {
         if (scope.assets !== null) {
             lines.push(`  assets: ${scope.assets.installed.healthy ?? 0}/${scope.assets.total} healthy; source comparison ${scope.assets.sourceCompared ? 'available' : 'unavailable'}`);
         }
-        lines.push(`  runtime: ${scope.runtime.status}; workspace mode: ${scope.runtime.workspaceMode ?? 'unknown'}; model classes: ${scope.runtime.modelsError ? 'INVALID' : (scope.runtime.modelClasses ? scope.runtime.modelClasses.join(', ') : 'none')}`);
+        lines.push(`  runtime: ${scope.runtime.status}; workspace mode: ${scope.runtime.workspaceMode ?? 'unknown'}; review: ${scope.runtime.reviewProfile ?? 'unknown'}/${scope.runtime.reviewDecision ?? 'unknown'}/${scope.runtime.reviewOutput ?? 'unknown'}; model classes: ${scope.runtime.modelsError ? 'INVALID' : (scope.runtime.modelClasses ? scope.runtime.modelClasses.join(', ') : 'none')}`);
         if (scope.issuePaths.length > 0)
             lines.push(`  issue paths: ${scope.issuePaths.join(', ')}`);
     }

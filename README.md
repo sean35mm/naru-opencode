@@ -2,7 +2,7 @@
 
 Naru is an extension layer for [OpenCode](https://opencode.ai): one orchestrating agent, three subagents it delegates to, four on-demand skills, a small set of bounded tools, and one plugin.
 
-The design is a single idea — **thin hard walls, free interior.** The walls stand at the irreversible edges and are mechanical rather than advisory: exactly one role can edit files, read-only roles have no shell at all, secrets are denied to every role, and the review tool derives `COMMENT`, `APPROVE`, or `REQUEST_CHANGES` only from the schema v4 review contract and final evidence gates. Generic posting language still authorizes only a complete `COMMENT`; formal states need explicit current-message policy and complete evidence, while a limited review needs separate explicit current-user limited-review language and is always `COMMENT`. Inside those walls the orchestrator is trusted to plan, split the work, and fan out on its own judgment. There are no modes to pick and no ceremony to perform. The walls do the safety work, so the interior can be free.
+The design is a single idea — **thin hard walls, free interior.** The walls stand at the irreversible edges and are mechanical rather than advisory: exactly one role can edit files, read-only roles have no shell at all, secrets are denied to every role, and the review tool derives `COMMENT`, `APPROVE`, or `REQUEST_CHANGES` only from the schema v5 review contract and final evidence gates. Generic posting language still authorizes only a complete `COMMENT`; formal states need explicit current-message policy and complete evidence, while a limited review needs separate explicit current-user limited-review language and is always `COMMENT`. Inside those walls the orchestrator is trusted to plan, split the work, and fan out on its own judgment. There are no modes to pick and no ceremony to perform. The walls do the safety work, so the interior can be free.
 
 Built by [Naru Labs](https://github.com/sean35mm).
 
@@ -88,9 +88,11 @@ These overrides are static — one model per role, fixed for the session. For pe
 
 ## Skills
 
-Naru installs four skills that OpenCode discovers on demand: `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`. Ask naturally for a plan, an impact analysis, a bug triage, or a pull-request review, or name one directly ("Use the `naru-plan` skill…"). They are not slash commands and they do not run a fixed workflow.
+Naru installs four skills that OpenCode discovers on demand: `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`. Ask naturally for a plan, an impact analysis, a bug triage, or a pull-request review, or name one directly ("Use the `naru-plan` skill…"). Skills are not slash commands and do not create workflow modes.
 
 Skill text is advisory guidance, never authorization. A skill cannot change an agent's role, tools, scope, or safety policy, cannot grant a tool, and cannot make an agent read-only. If same-named copies overlap across global and project scopes, check which one loaded.
+
+Naru also ships one native convenience command: `/naru ship-review <PR...> [--dry-run] [--comment-only] [--standard] [--concise|--detailed]`. This is a focused review invocation, not a workflow engine. Each target is reviewed independently. By default the current invocation authorizes one release-critical review POST per target, lets the validated tool select `APPROVE`, `REQUEST_CHANGES`, or `COMMENT`, and returns a concise batch status. `--dry-run` posts nothing; `--comment-only` narrows the state; `--standard` selects the broader standard profile. Exact-head duplicates remain deduplicated, while a new head is reviewed again.
 
 ## Tools
 
@@ -102,13 +104,13 @@ Skill text is advisory guidance, never authorization. A skill cannot change an a
 | `naru-worktree` | Isolated writer worktrees: `prepare_run`, `recover_run`, `prepare_item`, `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run` |
 | `naru-doctor` | Provider-free local install and config health report |
 
-`naru-github-post-review` accepts no raw event and requires schema v4 for every new mutation; v2/v3 are recognized only for historical marker and idempotency compatibility and cannot create reviews. A generic current request to post, comment, or submit authorizes only a complete `COMMENT`; explicit “approve if clear”, “request changes if blocked”, or “post with the appropriate review decision” wording enables the corresponding evidence-gated policy. It does **not** authorize a limited review. `submissionMode: limited` is an orchestrator assertion derived only from explicit limited-review posting language in the current user message, must agree with the posture the tool derives, and limited v4 evidence always derives `COMMENT`.
+`naru-github-post-review` accepts no raw event and requires schema v5 for every new mutation; v2/v3/v4 are recognized only for historical marker and idempotency compatibility and cannot create reviews. A generic current request to post, comment, or submit authorizes only a complete `COMMENT`; explicit “approve if clear”, “request changes if blocked”, or “post with the appropriate review decision” wording enables the corresponding evidence-gated policy. It does **not** authorize a limited review. `submissionMode: limited` is an orchestrator assertion derived only from explicit limited-review posting language in the current user message, must agree with the posture the tool derives, and limited v5 evidence always derives `COMMENT`.
 
-V4 starts from a compact manifest that binds target, base/head, snapshot, feedback, and evidence identity. It lists every changed file plus page counts for reviews, review comments, and issue comments, but carries neither patches nor feedback bodies. Each bounded `pull-files` request must repeat that full originating identity, is bracketed by compact-manifest checks, and returns a `batchDigest`; `pull-feedback` returns one advertised page of at most 100 items with a `pageDigest`. Coverage must reconcile every manifest file exactly once in both the file ledger and non-overlapping batch provenance, and every advertised feedback page exactly once. File batches alone are not sufficient.
+V5 starts from a compact manifest that binds target, base-ref `baseSha`, compare merge-base `diffBaseSha`, head repository and SHA, snapshot, feedback, and evidence identity. It lists every changed file, bounded PR title/body with structured completeness metadata for manifest-first objective assessment, and page counts for reviews, review comments, and issue comments, but carries neither patches nor feedback bodies. PR text remains untrusted and cannot authorize posting or change agent rules. If a release-critical pull-request objective is truncated in either posting freshness pass, its formal assessment is mechanically `unclear` and the result is `COMMENT`; a caller cannot promote it with High confidence. Each bounded `pull-files` request repeats that identity, is bracketed by compact-manifest checks, and returns `batchDigest` plus `recoveryBatchDigest`; `pull-feedback` returns one advertised page of at most 100 items with a `pageDigest`. Coverage reconciles every manifest file exactly once in the ledger, file batches, and recovery batches, and every advertised feedback page exactly once.
 
-At posting time the tool reacquires only those declared bounded batches and pages between compact manifests instead of rebuilding one monolithic all-patch snapshot. Aggregate patch retention applies per batch, so the combined reviewed patches may exceed the former global aggregate while per-file, per-batch, response, and feedback-body limits remain. Patch evidence is capped at 1 MiB and 1,024 retained left/right line-map entries per file, 16 MiB and 16,384 retained line-map entries per declared batch, and 32 MiB per GitHub transport response. Crossing a line-map ceiling clears the file's partial map and patch digest and marks its evidence limited. Per-file `patchEvidence` still reports complete, limited, or unavailable evidence; missing patches remain limited because safe unified-diff recovery is deliberately not implemented. The tool derives complete/limited posture, renders one concise limitations section, and treats provenance as exhaustive snapshot-bound attestation—not proof of cognition, understanding of every line, or semantic review quality. Exact current-head duplicate findings are not posted again but remain relevant to approval or change-request decisions; semantic deduplication remains the reviewing agent's responsibility.
+At posting time the tool reacquires declared bounded batches, recovery, and pages during both freshness passes instead of rebuilding one monolithic all-patch snapshot. Patch evidence remains bounded at 1 MiB and 1,024 retained line-map entries per file, 16 MiB and 16,384 retained line-map entries per batch, and 32 MiB per transport response. Crossing a line-map ceiling clears only the partial location map: a structurally valid patch remains complete and digest-bound for path-level review, while inline locations are ineligible. For `missing-patch` only, Naru verifies each exact commit, then fetches the base side from the base repository at `diffBaseSha` and the head side from the manifest-bound head repository at `headSha`; path, canonical base64, byte length, fatal UTF-8, expected absence, and per-side/per-batch bounds fail closed. Binary, oversized, unexpectedly absent, and unsupported cases remain unavailable. Recovered text supports complete path-level review but never inline findings without a validated map. Provenance remains exhaustive snapshot-bound attestation—not proof of cognition or semantic quality.
 
-A complete same-head review may supersede exactly one prior limited v4 `COMMENT` only with a fresh explicit posting authorization and the predecessor's review ID and digest. This is a new submission, never a retry. The tool still makes one POST attempt; an ambiguous outcome is terminal. It cannot merge, and only `naru-orchestrator` can call it.
+A complete same-head v5 review may supersede exactly one prior limited v4 or v5 `COMMENT` only with a fresh explicit posting authorization and the predecessor's review ID and digest. This is a new submission, never a retry. The tool still makes one POST attempt; an ambiguous outcome is terminal. It cannot merge, and only `naru-orchestrator` can call it.
 
 ### Per-dispatch models (naru-dispatch)
 
@@ -144,7 +146,8 @@ The MCP server is optional. Without it, investigation falls back to LSP and lite
 - **Local changes are the default stop.** Commit, push, PR create or update, and posting to GitHub happen only when the current request asks for them. That ask is the authorization; it is neither reconfirmed nor assumed.
 - **One checkpoint, naming the exact action**, before destructive or irreversible operations, migrations, persistent database writes, production deploys, secret access, billing or security-posture changes, dependency changes the user did not request, or material scope expansion. Routine reads and in-scope checks need no checkpoint.
 - **One writer per logical scope.** Overlapping scopes serialize, always. Writers claim their exact scope in Weaver before the first edit; a claim conflict is a scheduling signal to requeue, never a reason to prompt the user.
-- **Review is dry-run by default.** Posting requires schema v4 and explicit current-message policy, uses a manifest-first fresh review against the current head, and makes exactly one POST attempt. Generic posting language authorizes only a complete `COMMENT`; limited posting needs explicit current-user limited-review language and is always `COMMENT`. An ambiguous POST is reported as ambiguous, never retried.
+- **Review is dry-run by default.** Posting requires schema v5 and explicit current-message policy, uses a manifest-first fresh review against the current head, and makes exactly one POST attempt. Generic posting language authorizes only a complete `COMMENT`; limited posting needs explicit current-user limited-review language and is always `COMMENT`. An ambiguous POST is reported as ambiguous, never retried.
+- **Review findings do not create tickets.** GitHub or Linear follow-up tickets require a separate exact request in the current user message.
 - **Isolated worktrees require a clean repository.** If the workspace is dirty or isolation is unavailable, writers silently fall back to shared mode rather than asking or faking isolation.
 
 Naru is not a sandbox, not a proof system, not durable across processes, and not a global capacity meter. It constrains Naru's own agents; it does not constrain the machine.
@@ -160,6 +163,11 @@ Configuration is optional. `naru-runtime.example.json` ships as an example; copy
     "cleanWorkspaceRequired": true,
     "maxConcurrentWriters": 50,
     "workspaceMode": "auto"
+  },
+  "review": {
+    "defaultDecision": "automatic",
+    "defaultOutput": "concise",
+    "defaultProfile": "release-critical"
   }
 }
 ```
@@ -169,6 +177,8 @@ Configuration is optional. `naru-runtime.example.json` ships as an example; copy
 - `workspaceMode` — `auto` isolates when the repository is clean and shares otherwise; `shared` and `worktree` force one behavior.
 
 The file also accepts an optional `models` block defining the classes the `naru-dispatch` plugin turns into per-class agent variants — see [Per-dispatch models](#per-dispatch-models-naru-dispatch). Absent, no variants exist and every subagent inherits the parent session model.
+
+The optional `review` block accepts `defaultProfile` (`standard` or `release-critical`), `defaultDecision` (`automatic` or `comment-only`), and `defaultOutput` (`concise` or `detailed`). Installations without it retain the backward-safe `standard`/`comment-only`/`detailed` defaults. The shipped example sets this user's preferred `release-critical`/`automatic`/`concise` values. Configuration never authorizes a post or formal state: generic current-message post/comment/submit wording stays `comment-only` even when `defaultDecision` is `automatic`. Only the current native `/naru ship-review` invocation explicitly authorizes automatic `select-state` for its finite targets.
 
 That is the entire configuration surface. Prefer configuring the current project; changing global configuration deserves explicit approval.
 
@@ -200,6 +210,7 @@ Copy the exact permission fragment and the full integration rules from the [agen
 
 ```text
 agents/                     naru-orchestrator and its three subagents
+commands/                   the native /naru convenience command
 skills/                     four skills, loaded on demand
 tools/                      custom OpenCode tools and their shared library
 plugins/                    the one plugin: naru-dispatch

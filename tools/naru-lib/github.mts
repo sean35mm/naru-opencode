@@ -6,6 +6,8 @@ import { isSafeOwner, isSafeRepo, isPositiveInteger, is40HexSha, isSafeRelativeP
 const MAX_GH_BYTES = 32 * 1024 * 1024;
 const MAX_CHANGED_FILES = 3000;
 const MAX_BODY_LENGTH = 64 * 1024;
+const MAX_MANIFEST_TITLE_LENGTH = 512;
+const MAX_MANIFEST_BODY_LENGTH = 16 * 1024;
 const MAX_ITEMS = 1000;
 const MAX_REVIEWABILITY_LIMITATIONS = 100;
 const MAX_PATCH_BYTES_PER_FILE = 1024 * 1024;
@@ -13,6 +15,8 @@ const MAX_TOTAL_PATCH_BYTES = 16 * 1024 * 1024;
 const MAX_LINE_MAP_ENTRIES_PER_FILE = 1024;
 const MAX_LINE_MAP_ENTRIES_PER_BATCH = 16 * 1024;
 const MAX_SOURCE_BYTES = 1024 * 1024;
+const MAX_RECOVERY_BYTES_PER_SIDE = 1024 * 1024;
+const MAX_RECOVERY_BYTES_PER_BATCH = 16 * 1024 * 1024;
 const MAX_PULL_FILE_BATCH = 100;
 const FEEDBACK_PAGE_SIZE = 100;
 const EVIDENCE_FILE_PAGE_SIZE = 16;
@@ -23,6 +27,9 @@ export type PullFileStatus = 'added' | 'removed' | 'modified' | 'renamed' | 'cop
 export interface PullTarget { owner: string; repo: string; number: number }
 export interface PullIdentity extends PullTarget {
     baseSha: string;
+    diffBaseSha: string;
+    headOwner: string;
+    headRepo: string;
     headSha: string;
     snapshotId: string;
     feedbackDigest: string;
@@ -63,6 +70,12 @@ export interface PatchEvidence {
     status: 'complete' | 'limited' | 'unavailable'; reason: PatchEvidenceReason;
     retention: 'full' | 'none'; validation: { structural: boolean; metadata: boolean };
 }
+export type RecoveryEvidenceReason = 'complete' | 'binary-or-invalid-utf8' | 'unexpected-absence' | 'per-side-byte-limit' | 'batch-byte-limit' | 'unsupported-status';
+export interface RecoveryEvidence {
+    status: 'complete' | 'unavailable'; reason: RecoveryEvidenceReason; contentDigest?: string | undefined;
+    base: { path: string | null; bytes: number; digest: string | null; absent: boolean };
+    head: { path: string | null; bytes: number; digest: string | null; absent: boolean };
+}
 interface PatchAssessment {
     available: boolean; patchBytes: number; patch?: string | undefined; bytesUsed: number;
     map: MutableLineMap; complete: boolean; visitedPatchLines?: number; evidence: PatchEvidence;
@@ -72,7 +85,8 @@ export interface FileEvidenceSummary {
     additions?: number | undefined; deletions?: number | undefined; changes?: number | undefined; patchAvailable: boolean;
     patchTruncated: boolean; patchRedacted: boolean; patchBytes: number; lineMap: LineMap;
     patch?: string | undefined; patchEvidence: PatchEvidence; bytesUsed: number;
-    recoveryEvidence?: { status?: string };
+    recoveryEvidence?: RecoveryEvidence;
+    recoveredContent?: { base: string | null; head: string | null };
     [SUMMARY_PATCH_HASH]?: string | null;
     [SUMMARY_PATCH_VISITED_LINES]?: number;
     [SUMMARY_LINE_MAP_ENTRIES]?: number;
@@ -109,7 +123,7 @@ export interface PullSnapshot extends PullIdentity {
 }
 export interface PullManifest extends PullIdentity {
     changedFiles?: number | undefined; fetchedFiles: number; files: ManifestFile[]; reviewability: Reviewability;
-    pull: { state?: string | undefined; draft?: boolean | undefined; author?: string | undefined; contentDigest: string };
+    pull: { title: string; body: string; objectiveText: ObjectiveTextCompleteness; state?: string | undefined; draft?: boolean | undefined; author?: string | undefined; contentDigest: string };
     feedback: Record<FeedbackKind, { items: number; pages: number }>;
     warnings: string[]; inventoryComplete?: boolean;
     [key: string]: unknown;
@@ -118,12 +132,13 @@ interface CompactAcquisition extends PullIdentity {
     changedFiles?: number | undefined; fetchedFiles: number; files: NormalizedPullFile[];
     inventoryComplete: boolean; feedbackComplete: boolean; pathsSafe: boolean;
     feedback: Record<FeedbackKind, NormalizedFeedback[]>;
-    pull: { state?: string | undefined; draft?: boolean | undefined; author?: string | undefined; contentDigest: string };
+    pull: { title: string; body: string; objectiveText: ObjectiveTextCompleteness; state?: string | undefined; draft?: boolean | undefined; author?: string | undefined; contentDigest: string };
     warnings: string[];
 }
-export interface FileEvidenceBatch { paths: string[]; batchDigest: string; files: FileEvidenceSummary[] }
+export interface ObjectiveTextCompleteness { titleTruncated: boolean; bodyTruncated: boolean; complete: boolean }
+export interface FileEvidenceBatch { paths: string[]; batchDigest: string; recoveryBatchDigest: string; files: FileEvidenceSummary[] }
 export interface FileBatchDeclaration { paths: string[]; batchDigest?: string }
-export interface ExactHeadFileBatch extends PullIdentity { batchDigest: string; files: FileEvidenceSummary[] }
+export interface ExactHeadFileBatch extends PullIdentity { batchDigest: string; recoveryBatchDigest: string; files: FileEvidenceSummary[] }
 export interface FeedbackPage extends PullIdentity { kind: FeedbackKind; page: number; pages: number; items: NormalizedCommentItem[]; pageDigest: string }
 export interface GitHubOptions { spawn?: Spawn | undefined }
 interface EvidenceOptions extends GitHubOptions { retainPatches?: boolean; onEvidencePage?: ((metrics: EvidencePageMetrics) => void | Promise<void>) | undefined }
@@ -282,6 +297,9 @@ function identityFields(value: PullIdentity): PullIdentity {
         repo: value.repo,
         number: value.number,
         baseSha: value.baseSha,
+        diffBaseSha: value.diffBaseSha,
+        headOwner: value.headOwner,
+        headRepo: value.headRepo,
         headSha: value.headSha,
         snapshotId: value.snapshotId,
         feedbackDigest: value.feedbackDigest,
@@ -292,22 +310,26 @@ function assertManifestIdentity(expected: PullIdentity, actual: PullIdentity, la
     const a = identityFields(expected);
     const b = identityFields(actual);
     if (a.owner.toLowerCase() !== b.owner.toLowerCase() || a.repo.toLowerCase() !== b.repo.toLowerCase()
-        || a.number !== b.number || a.baseSha !== b.baseSha || a.headSha !== b.headSha
+        || a.headOwner.toLowerCase() !== b.headOwner.toLowerCase() || a.headRepo.toLowerCase() !== b.headRepo.toLowerCase()
+        || a.number !== b.number || a.baseSha !== b.baseSha || a.diffBaseSha !== b.diffBaseSha || a.headSha !== b.headSha
         || a.snapshotId !== b.snapshotId || a.feedbackDigest !== b.feedbackDigest
         || a.evidenceDigest !== b.evidenceDigest)
         throw new Error(`${label} identity mismatch`);
 }
-export function snapshotId(owner: string, repo: string, number: number, headSha: string, baseSha = '', files: readonly NormalizedPullFile[] = []): string {
+export function snapshotId(owner: string, repo: string, number: number, headSha: string, baseSha = '', files: readonly NormalizedPullFile[] = [], diffBaseSha = baseSha, headOwner?: string, headRepo?: string): string {
     return `naru-snap-${hashString(JSON.stringify({
         owner,
         repo,
         number,
         headSha,
         baseSha,
+        diffBaseSha,
+        ...(headOwner === undefined ? {} : { headOwner }),
+        ...(headRepo === undefined ? {} : { headRepo }),
         files: fileDigest(files),
     }))}`;
 }
-export function digestSnapshot(meta: NormalizedPullMetadata, files: readonly NormalizedPullFile[], reviews: readonly NormalizedFeedback[], reviewComments: readonly NormalizedFeedback[], issueComments: readonly NormalizedFeedback[]): string {
+export function digestSnapshot(meta: NormalizedPullMetadata, files: readonly NormalizedPullFile[], reviews: readonly NormalizedFeedback[], reviewComments: readonly NormalizedFeedback[], issueComments: readonly NormalizedFeedback[], diffBaseSha = meta.base?.sha || '', headOwner?: string, headRepo?: string): string {
     const normalize = (items: readonly NormalizedFeedback[]) => items.map(item => ({
         id: item.id,
         state: item.state,
@@ -320,6 +342,9 @@ export function digestSnapshot(meta: NormalizedPullMetadata, files: readonly Nor
     return hashString(JSON.stringify({
         headSha: meta.head?.sha || '',
         baseSha: meta.base?.sha || '',
+        diffBaseSha,
+        ...(headOwner === undefined ? {} : { headOwner }),
+        ...(headRepo === undefined ? {} : { headRepo }),
         pullTitle: hashString(typeof meta.title === 'string' ? meta.title : ''),
         pullBody: hashString(typeof meta.body === 'string' ? meta.body : ''),
         pullUpdatedAt: meta.updated_at ?? meta.updatedAt,
@@ -329,10 +354,13 @@ export function digestSnapshot(meta: NormalizedPullMetadata, files: readonly Nor
         issueComments: normalize(issueComments),
     }));
 }
-export function digestEvidence(headSha: string, baseSha: string, files: readonly (NormalizedPullFile | FileEvidenceSummary)[]): string {
+export function digestEvidence(headSha: string, baseSha: string, files: readonly (NormalizedPullFile | FileEvidenceSummary)[], diffBaseSha = baseSha, headOwner?: string, headRepo?: string): string {
     return hashString(JSON.stringify({
         headSha,
         baseSha,
+        diffBaseSha,
+        ...(headOwner === undefined ? {} : { headOwner }),
+        ...(headRepo === undefined ? {} : { headRepo }),
         files: files.map(file => ({
             path: file.filename,
             previousPath: normalizedPreviousPath(file),
@@ -350,6 +378,11 @@ function boundText(value: unknown, max: number): string {
     if (value.length <= max)
         return value;
     return value.slice(0, max) + '\n…[truncated]';
+}
+function boundManifestText(value: unknown, max: number): string {
+    if (typeof value !== 'string') return '';
+    const suffix = '\n…[truncated]';
+    return value.length <= max ? value : value.slice(0, max - suffix.length) + suffix;
 }
 function boundItems<T>(arr: T[], max: number, warnings: string[]): T[] {
     if (arr.length <= max)
@@ -551,6 +584,26 @@ export async function fetchIssue({ owner, repo, number }: PullTarget, { spawn }:
 export async function fetchPull({ owner, repo, number }: PullTarget, { spawn }: GitHubOptions = {}): Promise<NormalizedPullMetadata> {
     return normalizePullMetadata(await ghApi(`repos/${owner}/${repo}/pulls/${number}`, { spawn }));
 }
+async function fetchDiffBaseSha(owner: string, repo: string, baseSha: string, headSha: string, { spawn }: GitHubOptions = {}): Promise<string> {
+    const comparison = record(await ghApi(`repos/${owner}/${repo}/compare/${baseSha}...${headSha}`, { spawn }), 'compare response');
+    const mergeBase = isRecord(comparison.merge_base_commit) ? stringField(comparison.merge_base_commit.sha) : undefined;
+    const comparedBase = isRecord(comparison.base_commit) ? stringField(comparison.base_commit.sha) : undefined;
+    const comparedHead = isRecord(comparison.head_commit) ? stringField(comparison.head_commit.sha) : undefined;
+    if (!is40HexSha(mergeBase) || comparedBase !== baseSha || comparedHead !== headSha)
+        throw new Error('GitHub compare response is not bound to the requested base/head SHAs');
+    return mergeBase;
+}
+function pullRepositoryIdentities(meta: NormalizedPullMetadata, fallbackOwner: string, fallbackRepo: string): { owner: string; repo: string; headOwner: string; headRepo: string } {
+    const owner = meta.base?.repo?.owner?.login ?? fallbackOwner;
+    const repo = meta.base?.repo?.name ?? fallbackRepo;
+    const headOwner = meta.head?.repo?.owner?.login;
+    const headRepo = meta.head?.repo?.name;
+    if (!isSafeOwner(owner) || !isSafeRepo(repo))
+        throw new Error('PR metadata returned an invalid canonical repository identity');
+    if (!isSafeOwner(headOwner) || !isSafeRepo(headRepo))
+        throw new Error('PR metadata missing valid head repository identity');
+    return { owner, repo, headOwner, headRepo };
+}
 function pullFileMetadataValid(file: NormalizedPullFile): file is NormalizedPullFile & ManifestFileRecord {
     const filenameValid = isSafeRelativePath(file.filename);
     const previousValid = file.previous_filename === undefined || isSafeRelativePath(file.previous_filename);
@@ -611,7 +664,7 @@ function assessPatch(file: NormalizedPullFile, totalBytesUsed: number): PatchAss
             return true;
         if (map.left.size + map.right.size >= MAX_LINE_MAP_ENTRIES_PER_FILE) {
             lineMapLimited = true;
-            return false;
+            return true;
         }
         set.add(line);
         return true;
@@ -646,9 +699,9 @@ function assessPatch(file: NormalizedPullFile, totalBytesUsed: number): PatchAss
             current = { oldStart, oldCount, newStart, newCount, oldConsumed: 0, newConsumed: 0 };
             if (map.hunks.length >= MAX_LINE_MAP_ENTRIES_PER_FILE) {
                 lineMapLimited = true;
-                break;
             }
-            map.hunks.push({ oldStart, oldCount, newStart, newCount });
+            else
+                map.hunks.push({ oldStart, oldCount, newStart, newCount });
             continue;
         }
         if (!current) {
@@ -683,23 +736,6 @@ function assessPatch(file: NormalizedPullFile, totalBytesUsed: number): PatchAss
         if (current.oldConsumed > current.oldCount || current.newConsumed > current.newCount)
             valid = false;
     }
-    if (lineMapLimited) {
-        return {
-            available,
-            patchBytes,
-            patch: undefined,
-            bytesUsed: 0,
-            map: { left: new Set(), right: new Set(), hunks: [] },
-            complete: false,
-            visitedPatchLines,
-            evidence: {
-                status: 'limited',
-                reason: 'per-file-line-map-limit',
-                retention: 'none',
-                validation: { structural: false, metadata: false },
-            },
-        };
-    }
     finishHunk();
     if (map.hunks.length === 0)
         valid = false;
@@ -719,7 +755,7 @@ function assessPatch(file: NormalizedPullFile, totalBytesUsed: number): PatchAss
         patchBytes,
         patch,
         bytesUsed: patchBytes,
-        map: complete ? map : { left: new Set(), right: new Set(), hunks: [] },
+        map: complete && !lineMapLimited ? map : { left: new Set(), right: new Set(), hunks: [] },
         complete,
         visitedPatchLines,
         evidence: {
@@ -789,7 +825,7 @@ export async function pullSnapshot({ owner, repo, number }: PullTarget, { spawn 
     }
     const warnings: string[] = [];
     let changedDuringAcquisition = false;
-    let acquired: { meta: NormalizedPullMetadata; files: NormalizedPullFile[]; reviews: NormalizedFeedback[]; reviewComments: NormalizedFeedback[]; issueComments: NormalizedFeedback[] } | undefined;
+    let acquired: { meta: NormalizedPullMetadata; diffBaseSha: string; files: NormalizedPullFile[]; reviews: NormalizedFeedback[]; reviewComments: NormalizedFeedback[]; issueComments: NormalizedFeedback[] } | undefined;
     for (let attempt = 0; attempt < 2; attempt += 1) {
         const startMeta = await fetchPull({ owner, repo, number }, { spawn });
         const startHead = startMeta.head?.sha;
@@ -797,7 +833,9 @@ export async function pullSnapshot({ owner, repo, number }: PullTarget, { spawn 
         if (!is40HexSha(startHead) || !is40HexSha(startBase)) {
             throw new Error('PR metadata missing valid base/head SHA');
         }
-        const [filesValue, reviewsValue, reviewCommentsValue, issueCommentsValue] = await Promise.all([
+        const startRepositories = pullRepositoryIdentities(startMeta, owner, repo);
+        const [diffBaseSha, filesValue, reviewsValue, reviewCommentsValue, issueCommentsValue] = await Promise.all([
+            fetchDiffBaseSha(owner, repo, startBase, startHead, { spawn }),
             ghApi(`repos/${owner}/${repo}/pulls/${number}/files`, { spawn, paginate: true }),
             ghApi(`repos/${owner}/${repo}/pulls/${number}/reviews`, { spawn, paginate: true }),
             ghApi(`repos/${owner}/${repo}/pulls/${number}/comments`, { spawn, paginate: true }),
@@ -808,9 +846,14 @@ export async function pullSnapshot({ owner, repo, number }: PullTarget, { spawn 
         const reviewComments = normalizeFeedbackArray(reviewCommentsValue, 'review comments response');
         const issueComments = normalizeFeedbackArray(issueCommentsValue, 'issue comments response');
         const endMeta = await fetchPull({ owner, repo, number }, { spawn });
-        const coherent = endMeta.head?.sha === startHead && endMeta.base?.sha === startBase;
+        const endRepositories = pullRepositoryIdentities(endMeta, owner, repo);
+        const coherent = endMeta.head?.sha === startHead && endMeta.base?.sha === startBase
+            && startRepositories.owner.toLowerCase() === endRepositories.owner.toLowerCase()
+            && startRepositories.repo.toLowerCase() === endRepositories.repo.toLowerCase()
+            && startRepositories.headOwner.toLowerCase() === endRepositories.headOwner.toLowerCase()
+            && startRepositories.headRepo.toLowerCase() === endRepositories.headRepo.toLowerCase();
         if (coherent) {
-            acquired = { meta: endMeta, files, reviews, reviewComments, issueComments };
+            acquired = { meta: endMeta, diffBaseSha, files, reviews, reviewComments, issueComments };
             break;
         }
         changedDuringAcquisition = true;
@@ -858,7 +901,7 @@ export async function pullSnapshot({ owner, repo, number }: PullTarget, { spawn 
         warnings.push('one or more secret-like paths were redacted');
     if (fileSummaries.some(file => file.patchTruncated))
         warnings.push('one or more file patches were unavailable or truncated');
-    const feedbackDigest = digestSnapshot(meta, files, acquired.reviews, acquired.reviewComments, acquired.issueComments);
+    const diffBaseSha = acquired.diffBaseSha;
     const pullContentDigest = hashString(JSON.stringify({
         title: hashString(typeof meta.title === 'string' ? meta.title : ''),
         body: hashString(typeof meta.body === 'string' ? meta.body : ''),
@@ -867,11 +910,8 @@ export async function pullSnapshot({ owner, repo, number }: PullTarget, { spawn 
     const baseSha = meta.base?.sha;
     if (!is40HexSha(headSha) || !is40HexSha(baseSha))
         throw new Error('PR metadata missing valid base/head SHA');
-    const canonicalOwner = meta.base?.repo?.owner?.login ?? owner;
-    const canonicalRepo = meta.base?.repo?.name ?? repo;
-    if (!isSafeOwner(canonicalOwner) || !isSafeRepo(canonicalRepo)) {
-        throw new Error('PR metadata returned an invalid canonical repository identity');
-    }
+    const { owner: canonicalOwner, repo: canonicalRepo, headOwner, headRepo } = pullRepositoryIdentities(meta, owner, repo);
+    const feedbackDigest = digestSnapshot(meta, files, acquired.reviews, acquired.reviewComments, acquired.issueComments, diffBaseSha, headOwner, headRepo);
     const allFilesIncluded = fileMetadataComplete
         && totalChangedFiles <= MAX_CHANGED_FILES && fetchedFiles === totalChangedFiles;
     const patchesComplete = !fileSummaries.some(file => file.patchTruncated || file.patchRedacted);
@@ -922,7 +962,7 @@ export async function pullSnapshot({ owner, repo, number }: PullTarget, { spawn 
         unavailable: evidenceSummary.limited,
         reason: evidenceSummary.limited === 0 ? undefined : 'safe-unified-diff-recovery-not-implemented',
     };
-    const evidenceDigest = digestEvidence(headSha, baseSha, fileSummaries);
+    const evidenceDigest = digestEvidence(headSha, baseSha, fileSummaries, diffBaseSha, headOwner, headRepo);
     return {
         owner: canonicalOwner,
         repo: canonicalRepo,
@@ -938,9 +978,12 @@ export async function pullSnapshot({ owner, repo, number }: PullTarget, { spawn 
             headRef: meta.head?.ref,
             contentDigest: pullContentDigest,
         },
-        snapshotId: snapshotId(canonicalOwner, canonicalRepo, number, headSha, baseSha, files),
+        snapshotId: snapshotId(canonicalOwner, canonicalRepo, number, headSha, baseSha, files, diffBaseSha, headOwner, headRepo),
+        headOwner,
+        headRepo,
         headSha,
         baseSha,
+        diffBaseSha,
         headChangedDuringAcquisition: changedDuringAcquisition,
         changedFiles: totalChangedFiles,
         fetchedFiles,
@@ -984,14 +1027,16 @@ function isValidChangedFileCount(value: unknown): value is number {
 async function compactPullAcquisition({ owner, repo, number }: PullTarget, { spawn }: GitHubOptions = {}): Promise<CompactAcquisition> {
     validatePullTarget({ owner, repo, number });
     const warnings: string[] = [];
-    let acquired: { meta: NormalizedPullMetadata; files: NormalizedPullFile[]; reviews: NormalizedFeedback[]; reviewComments: NormalizedFeedback[]; issueComments: NormalizedFeedback[]; inventoryMetadataValid: boolean } | undefined;
+    let acquired: { meta: NormalizedPullMetadata; diffBaseSha: string; files: NormalizedPullFile[]; reviews: NormalizedFeedback[]; reviewComments: NormalizedFeedback[]; issueComments: NormalizedFeedback[]; inventoryMetadataValid: boolean } | undefined;
     for (let attempt = 0; attempt < 2; attempt += 1) {
         const startMeta = await fetchPull({ owner, repo, number }, { spawn });
         const startHead = startMeta.head?.sha;
         const startBase = startMeta.base?.sha;
         if (!is40HexSha(startHead) || !is40HexSha(startBase))
             throw new Error('PR metadata missing valid base/head SHA');
-        const [filesValue, reviewsValue, reviewCommentsValue, issueCommentsValue] = await Promise.all([
+        const startRepositories = pullRepositoryIdentities(startMeta, owner, repo);
+        const [diffBaseSha, filesValue, reviewsValue, reviewCommentsValue, issueCommentsValue] = await Promise.all([
+            fetchDiffBaseSha(owner, repo, startBase, startHead, { spawn }),
             ghApiProjectedPages(`repos/${owner}/${repo}/pulls/${number}/files`, {
                 spawn, jq: COMPACT_FILES_JQ,
                 totalItems: isValidChangedFileCount(startMeta.changed_files) ? startMeta.changed_files : undefined,
@@ -1012,11 +1057,16 @@ async function compactPullAcquisition({ owner, repo, number }: PullTarget, { spa
         const reviewComments = normalizeFeedbackArray(reviewCommentsValue, 'review comments response');
         const issueComments = normalizeFeedbackArray(issueCommentsValue, 'issue comments response');
         const endMeta = await fetchPull({ owner, repo, number }, { spawn });
-        if (endMeta.head?.sha === startHead && endMeta.base?.sha === startBase) {
+        const endRepositories = pullRepositoryIdentities(endMeta, owner, repo);
+        if (endMeta.head?.sha === startHead && endMeta.base?.sha === startBase
+            && startRepositories.owner.toLowerCase() === endRepositories.owner.toLowerCase()
+            && startRepositories.repo.toLowerCase() === endRepositories.repo.toLowerCase()
+            && startRepositories.headOwner.toLowerCase() === endRepositories.headOwner.toLowerCase()
+            && startRepositories.headRepo.toLowerCase() === endRepositories.headRepo.toLowerCase()) {
             const inventoryMetadataValid = isValidChangedFileCount(startMeta.changed_files)
                 && isValidChangedFileCount(endMeta.changed_files)
                 && startMeta.changed_files === endMeta.changed_files;
-            acquired = { meta: endMeta, files, reviews, reviewComments, issueComments, inventoryMetadataValid };
+            acquired = { meta: endMeta, diffBaseSha, files, reviews, reviewComments, issueComments, inventoryMetadataValid };
             break;
         }
         if (attempt === 0)
@@ -1024,15 +1074,12 @@ async function compactPullAcquisition({ owner, repo, number }: PullTarget, { spa
     }
     if (!acquired)
         throw new Error('PR head changed during both compact manifest attempts');
-    const { meta, files, reviews, reviewComments, issueComments, inventoryMetadataValid } = acquired;
+    const { meta, diffBaseSha, files, reviews, reviewComments, issueComments, inventoryMetadataValid } = acquired;
     const headSha = meta.head?.sha;
     const baseSha = meta.base?.sha;
-    const canonicalOwner = meta.base?.repo?.owner?.login ?? owner;
-    const canonicalRepo = meta.base?.repo?.name ?? repo;
+    const { owner: canonicalOwner, repo: canonicalRepo, headOwner, headRepo } = pullRepositoryIdentities(meta, owner, repo);
     if (!is40HexSha(headSha) || !is40HexSha(baseSha))
         throw new Error('PR metadata missing valid base/head SHA');
-    if (!isSafeOwner(canonicalOwner) || !isSafeRepo(canonicalRepo))
-        throw new Error('PR metadata returned an invalid canonical repository identity');
     const totalChangedFiles = inventoryMetadataValid ? meta.changed_files as number : undefined;
     const fileMetadataComplete = files.every(pullFileMetadataValid);
     const inventoryComplete = inventoryMetadataValid && fileMetadataComplete
@@ -1050,15 +1097,22 @@ async function compactPullAcquisition({ owner, repo, number }: PullTarget, { spa
         warnings.push('review feedback inventory is capped');
     if (!pathsSafe)
         warnings.push('one or more changed paths are redacted and cannot be represented safely');
+    const titleTruncated = (meta.title?.length ?? 0) > MAX_MANIFEST_TITLE_LENGTH;
+    const bodyTruncated = (meta.body?.length ?? 0) > MAX_MANIFEST_BODY_LENGTH;
+    if (titleTruncated || bodyTruncated)
+        warnings.push('pull request objective text was bounded in the compact manifest');
     return {
         owner: canonicalOwner,
         repo: canonicalRepo,
         number,
-        snapshotId: snapshotId(canonicalOwner, canonicalRepo, number, headSha, baseSha, files),
+        snapshotId: snapshotId(canonicalOwner, canonicalRepo, number, headSha, baseSha, files, diffBaseSha, headOwner, headRepo),
         baseSha,
+        diffBaseSha,
+        headOwner,
+        headRepo,
         headSha,
-        feedbackDigest: digestSnapshot(meta, files, reviews, reviewComments, issueComments),
-        evidenceDigest: digestEvidence(headSha, baseSha, files),
+        feedbackDigest: digestSnapshot(meta, files, reviews, reviewComments, issueComments, diffBaseSha, headOwner, headRepo),
+        evidenceDigest: digestEvidence(headSha, baseSha, files, diffBaseSha, headOwner, headRepo),
         changedFiles: totalChangedFiles,
         fetchedFiles: files.length,
         files,
@@ -1067,6 +1121,9 @@ async function compactPullAcquisition({ owner, repo, number }: PullTarget, { spa
         pathsSafe,
         feedback: { reviews, 'review-comments': reviewComments, 'issue-comments': issueComments },
         pull: {
+            title: boundManifestText(meta.title, MAX_MANIFEST_TITLE_LENGTH),
+            body: boundManifestText(meta.body, MAX_MANIFEST_BODY_LENGTH),
+            objectiveText: { titleTruncated, bodyTruncated, complete: !titleTruncated && !bodyTruncated },
             state: meta.state,
             draft: meta.draft,
             author: meta.user?.login,
@@ -1084,6 +1141,9 @@ export async function pullManifest(target: PullTarget, { spawn }: GitHubOptions 
         number: compact.number,
         snapshotId: compact.snapshotId,
         baseSha: compact.baseSha,
+        diffBaseSha: compact.diffBaseSha,
+        headOwner: compact.headOwner,
+        headRepo: compact.headRepo,
         headSha: compact.headSha,
         feedbackDigest: compact.feedbackDigest,
         evidenceDigest: compact.evidenceDigest,
@@ -1184,6 +1244,13 @@ function limitedSummary(summary: FileEvidenceSummary, reason: PatchEvidenceReaso
     return limited;
 }
 
+function withoutLineMap(summary: FileEvidenceSummary): FileEvidenceSummary {
+    const bounded = { ...summary, lineMap: { left: [], right: [], hunks: [] } };
+    bounded[SUMMARY_PATCH_HASH] = summary[SUMMARY_PATCH_HASH] ?? null;
+    bounded[SUMMARY_LINE_MAP_ENTRIES] = 0;
+    return bounded;
+}
+
 function lineMapEntryCount(summary: FileEvidenceSummary): number {
     return summary[SUMMARY_LINE_MAP_ENTRIES]
         ?? summary.lineMap.left.length + summary.lineMap.right.length;
@@ -1199,12 +1266,156 @@ function applyBatchEvidenceLimits(summaries: FileEvidenceSummary[]): FileEvidenc
         else {
             const lineEntries = lineMapEntryCount(precomputed);
             if (lineEntries > 0 && totalLineMapEntries + lineEntries > MAX_LINE_MAP_ENTRIES_PER_BATCH)
-                summary = limitedSummary(precomputed, 'batch-line-map-limit');
+                summary = withoutLineMap(precomputed);
         }
         totalPatchBytes += summary.bytesUsed;
         totalLineMapEntries += lineMapEntryCount(summary);
         return summary;
     });
+}
+
+interface ExactContentSide { absent: boolean; bytes: number; digest: string | null; content: string | null }
+export function digestRecoveredContent(identity: PullIdentity, path: string, status: string, sides: Pick<RecoveryEvidence, 'base' | 'head'>): string {
+    return hashString(JSON.stringify({ ...identityFields(identity), path, status, ...sides }));
+}
+async function fetchExactContentSide(owner: string, repo: string, sha: string, path: string, expectAbsent: boolean, spawn?: Spawn): Promise<ExactContentSide> {
+    if (!is40HexSha(sha) || !isSafeRelativePath(path))
+        throw new Error('exact-content recovery received an invalid SHA or path');
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+    const result = await run(['gh', 'api', '--method', 'GET', `repos/${owner}/${repo}/contents/${encodedPath}?ref=${sha}`], { spawn, maxBytes: MAX_GH_BYTES });
+    if (result.stdoutTruncated || result.stderrTruncated)
+        throw new Error('bounded exact-content recovery response was truncated');
+    if (!result.ok) {
+        let missing = false;
+        try {
+            const failure = record(JSON.parse(result.stdout || result.stderr), 'exact-content error response');
+            missing = failure.message === 'Not Found' && (failure.status === undefined || failure.status === 404 || failure.status === '404');
+        }
+        catch {
+            missing = false;
+        }
+        if (expectAbsent && missing)
+            return { absent: true, bytes: 0, digest: null, content: null };
+        throw new Error(expectAbsent ? `expected absent recovery side could not be verified: ${path}` : `recovery content is unexpectedly absent: ${path}`);
+    }
+    if (expectAbsent)
+        throw new Error(`expected recovery side to be absent: ${path}`);
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(result.stdout);
+    }
+    catch {
+        throw new Error('non-JSON exact-content recovery response');
+    }
+    const data = record(parsed, 'exact-content response');
+    if (data.encoding !== 'base64' || typeof data.content !== 'string'
+        || !Number.isSafeInteger(data.size) || (data.size as number) < 0)
+        throw new Error('exact-content recovery response has invalid encoding or byte length');
+    const declaredBytes = data.size as number;
+    if (declaredBytes > MAX_RECOVERY_BYTES_PER_SIDE)
+        throw new Error('exact-content recovery side exceeds the byte limit');
+    if (!/^[A-Za-z0-9+/=\r\n]*$/.test(data.content))
+        throw new Error('exact-content recovery response is not canonical base64');
+    const canonical = data.content.replace(/[\r\n]/g, '');
+    const decoded = Buffer.from(canonical, 'base64');
+    if (decoded.toString('base64') !== canonical || decoded.length !== declaredBytes)
+        throw new Error('exact-content recovery base64 or byte length failed validation');
+    let content: string;
+    try {
+        content = new TextDecoder('utf-8', { fatal: true }).decode(decoded);
+    }
+    catch {
+        throw new Error('exact-content recovery content is binary or invalid UTF-8');
+    }
+    return { absent: false, bytes: decoded.length, digest: hashString(content), content };
+}
+
+async function assertExactCommit(owner: string, repo: string, sha: string, spawn?: Spawn): Promise<void> {
+    if (!isSafeOwner(owner) || !isSafeRepo(repo) || !is40HexSha(sha))
+        throw new Error('exact-content recovery received an invalid repository or SHA');
+    const commit = record(await ghApi(`repos/${owner}/${repo}/commits/${sha}`, { spawn }), 'exact commit response');
+    if (commit.sha !== sha)
+        throw new Error('exact-content recovery commit response is not bound to the requested SHA');
+}
+
+function unavailableRecovery(file: FileEvidenceSummary, reason: RecoveryEvidenceReason): RecoveryEvidence {
+    return {
+        status: 'unavailable', reason,
+        base: { path: file.status === 'renamed' ? file.previousFilename : file.status === 'added' ? null : file.filename ?? null, bytes: 0, digest: null, absent: file.status === 'added' },
+        head: { path: file.status === 'removed' ? null : file.filename ?? null, bytes: 0, digest: null, absent: file.status === 'removed' },
+    };
+}
+
+async function recoverMissingPatch(identity: PullIdentity, file: FileEvidenceSummary, bytesUsed: number, spawn?: Spawn): Promise<{ evidence: RecoveryEvidence; content?: { base: string | null; head: string | null }; bytesUsed: number }> {
+    if (file.patchEvidence.reason !== 'missing-patch')
+        return { evidence: unavailableRecovery(file, 'unsupported-status'), bytesUsed: 0 };
+    if (!['added', 'removed', 'modified', 'renamed'].includes(file.status ?? ''))
+        return { evidence: unavailableRecovery(file, 'unsupported-status'), bytesUsed: 0 };
+    const basePath = file.status === 'added' ? null : file.status === 'renamed' ? file.previousFilename : file.filename ?? null;
+    const headPath = file.status === 'removed' ? null : file.filename ?? null;
+    if ((basePath !== null && !isSafeRelativePath(basePath)) || (headPath !== null && !isSafeRelativePath(headPath)))
+        return { evidence: unavailableRecovery(file, 'unexpected-absence'), bytesUsed: 0 };
+    try {
+        const base = await fetchExactContentSide(identity.owner, identity.repo, identity.diffBaseSha, basePath ?? file.filename!, basePath === null, spawn);
+        const head = await fetchExactContentSide(identity.headOwner, identity.headRepo, identity.headSha, headPath ?? file.filename!, headPath === null, spawn);
+        const recoveredBytes = base.bytes + head.bytes;
+        if (bytesUsed + recoveredBytes > MAX_RECOVERY_BYTES_PER_BATCH)
+            return { evidence: unavailableRecovery(file, 'batch-byte-limit'), bytesUsed: 0 };
+        const sides = {
+            base: { path: basePath, bytes: base.bytes, digest: base.digest, absent: base.absent },
+            head: { path: headPath, bytes: head.bytes, digest: head.digest, absent: head.absent },
+        };
+        const contentDigest = digestRecoveredContent(identity, file.filename!, file.status!, sides);
+        return {
+            evidence: { status: 'complete', reason: 'complete', contentDigest, ...sides },
+            content: { base: base.content, head: head.content },
+            bytesUsed: recoveredBytes,
+        };
+    }
+    catch (error) {
+        const message = String(error instanceof Error ? error.message : error);
+        const reason: RecoveryEvidenceReason = /byte limit/.test(message) ? 'per-side-byte-limit'
+            : /binary or invalid UTF-8|base64|encoding or byte length/.test(message) ? 'binary-or-invalid-utf8'
+                : 'unexpected-absence';
+        return { evidence: unavailableRecovery(file, reason), bytesUsed: 0 };
+    }
+}
+
+export function digestRecoveryBatch(identity: PullIdentity, paths: readonly string[], files: readonly FileEvidenceSummary[]): string {
+    return hashString(JSON.stringify({
+        ...identityFields(identity), paths,
+        recovery: files.map(file => ({
+            path: file.filename,
+            status: file.status,
+            recoveryEvidence: file.recoveryEvidence ? {
+                status: file.recoveryEvidence.status,
+                reason: file.recoveryEvidence.reason,
+                contentDigest: file.recoveryEvidence.contentDigest ?? null,
+                base: file.recoveryEvidence.base,
+                head: file.recoveryEvidence.head,
+            } : null,
+        })),
+    }));
+}
+
+async function recoverBatches(identity: PullIdentity, batches: FileEvidenceBatch[], spawn: Spawn | undefined, retainContent: boolean): Promise<void> {
+    if (batches.some(batch => batch.files.some(file => file.patchEvidence.reason === 'missing-patch'))) {
+        await assertExactCommit(identity.owner, identity.repo, identity.diffBaseSha, spawn);
+        await assertExactCommit(identity.headOwner, identity.headRepo, identity.headSha, spawn);
+    }
+    for (const batch of batches) {
+        let bytesUsed = 0;
+        for (const file of batch.files) {
+            if (file.patchEvidence.reason !== 'missing-patch')
+                continue;
+            const recovered = await recoverMissingPatch(identity, file, bytesUsed, spawn);
+            file.recoveryEvidence = recovered.evidence;
+            bytesUsed += recovered.bytesUsed;
+            if (retainContent && recovered.evidence.status === 'complete' && recovered.content)
+                file.recoveredContent = recovered.content;
+        }
+        batch.recoveryBatchDigest = digestRecoveryBatch(identity, batch.paths, batch.files);
+    }
 }
 
 export function digestRawFileBatch(identity: PullIdentity, paths: string[], rawFiles: NormalizedPullFile[]): string {
@@ -1313,6 +1524,7 @@ function assembleEvidenceBatches(identity: PullIdentity, declarations: FileBatch
         return {
             paths: [...declaration.paths],
             batchDigest: batchDigestForSummaries(identity, declaration.paths, files),
+            recoveryBatchDigest: '',
             files,
         };
     });
@@ -1324,20 +1536,26 @@ export async function pullFileBatchesAtManifest(manifest: PullManifest, declarat
         throw new Error('internal file batch declarations must be an array');
     const identity = identityFields(manifest);
     if (!is40HexSha(identity.baseSha) || !is40HexSha(identity.headSha)
+        || !isSafeOwner(identity.headOwner) || !isSafeRepo(identity.headRepo)
         || typeof identity.snapshotId !== 'string' || typeof identity.feedbackDigest !== 'string'
         || typeof identity.evidenceDigest !== 'string')
         throw new Error('internal file evidence manifest identity is invalid');
     const summariesByPath = await acquireManifestEvidence(manifest, undefined, { spawn, onEvidencePage });
     const batches = assembleEvidenceBatches(identity, declarations, summariesByPath);
+    await recoverBatches(identity, batches, spawn, false);
     return { ...identity, batches };
 }
 
-export async function pullFilesAtHead({ owner, repo, number, baseSha, headSha, snapshotId: expectedSnapshotId, feedbackDigest, evidenceDigest, paths }: PullIdentity & { paths: string[] }, { spawn, onEvidencePage }: EvidenceOptions = {}): Promise<ExactHeadFileBatch> {
+export async function pullFilesAtHead({ owner, repo, number, baseSha, diffBaseSha, headOwner, headRepo, headSha, snapshotId: expectedSnapshotId, feedbackDigest, evidenceDigest, paths }: PullIdentity & { paths: string[] }, { spawn, onEvidencePage }: EvidenceOptions = {}): Promise<ExactHeadFileBatch> {
     validatePullTarget({ owner, repo, number });
     if (!is40HexSha(baseSha))
         throw new Error('baseSha must be a 40-char hex SHA');
+    if (!is40HexSha(diffBaseSha))
+        throw new Error('diffBaseSha must be a 40-char hex SHA');
     if (!is40HexSha(headSha))
         throw new Error('headSha must be a 40-char hex SHA');
+    if (!isSafeOwner(headOwner) || !isSafeRepo(headRepo))
+        throw new Error('head repository identity is invalid');
     if (typeof expectedSnapshotId !== 'string' || !/^naru-snap-[0-9a-f]{64}$/.test(expectedSnapshotId))
         throw new Error('snapshotId is invalid');
     if (typeof feedbackDigest !== 'string' || !/^[0-9a-f]{64}$/.test(feedbackDigest)
@@ -1353,7 +1571,7 @@ export async function pullFilesAtHead({ owner, repo, number, baseSha, headSha, s
             throw new Error(`duplicate path: ${path}`);
         seen.add(path);
     }
-    const expectedIdentity = { owner, repo, number, baseSha, headSha, snapshotId: expectedSnapshotId, feedbackDigest, evidenceDigest };
+    const expectedIdentity = { owner, repo, number, baseSha, diffBaseSha, headOwner, headRepo, headSha, snapshotId: expectedSnapshotId, feedbackDigest, evidenceDigest };
     const compact = await compactPullAcquisition({ owner, repo, number }, { spawn });
     assertManifestIdentity(expectedIdentity, compact, 'file batch manifest');
     if (!compact.inventoryComplete)
@@ -1367,6 +1585,7 @@ export async function pullFilesAtHead({ owner, repo, number, baseSha, headSha, s
     if (endMeta.head?.sha !== compact.headSha || endMeta.base?.sha !== compact.baseSha)
         throw new Error('pull request head drifted during file batch acquisition');
     const assembled = assembleEvidenceBatches(compact, [{ paths }], selectedByPath)[0]!;
+    await recoverBatches(compact, [assembled], spawn, true);
     const finalCompact = await compactPullAcquisition({ owner, repo, number }, { spawn });
     assertManifestIdentity(expectedIdentity, finalCompact, 'final file batch manifest');
     return {
@@ -1375,10 +1594,14 @@ export async function pullFilesAtHead({ owner, repo, number, baseSha, headSha, s
         number: compact.number,
         snapshotId: compact.snapshotId,
         baseSha: compact.baseSha,
+        diffBaseSha: compact.diffBaseSha,
+        headOwner: compact.headOwner,
+        headRepo: compact.headRepo,
         headSha: compact.headSha,
         feedbackDigest: compact.feedbackDigest,
         evidenceDigest: compact.evidenceDigest,
         batchDigest: assembled.batchDigest,
+        recoveryBatchDigest: assembled.recoveryBatchDigest,
         files: assembled.files,
     };
 }
@@ -1396,10 +1619,12 @@ function feedbackMetadataDigest(items: readonly NormalizedFeedback[]): string {
     }))));
 }
 
-export async function pullFeedbackPage({ owner, repo, number, baseSha, headSha, snapshotId: expectedSnapshotId, feedbackDigest, evidenceDigest, kind, page }: PullIdentity & { kind: FeedbackKind; page: number }, { spawn }: GitHubOptions = {}): Promise<FeedbackPage> {
+export async function pullFeedbackPage({ owner, repo, number, baseSha, diffBaseSha, headOwner, headRepo, headSha, snapshotId: expectedSnapshotId, feedbackDigest, evidenceDigest, kind, page }: PullIdentity & { kind: FeedbackKind; page: number }, { spawn }: GitHubOptions = {}): Promise<FeedbackPage> {
     validatePullTarget({ owner, repo, number });
-    if (!is40HexSha(baseSha) || !is40HexSha(headSha))
-        throw new Error('baseSha and headSha must be 40-char hex SHAs');
+    if (!is40HexSha(baseSha) || !is40HexSha(diffBaseSha) || !is40HexSha(headSha))
+        throw new Error('baseSha, diffBaseSha, and headSha must be 40-char hex SHAs');
+    if (!isSafeOwner(headOwner) || !isSafeRepo(headRepo))
+        throw new Error('head repository identity is invalid');
     if (typeof expectedSnapshotId !== 'string' || !/^naru-snap-[0-9a-f]{64}$/.test(expectedSnapshotId)
         || typeof feedbackDigest !== 'string' || !/^[0-9a-f]{64}$/.test(feedbackDigest)
         || typeof evidenceDigest !== 'string' || !/^[0-9a-f]{64}$/.test(evidenceDigest))
@@ -1408,7 +1633,7 @@ export async function pullFeedbackPage({ owner, repo, number, baseSha, headSha, 
         throw new Error('feedback kind is invalid');
     if (!isPositiveInteger(page))
         throw new Error('feedback page must be a positive integer');
-    const expectedIdentity = { owner, repo, number, baseSha, headSha, snapshotId: expectedSnapshotId, feedbackDigest, evidenceDigest };
+    const expectedIdentity = { owner, repo, number, baseSha, diffBaseSha, headOwner, headRepo, headSha, snapshotId: expectedSnapshotId, feedbackDigest, evidenceDigest };
     const compact = await compactPullAcquisition({ owner, repo, number }, { spawn });
     assertManifestIdentity(expectedIdentity, compact, 'feedback page manifest');
     const metadata = compact.feedback[kind];

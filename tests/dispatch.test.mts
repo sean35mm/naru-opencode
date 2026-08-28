@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   applyVariantsToConfig,
+  applyReviewDefaultsToConfig,
+  applyRuntimeToConfigAtomically,
+  buildReviewDefaultsAppendix,
   buildPromptAppendix,
   modelLabel,
   parseChainEntry,
@@ -19,6 +22,7 @@ const CLASSES = parseModelsConfig({
 });
 
 interface TestAgent {
+  [key: string]: unknown;
   mode?: string;
   hidden?: boolean;
   description?: string;
@@ -30,6 +34,7 @@ interface TestAgent {
 }
 
 interface TestConfig {
+  [key: string]: unknown;
   agent: Record<string, TestAgent>;
 }
 
@@ -179,9 +184,24 @@ test('validation happens before mutation: a broken config is left untouched', ()
   assert.throws(() => applyVariantsToConfig(noTask, CLASSES, null), /fail-closed/);
 });
 
+test('runtime config application is atomic when review defaults fail after variant setup', () => {
+  const config = fakeConfig();
+  delete agent(config, 'naru-orchestrator').prompt;
+  const before = JSON.stringify(config);
+  assert.throws(() => applyRuntimeToConfigAtomically(config, CLASSES, null, {
+    defaultProfile: 'standard', defaultDecision: 'comment-only', defaultOutput: 'detailed',
+  }), /no prompt/);
+  assert.equal(JSON.stringify(config), before);
+  assert.equal(config.agent['naru-reader-deep'], undefined);
+});
+
 test('the plugin hooks config only and fails open on unusable configs', async () => {
   const hooks = await NaruDispatchPlugin();
   assert.deepEqual(Object.keys(hooks), ['config']);
+  const withoutModels = fakeConfig();
+  await hooks.config(withoutModels);
+  assert.match(agent(withoutModels, 'naru-orchestrator').prompt ?? '', /Review defaults \(generated/);
+  assert.equal(Object.keys(withoutModels.agent).filter(name => /^naru-(reader|runner|writer)-/.test(name)).length, 0);
   const broken = { agent: {} };
   await hooks.config(broken);
   assert.deepEqual(broken, { agent: {} });
@@ -194,4 +214,21 @@ test('appendix and labels render as documented', () => {
   const appendix = buildPromptAppendix([{ className: 'light', label: 'openai/gpt-5.6-luna-fast@high', use: 'wide fan-out' }]);
   assert.match(appendix, /naru-reader-<class>/);
   assert.match(appendix, /"light" -> openai\/gpt-5\.6-luna-fast@high: wide fan-out/);
+});
+
+test('review defaults appendix works without model classes and is idempotent', () => {
+  const config = fakeConfig();
+  const review = { defaultProfile: 'release-critical', defaultDecision: 'automatic', defaultOutput: 'concise' } as const;
+  applyReviewDefaultsToConfig(config, review);
+  applyReviewDefaultsToConfig(config, review);
+  const prompt = agent(config, 'naru-orchestrator').prompt ?? '';
+  assert.equal((prompt.match(/Review defaults \(generated/g) || []).length, 1);
+  assert.match(prompt, /profile=release-critical; decision=automatic; output=concise/);
+  assert.match(prompt, /Persistent configuration never authorizes a post/);
+  assert.match(buildReviewDefaultsAppendix(review), /ship-review/);
+
+  const broken = { agent: { 'naru-orchestrator': {} } };
+  const before = JSON.stringify(broken);
+  assert.throws(() => applyReviewDefaultsToConfig(broken, review), /no prompt/);
+  assert.equal(JSON.stringify(broken), before);
 });

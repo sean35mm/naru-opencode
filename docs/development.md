@@ -16,7 +16,7 @@ OpenCode permission frontmatter and by tool code, not by prose.
 
 | Path | Contents |
 | --- | --- |
-| `agents/` | Five Markdown agents. Frontmatter is the permission contract. |
+| `agents/` | Four Markdown agents. Frontmatter is the permission contract. |
 | `skills/` | Four native skills: `naru-plan`, `naru-impact`, `naru-triage`, `naru-review`. |
 | `tools/` | Five custom OpenCode tools. The filename defines the tool ID. |
 | `tools/naru-lib/` | Shared helper modules used by the tools. |
@@ -32,7 +32,7 @@ OpenCode's `config` hook. It registers no tool and creates no sessions.
 
 ## Architecture
 
-One visible primary orchestrator, four hidden leaf subagents, five validated tools.
+One visible primary orchestrator, three hidden leaf subagents, five validated tools.
 
 ```mermaid
 flowchart LR
@@ -146,24 +146,26 @@ Concurrency and review:
 - One writer per logical scope; overlapping scopes serialize. A writer takes a Weaver claim before
   its first edit. A claim conflict is a scheduling signal, never a user prompt.
 - Pull-request review is dry-run by default. Posting requires explicit current-message policy;
-  schema v4 is required for new mutations, while v2/v3 are historical/idempotency compatibility
+  schema v5 is required for new mutations, while v2/v3/v4 are historical/idempotency compatibility
   only. Generic posting authorizes only a complete `COMMENT`; limited posting requires explicit
   current-user limited-review language and always derives `COMMENT`. There is one POST attempt,
   never a retry when its outcome is ambiguous.
-- V4 review acquisition is manifest-first. Coverage reconciles every changed path once in the
-  ledger and once across non-overlapping file-batch declarations, plus every advertised feedback
+- V5 review acquisition is manifest-first and binds `baseSha`, `diffBaseSha`, and the head repository and SHA. Coverage reconciles every changed path once in the
+  ledger, file-batch declarations, and recovery-batch declarations, plus every advertised feedback
   kind/page once. All batch/page digests are snapshot-bound, and acknowledgement is bound to the
   prior-feedback digest. This is exhaustive provenance attestation, not proof of cognition or
   semantic review quality. The tool derives complete/limited posture.
-- Per-file patch evidence is structurally classified as complete, limited, or unavailable. Missing
-  patches stay limited because central safe unified-diff recovery is deliberately not implemented.
+- Per-file patch evidence is structurally classified as complete, limited, or unavailable. Valid
+  patches without retained line maps remain path-level complete. Missing-patch recovery uses bounded,
+  status-aware exact content pairs from the base repository at `diffBaseSha` and the bound head
+  repository at `headSha`; each exact commit is verified before expected absence is accepted.
   Aggregate patch limits apply per bounded batch, allowing combined reviewed patches to exceed the
   former global aggregate while per-file, batch, response, and feedback-body limits remain.
   Mechanically derived limitations render once in one concise aggregated section.
-- V4 posting reacquires only declared bounded batches/pages between compact manifests for each
+- V5 posting reacquires declared bounded batches, recovery, and pages between compact manifests for each
   freshness pass; it does not use the legacy monolithic all-patch snapshot.
 - Current-head exact inline duplicates are omitted from posting but retained for formal decisions;
-  semantic dedupe remains agent-owned. Strict same-head limited-v4→complete-v4 supersession needs
+  semantic dedupe remains agent-owned. Strict same-head limited-v4/v5→complete-v5 supersession needs
   the predecessor ID/digest and fresh explicit authorization. It is a new submission, never a retry.
 - Isolated worktrees require a clean repository. A dirty or unavailable workspace downgrades
   silently to shared mode instead of failing or prompting.
@@ -303,9 +305,9 @@ any of them only with a migration and a targeted test.
    (`naru-dispatch`), and an orchestrator `task` map that allows exactly the three subagents (the dispatch plugin extends it with generated class variants at config load).
 2. Review permission blocks for the `'*': deny` start, the writer-only edit boundary, the runner-only
    bash boundary, read-only `bash`/`external_directory` denials, and the secret path denials.
-3. Confirm the posting path is still orchestrator-only, requires schema v4 for every new mutation,
+3. Confirm the posting path is still orchestrator-only, requires schema v5 for every new mutation,
    derives posture and review events from manifest-bound final evidence, makes one POST attempt with
-   no retry, and preserves strict dedupe/supersession rules; v2/v3 remain compatibility-only.
+   no retry, and preserves strict dedupe/supersession rules; v2/v3/v4 remain compatibility-only.
 4. Run the three suites plus `git diff --check`, and record any check that was not run. Run
    `npm run test:installer` whenever installed inventory, migration, or copy/symlink behavior
    changed.

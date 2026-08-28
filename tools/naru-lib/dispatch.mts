@@ -15,6 +15,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { RuntimeReviewConfig } from './runtime-config.mjs';
 
 export const VARIANT_ROLES = Object.freeze(['naru-reader', 'naru-runner', 'naru-writer'] as const);
 export const ORCHESTRATOR = 'naru-orchestrator';
@@ -55,6 +56,8 @@ const EFFORT_PATTERN = /^[a-z][a-z0-9-]{0,15}$/;
 const VARIANT_NAME_PATTERN = /^naru-(?:reader|runner|writer)-[a-z][a-z0-9-]{0,31}$/;
 const APPENDIX_BEGIN = '<!-- naru-model-classes:begin -->';
 const APPENDIX_END = '<!-- naru-model-classes:end -->';
+const REVIEW_APPENDIX_BEGIN = '<!-- naru-review-defaults:begin -->';
+const REVIEW_APPENDIX_END = '<!-- naru-review-defaults:end -->';
 
 export function parseChainEntry(value: unknown, label = 'chain entry'): ModelCandidate {
     if (typeof value !== 'string' || value.length === 0 || value.length > 128) {
@@ -164,6 +167,40 @@ function stripAppendix(prompt: string): string {
     return (prompt.slice(0, begin) + prompt.slice(end + APPENDIX_END.length)).trimEnd();
 }
 
+function replaceBoundedAppendix(prompt: string, beginMarker: string, endMarker: string, appendix: string): string {
+    const begin = prompt.indexOf(beginMarker);
+    const end = begin === -1 ? -1 : prompt.indexOf(endMarker, begin + beginMarker.length);
+    const bare = begin === -1
+        ? prompt.trimEnd()
+        : (prompt.slice(0, begin) + (end === -1 ? '' : prompt.slice(end + endMarker.length))).trimEnd();
+    return appendix ? `${bare}\n\n${appendix}` : bare;
+}
+
+export function buildReviewDefaultsAppendix(review: RuntimeReviewConfig): string {
+    return [
+        REVIEW_APPENDIX_BEGIN,
+        '',
+        '## Review defaults (generated from naru-runtime.json)',
+        '',
+        `Effective defaults: profile=${review.defaultProfile}; decision=${review.defaultDecision}; output=${review.defaultOutput}.`,
+        'Persistent configuration never authorizes a post or formal review state. For generic',
+        'current-message post/comment/submit requests, decision is always comment-only even when',
+        'defaultDecision=automatic. Only the native /naru ship-review invocation itself authorizes',
+        'automatic select-state for its finite targets; it also supplies release-critical/concise defaults.',
+        '',
+        REVIEW_APPENDIX_END,
+    ].join('\n');
+}
+
+export function applyReviewDefaultsToConfig(config: unknown, review: RuntimeReviewConfig): void {
+    if (!isPlainObject(config) || !isPlainObject(config.agent)) throw new Error('OpenCode configuration has no agent map');
+    const orchestrator = config.agent[ORCHESTRATOR];
+    if (!isPlainObject(orchestrator) || typeof orchestrator.prompt !== 'string') {
+        throw new Error(`agent ${ORCHESTRATOR} has no prompt`);
+    }
+    orchestrator.prompt = replaceBoundedAppendix(orchestrator.prompt, REVIEW_APPENDIX_BEGIN, REVIEW_APPENDIX_END, buildReviewDefaultsAppendix(review));
+}
+
 export function buildPromptAppendix(generated: readonly GeneratedModelClass[]): string {
     if (generated.length === 0) return '';
     const lines = [
@@ -256,4 +293,35 @@ export function applyVariantsToConfig(config: unknown, classes: ModelsConfig, au
         orchestrator.prompt = appendix ? `${bare}\n\n${appendix}` : bare;
     }
     return { variants: Object.keys(variants).sort(), classes: generated.map((item) => item.className) };
+}
+
+function configDraft(config: UnknownRecord): UnknownRecord {
+    if (!isPlainObject(config.agent)) throw new Error('OpenCode configuration has no agent map');
+    const agents: UnknownRecord = {};
+    for (const [name, value] of Object.entries(config.agent)) {
+        if (!isPlainObject(value)) {
+            agents[name] = value;
+            continue;
+        }
+        const agent = { ...value };
+        if (isPlainObject(value.permission)) {
+            const permission = { ...value.permission };
+            if (isPlainObject(value.permission.task)) permission.task = { ...value.permission.task };
+            agent.permission = permission;
+        }
+        agents[name] = agent;
+    }
+    return { ...config, agent: agents };
+}
+
+export function applyRuntimeToConfigAtomically(config: unknown, classes: ModelsConfig, authProviders: ReadonlySet<string> | null | undefined, review: RuntimeReviewConfig): VariantApplicationSummary {
+    if (!isPlainObject(config) || !isPlainObject(config.agent)) throw new Error('OpenCode configuration has no agent map');
+    const draft = configDraft(config);
+    const summary = applyVariantsToConfig(draft, classes, authProviders);
+    applyReviewDefaultsToConfig(draft, review);
+    const draftAgents = draft.agent;
+    if (!isPlainObject(draftAgents)) throw new Error('draft OpenCode configuration has no agent map');
+    for (const name of Object.keys(config.agent)) delete config.agent[name];
+    Object.assign(config.agent, draftAgents);
+    return summary;
 }

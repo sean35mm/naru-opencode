@@ -214,7 +214,7 @@
         The walls stand at the irreversible edges and are <strong>mechanical rather than
         advisory</strong> — exactly one role can edit files, read-only roles have no shell at all,
         secrets are denied to every role, and the tool that posts a pull-request review requires a
-        manifest-bound schema v4 payload and derives the allowed event from current authorization
+        manifest-bound schema v5 payload and derives the allowed event from current authorization
         and final evidence. Inside those walls the orchestrator plans, splits the work, and fans out
         on its own judgment. No modes, no protocols, no ceremony.
       </p>
@@ -505,7 +505,7 @@ Dispatched: 3× naru-reader-light, 1× naru-writer-standard</pre>
         <div class="card accent">
           <p class="meta">Layer 4 · construction</p>
           <h3>The posting tool</h3>
-          <p class="micro"><code>naru-github-post-review</code> accepts no event parameter. Schema v4 is required for new mutations; v2/v3 are historical/idempotency compatibility only. From manifest-bound final evidence it derives posture and <code>COMMENT</code>, <code>APPROVE</code>, or <code>REQUEST_CHANGES</code>. Generic posting authorizes only a complete <code>COMMENT</code>; limited mode needs explicit current-user limited-review language and is always <code>COMMENT</code>. One POST attempt, no retry, orchestrator-only.</p>
+          <p class="micro"><code>naru-github-post-review</code> accepts no event parameter. Schema v5 is required for new mutations; v2/v3/v4 are historical/idempotency compatibility only. From manifest-bound final evidence it derives posture and <code>COMMENT</code>, <code>APPROVE</code>, or <code>REQUEST_CHANGES</code>. Generic posting authorizes only a complete <code>COMMENT</code>; limited mode needs explicit current-user limited-review language and is always <code>COMMENT</code>. One POST attempt, no retry, orchestrator-only.</p>
         </div>
       </div>
 
@@ -530,7 +530,7 @@ Dispatched: 3× naru-reader-light, 1× naru-writer-standard</pre>
             </tr>
             <tr>
               <td class="deny" style="color:var(--text);font-weight:700">Mechanically impossible</td>
-              <td class="deny">Edits by any role but the writer. A shell for readers. Reading secret paths. Supplying a raw review event, posting a new v2/v3 review, or merging a PR through Naru. Subagents spawning children.</td>
+              <td class="deny">Edits by any role but the writer. A shell for readers. Reading secret paths. Supplying a raw review event, posting a new v2/v3/v4 review, or merging a PR through Naru. Subagents spawning children.</td>
             </tr>
           </tbody>
         </table>
@@ -572,7 +572,7 @@ Dispatched: 3× naru-reader-light, 1× naru-writer-standard</pre>
         <div class="card accent">
           <p class="meta">orchestrator only</p>
           <h3>naru-github-post-review</h3>
-          <p class="micro">No raw event input: schema v4 reconciles every manifest path once in the ledger and file-batch provenance, plus every advertised 100-item feedback page once. Posting reacquires only those bounded units, not a monolithic all-patch snapshot. Per-batch patch limits allow the combined review to exceed the former global aggregate while per-file/body bounds remain. Provenance is snapshot-bound attestation, not proof of cognition or semantic quality. Generic posting does not authorize limited mode; explicit limited-review language does, always as <code>COMMENT</code>. Exact duplicates stay decision-relevant. One POST attempt, no retry.</p>
+          <p class="micro">No raw event input: schema v5 binds base-ref and compare merge-base identity, file and recovery batches, and every advertised feedback page. Missing patches use bounded exact-content recovery; valid evidence without a retained location map remains path-level complete but cannot post inline. Posting reacquires recovery during both freshness passes. Generic posting does not authorize limited mode; explicit limited-review language does, always as <code>COMMENT</code>. One POST attempt, no retry.</p>
         </div>
         <div class="card accent">
           <p class="meta">orchestrator only</p>

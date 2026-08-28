@@ -2,7 +2,7 @@ import { cp, mkdir } from 'node:fs/promises';
 
 const outputRoot = new URL('../.naru-build/', import.meta.url);
 
-for (const directory of ['agents', 'bin', 'skills']) {
+for (const directory of ['agents', 'bin', 'commands', 'skills']) {
   await cp(new URL(`../${directory}/`, import.meta.url), new URL(`${directory}/`, outputRoot), {
     recursive: true,
   });

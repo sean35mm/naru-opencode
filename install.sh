@@ -542,6 +542,9 @@ add_copy() {
 
 : > "$PLAN"
 
+# Native OpenCode convenience command.
+add_md "${SRC_DIR}/commands/naru.md" "commands/naru.md"
+
 # Native OpenCode skills.
 add_md "${SRC_DIR}/skills/naru-plan/SKILL.md"     "skills/naru-plan/SKILL.md"
 add_md "${SRC_DIR}/skills/naru-impact/SKILL.md"   "skills/naru-impact/SKILL.md"

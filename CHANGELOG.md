@@ -2,6 +2,19 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.7.0] - 2026-08-28
+
+### Added
+
+- Added schema v5 review identities with GitHub compare `diffBaseSha`, bounded status-aware exact-content recovery for `missing-patch`, and digest-bound recovery-batch provenance.
+- Added the native `/naru ship-review` convenience command with independent batch processing, release-critical automatic decisions, concise rendering, dry-run and profile/state overrides, and no automatic follow-up tickets.
+
+### Changed
+
+- Valid patches that exceed line-map retention remain path-level complete while inline locations fail closed. New review mutations require v5; v2/v3/v4 keep historical marker and idempotency compatibility only.
+- Evolved canonical schema v5 with review profile, output mode, bounded objective assessment, mechanically derived release-critical conclusions, manifest-bound PR objective text and completeness, and auditable decision metadata. Historical v2-v4 behavior remains read-only compatibility.
+- Added strict optional persistent review defaults; they are injected into the orchestrator prompt but never authorize posting or formal state selection.
+
 ## [0.6.1] - 2026-08-25
 
 ### Added
