@@ -474,7 +474,17 @@ function snapshotHandlers({
     { match: (argv) => argv[3] === 'GET' && argv[4] === 'user', reply: response({ login: actor }) },
     { match: (argv) => argv[3] === 'GET' && has(argv, '/compare/'), reply: (argv) => {
       const comparison = argv.find(item => item.includes('/compare/'))?.match(/compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})/);
-      return response({ merge_base_commit: { sha: comparison?.[1] }, base_commit: { sha: comparison?.[1] }, head_commit: { sha: comparison?.[2] } });
+      const headOwner = (meta as PullMetadataFixture).head.repo.owner.login;
+      const binding = headOwner.toLowerCase() === 'owner'
+        ? `${comparison?.[1]}...${comparison?.[2]}`
+        : `${comparison?.[1]}...${headOwner}:${comparison?.[2]}`;
+      return response({
+        url: `https://api.github.com/repos/owner/repo/compare/${binding}`,
+        permalink_url: `https://github.com/owner/repo/compare/${binding}`,
+        merge_base_commit: { sha: comparison?.[1] },
+        base_commit: { sha: comparison?.[1] },
+        commits: [{ sha: comparison?.[2] }],
+      });
     } },
     { match: (argv) => argv[3] === 'GET' && has(argv, '/commits/'), reply: (argv) => {
       const sha = argv.at(-1)?.match(/\/commits\/([0-9a-f]{40})/)?.[1];
@@ -2722,7 +2732,13 @@ test('v5 binds compare merge-base separately from base-ref freshness identity', 
   const files = [changedFile()];
   const compare: SpawnHandler = {
     match: argv => argv[3] === 'GET' && has(argv, '/compare/'),
-    reply: response({ merge_base_commit: { sha: diffBase }, base_commit: { sha: BASE }, head_commit: { sha: head } }),
+    reply: response({
+      url: `https://api.github.com/repos/owner/repo/compare/${BASE}...${head}`,
+      permalink_url: `https://github.com/owner/repo/compare/${BASE}...${head}`,
+      merge_base_commit: { sha: diffBase },
+      base_commit: { sha: BASE },
+      commits: [{ sha: head }],
+    }),
   };
   const manifest = await pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, {
     spawn: fakeSpawn([compare, ...snapshotHandlers({ meta: pullMeta(head), files })]).spawn,
@@ -2733,19 +2749,71 @@ test('v5 binds compare merge-base separately from base-ref freshness identity', 
   assert.notEqual(manifest.evidenceDigest, digestEvidence(head, BASE, files, BASE));
 });
 
-test('v5 rejects compare responses whose head commit is not the requested head', async () => {
+test('v5 accepts fork-qualified immutable compare binding without head_commit', async () => {
+  const head = 'a6'.repeat(20);
+  const meta = pullMeta(head, BASE, 1, 42, { headOwner: 'ForkOwner', headRepo: 'fork-repo' });
+  const compare: SpawnHandler = {
+    match: argv => argv[3] === 'GET' && has(argv, '/compare/'),
+    reply: response({
+      permalink_url: `https://github.com/OWNER/repo/compare/${BASE}...forkowner:${head}`,
+      merge_base_commit: { sha: BASE },
+      base_commit: { sha: BASE },
+      commits: [{ sha: head }],
+    }),
+  };
+  const manifest = await pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, {
+    spawn: fakeSpawn([compare, ...snapshotHandlers({ meta })]).spawn,
+  });
+  assert.equal(manifest.headOwner, 'ForkOwner');
+  assert.equal(manifest.headSha, head);
+});
+
+test('compare binding uses canonical PR repository identity after an alias redirect', async () => {
+  const head = 'a5'.repeat(20);
+  const meta = pullMeta(head);
+  meta.base.repo = { name: 'canonical-repo', owner: { login: 'CanonicalOwner' } };
+  const compare: SpawnHandler = {
+    match: argv => argv[3] === 'GET' && has(argv, '/compare/'),
+    reply: response({
+      url: `https://api.github.com/repos/CanonicalOwner/canonical-repo/compare/${BASE}...${head}`,
+      merge_base_commit: { sha: BASE },
+      base_commit: { sha: BASE },
+      commits: [{ sha: head }],
+    }),
+  };
+  const target = { owner: 'old-owner', repo: 'old-repo', number: 42 };
+  for (const acquire of [pullManifest, pullSnapshot]) {
+    const fake = fakeSpawn([compare, ...snapshotHandlers({ meta })]);
+    const result = await acquire(target, { spawn: fake.spawn });
+    assert.equal(result.owner, 'CanonicalOwner');
+    assert.equal(result.repo, 'canonical-repo');
+    assert.equal(fake.calls.some(call => has(call.argv, `repos/CanonicalOwner/canonical-repo/compare/${BASE}...${head}`)), true);
+  }
+});
+
+test('v5 rejects missing, malformed, and mismatched immutable compare bindings', async () => {
   const head = 'a7'.repeat(20);
-  const handlers = [
-    {
-      match: (argv: string[]) => argv[3] === 'GET' && has(argv, '/compare/'),
-      reply: response({ merge_base_commit: { sha: BASE }, base_commit: { sha: BASE }, head_commit: { sha: '0'.repeat(40) } }),
-    },
-    ...snapshotHandlers({ meta: pullMeta(head) }),
+  const invalidResponses = [
+    { merge_base_commit: { sha: BASE }, base_commit: { sha: BASE }, commits: [{ sha: head }] },
+    { url: 'not-a-url', merge_base_commit: { sha: BASE }, base_commit: { sha: BASE } },
+    { url: `https://api.github.com/repos/owner/repo/compare/${BASE}...${'0'.repeat(40)}`, merge_base_commit: { sha: BASE }, base_commit: { sha: BASE } },
+    { permalink_url: `https://github.com/owner/repo/compare/${'0'.repeat(40)}...${head}`, merge_base_commit: { sha: BASE }, base_commit: { sha: BASE } },
+    { url: `https://api.github.com/repos/owner/repo/compare/${BASE}...${head}`, merge_base_commit: { sha: BASE }, base_commit: { sha: '0'.repeat(40) } },
+    { url: `https://api.github.com/repos/owner/repo/compare/${BASE}...${head}`, merge_base_commit: { sha: 'invalid' }, base_commit: { sha: BASE } },
   ];
-  await assert.rejects(
-    pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: fakeSpawn(handlers).spawn }),
-    /not bound to the requested base\/head SHAs/,
-  );
+  for (const compareResponse of invalidResponses) {
+    const handlers = [
+      {
+        match: (argv: string[]) => argv[3] === 'GET' && has(argv, '/compare/'),
+        reply: response(compareResponse),
+      },
+      ...snapshotHandlers({ meta: pullMeta(head) }),
+    ];
+    await assert.rejects(
+      pullManifest({ owner: 'owner', repo: 'repo', number: 42 }, { spawn: fakeSpawn(handlers).spawn }),
+      /not bound to the requested base\/head SHAs/,
+    );
+  }
 });
 
 test('v5 fails closed when pull metadata omits the head repository identity', async () => {

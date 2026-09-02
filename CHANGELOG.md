@@ -2,6 +2,12 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.7.1] - 2026-09-02
+
+### Fixed
+
+- Bound GitHub compare responses to the canonical pull-request repository and immutable base/head identities, including fork-qualified heads and repository alias redirects.
+
 ## [0.7.0] - 2026-08-28
 
 ### Added

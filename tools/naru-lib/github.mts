@@ -584,12 +584,44 @@ export async function fetchIssue({ owner, repo, number }: PullTarget, { spawn }:
 export async function fetchPull({ owner, repo, number }: PullTarget, { spawn }: GitHubOptions = {}): Promise<NormalizedPullMetadata> {
     return normalizePullMetadata(await ghApi(`repos/${owner}/${repo}/pulls/${number}`, { spawn }));
 }
-async function fetchDiffBaseSha(owner: string, repo: string, baseSha: string, headSha: string, { spawn }: GitHubOptions = {}): Promise<string> {
+function compareUrlBinds(value: unknown, owner: string, repo: string, baseSha: string, headOwner: string, headSha: string): boolean {
+    if (typeof value !== 'string')
+        return false;
+    let url;
+    try {
+        url = new URL(value);
+    }
+    catch {
+        return false;
+    }
+    const host = url.hostname.toLowerCase();
+    const prefix = host === 'api.github.com' ? ['repos', owner, repo, 'compare']
+        : host === 'github.com' ? [owner, repo, 'compare'] : undefined;
+    if (url.protocol !== 'https:' || url.username || url.password || url.port || url.search || url.hash || prefix === undefined)
+        return false;
+    const parts = url.pathname.split('/').slice(1);
+    if (parts.length !== prefix.length + 1
+        || !prefix.every((part, index) => part.toLowerCase() === parts[index]?.toLowerCase()))
+        return false;
+    const binding = parts.at(-1);
+    if (binding === `${baseSha}...${headSha}`)
+        return true;
+    const forkPrefix = `${baseSha}...`;
+    if (!binding?.startsWith(forkPrefix))
+        return false;
+    const qualifiedHead = binding.slice(forkPrefix.length);
+    const separator = qualifiedHead.indexOf(':');
+    return separator > 0
+        && qualifiedHead.slice(0, separator).toLowerCase() === headOwner.toLowerCase()
+        && qualifiedHead.slice(separator + 1) === headSha;
+}
+async function fetchDiffBaseSha(owner: string, repo: string, baseSha: string, headOwner: string, headSha: string, { spawn }: GitHubOptions = {}): Promise<string> {
     const comparison = record(await ghApi(`repos/${owner}/${repo}/compare/${baseSha}...${headSha}`, { spawn }), 'compare response');
     const mergeBase = isRecord(comparison.merge_base_commit) ? stringField(comparison.merge_base_commit.sha) : undefined;
     const comparedBase = isRecord(comparison.base_commit) ? stringField(comparison.base_commit.sha) : undefined;
-    const comparedHead = isRecord(comparison.head_commit) ? stringField(comparison.head_commit.sha) : undefined;
-    if (!is40HexSha(mergeBase) || comparedBase !== baseSha || comparedHead !== headSha)
+    const responseBound = compareUrlBinds(comparison.url, owner, repo, baseSha, headOwner, headSha)
+        || compareUrlBinds(comparison.permalink_url, owner, repo, baseSha, headOwner, headSha);
+    if (!is40HexSha(mergeBase) || comparedBase !== baseSha || !responseBound)
         throw new Error('GitHub compare response is not bound to the requested base/head SHAs');
     return mergeBase;
 }
@@ -835,7 +867,7 @@ export async function pullSnapshot({ owner, repo, number }: PullTarget, { spawn 
         }
         const startRepositories = pullRepositoryIdentities(startMeta, owner, repo);
         const [diffBaseSha, filesValue, reviewsValue, reviewCommentsValue, issueCommentsValue] = await Promise.all([
-            fetchDiffBaseSha(owner, repo, startBase, startHead, { spawn }),
+            fetchDiffBaseSha(startRepositories.owner, startRepositories.repo, startBase, startRepositories.headOwner, startHead, { spawn }),
             ghApi(`repos/${owner}/${repo}/pulls/${number}/files`, { spawn, paginate: true }),
             ghApi(`repos/${owner}/${repo}/pulls/${number}/reviews`, { spawn, paginate: true }),
             ghApi(`repos/${owner}/${repo}/pulls/${number}/comments`, { spawn, paginate: true }),
@@ -1036,7 +1068,7 @@ async function compactPullAcquisition({ owner, repo, number }: PullTarget, { spa
             throw new Error('PR metadata missing valid base/head SHA');
         const startRepositories = pullRepositoryIdentities(startMeta, owner, repo);
         const [diffBaseSha, filesValue, reviewsValue, reviewCommentsValue, issueCommentsValue] = await Promise.all([
-            fetchDiffBaseSha(owner, repo, startBase, startHead, { spawn }),
+            fetchDiffBaseSha(startRepositories.owner, startRepositories.repo, startBase, startRepositories.headOwner, startHead, { spawn }),
             ghApiProjectedPages(`repos/${owner}/${repo}/pulls/${number}/files`, {
                 spawn, jq: COMPACT_FILES_JQ,
                 totalItems: isValidChangedFileCount(startMeta.changed_files) ? startMeta.changed_files : undefined,
