@@ -8,9 +8,49 @@ Built by [Naru Labs](https://github.com/sean35mm).
 
 **Documentation site:** [sean35mm.github.io/naru-opencode](https://sean35mm.github.io/naru-opencode/)
 
+## Local v2 preview (`oc2`)
+
+The overhaul has a separate, plugin-free beta preview pinned to OpenCode
+`0.0.0-beta-19086`. With Node 24 and the isolated beta already installed, build
+and create a fresh preview root plus launcher:
+
+```sh
+npm run build
+node .naru-build/tools/install-oc2.mjs \
+  --preview-cli "$PWD/.naru-build/tools/naru-preview.mjs" \
+  --opencode "$HOME/.local/share/naru-opencode-v2/node_modules/@opencode-ai/cli/bin/opencode2.exe" \
+  --v2-wrapper "$HOME/.local/bin/opencode2-naru" \
+  --root "$HOME/.local/share/naru-preview-oc2" \
+  --bin "$HOME/.local/bin/oc2"
+```
+
+Bare `oc2` is vanilla OpenCode v2 through the existing isolated wrapper; it is not
+Naru by default. `oc2 naru ...` selects the guarded Naru preview:
+
+```sh
+oc2 naru auth login
+oc2 naru models
+oc2 naru enroll /path/to/clean/repository --model provider/model --write 'src/**'
+oc2 naru open /path/to/clean/repository
+oc2 naru status
+oc2 naru integrate TASK_ID
+```
+
+The installer refuses to overwrite either path and does not copy stable credentials.
+Naru's native v2 agents deny all host tools except the capability-scoped broker MCP;
+commits, pushes, releases, and other delivery remain unavailable. Isolated checks omit
+dependency directories such as `node_modules`, install nothing, and are therefore
+limited to dependency-free checks or available system runtimes.
+See the [preview guide](docs/src/content/docs/reference/opencode-v2-migration.md).
+This does not complete the overhaul or qualify a release. Semantic routing, full DAG
+and recovery behavior, Claude Code, and delivery are unfinished. The mock-provider
+workflow has passed, but no real provider was authenticated or tested for this preview.
+
 ## Install
 
-Requirements: OpenCode >= 1.18.4 and Node 24. Naru needs `subagent_depth` of at least 1, which OpenCode's default already satisfies. An authenticated `gh` is needed only for GitHub reads and review posting.
+Requirements: a recognized stable OpenCode build (**1.18.4** or **1.18.28**) and Node 24. Other builds fail closed until they are added to the tested stable profile. Naru needs `subagent_depth` of at least 1, which OpenCode's default already satisfies. An authenticated `gh` is needed only for GitHub reads and review posting.
+
+The `overhaul/host-agnostic` branch also installs and exercises OpenCode **0.0.0-beta-19086** under a separate exploratory profile. That beta is not stable upstream, is never release-qualified by Naru, and does not yet have full Naru parity.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstrap.sh | sh
@@ -60,7 +100,7 @@ Restart OpenCode after applying. Then select `naru-orchestrator` in the agent pi
 | --- | --- | --- | --- |
 | `naru-orchestrator` | primary, visible | Plan, read, delegate, call the Naru tools, report | Edit files, run bash |
 | `naru-reader` | subagent | Read-only investigation: find code, trace behavior, diagnose, review | Run bash, edit files |
-| `naru-runner` | subagent | Everything a reader can, plus a shell: tests, typecheck, lint, build, repro | Edit files |
+| `naru-runner` | subagent | Read-only inspection plus `naru-check` in a disposable contained copy | Edit files |
 | `naru-writer` | subagent | The only role with edit and `apply_patch` | Spawn children |
 
 Use `naru-reader` liberally — it is the cheap, wide instrument, and the lens belongs in the dispatch prompt rather than in a separate agent. One reader maps ownership, another traces a failure, another weighs a design against its failure modes.
@@ -114,7 +154,7 @@ A complete same-head v5 review may supersede exactly one prior limited v4 or v5 
 
 ### Per-dispatch models (naru-dispatch)
 
-Naru ships one plugin, `plugins/naru-dispatch.js`. It registers no tools and creates no sessions — it hooks only OpenCode's `config` hook. At startup it reads the optional `models` block from `naru-runtime.json` and clones the three base subagents into hidden per-class variants — `naru-reader-<class>`, `naru-runner-<class>`, `naru-writer-<class>` — each with the class's model and reasoning effort baked in. The orchestrator dispatches these variants by name through OpenCode's native `task` tool: a cheap class for wide reader fan-out, a strong one for a tricky edit, both in the same turn if the work calls for it. In the TUI they render as ordinary subagent cards with the class visible in the agent name. When model choice doesn't matter, the plain base agents remain the right target; without the plugin, nothing breaks — there are simply no variants.
+Naru ships one plugin, `plugins/naru-dispatch.js`. It registers no tools and creates no sessions — it hooks only OpenCode's `config` hook. At startup it reads the optional `models` block from `naru-runtime.json` and clones the three base subagents into hidden per-class variants — `naru-reader-<class>`, `naru-runner-<class>`, `naru-writer-<class>` — each with the class's model and reasoning effort baked in. The orchestrator dispatches these variants by name through OpenCode's native `task` tool: a cheap class for wide reader fan-out, a strong one for a tricky edit, both in the same turn if the work calls for it. In the TUI they render as ordinary subagent cards with the class visible in the agent name. When model choice doesn't matter, the plain base agents remain the right target; the base agents remain available if the plugin fails. Review defaults are rendered independently of variant generation; removing the plugin also removes its configuration hook.
 
 Classes are your own names, defined in an optional `models` block in `naru-runtime.json` (the schema is unchanged from earlier releases). Each maps to a short description of when to pick it and an ordered chain of `provider/model@effort` entries:
 

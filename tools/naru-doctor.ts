@@ -9,8 +9,8 @@ import { INSTALL_MANIFEST_FILE, inferInstallSourceRoot, inspectInstallManifest, 
 import type { InstallOptions } from './naru-lib/install-manifest.mjs';
 import { loadRuntimeConfigFile } from './naru-lib/runtime-config.mjs';
 import { parseModelsConfig } from './naru-lib/dispatch.mjs';
-const REPORT_SCHEMA_VERSION = 1;
-const MIN_OPENCODE_VERSION = '1.18.4';
+import { COMPATIBILITY_POLICY, evaluateOpenCodeVersion } from './naru-lib/compatibility.mjs';
+const REPORT_SCHEMA_VERSION = 2;
 const MAX_CONFIG_BYTES = 64 * 1024;
 const MAX_ISSUES = 32;
 const MAX_REPORTED_PATHS = 10;
@@ -54,9 +54,9 @@ interface DepthReport {
     project: OpenCodeConfigState;
     custom: OpenCodeConfigState | null;
 }
-interface OpenCodeCompatibility { status: 'not-found' | 'timeout' | 'unknown' | 'supported' | 'unsupported'; version: string | null; minimum: string }
+interface OpenCodeCompatibility { status: 'not-found' | 'timeout' | 'unknown' | 'supported' | 'unsupported'; version: string | null; profile: 'stable'; recognizedBuilds: readonly string[] }
 export interface DoctorReport {
-    schemaVersion: 1;
+    schemaVersion: 2;
     diagnostic: 'naru-doctor';
     providerFree: true;
     readOnly: true;
@@ -260,17 +260,22 @@ async function openCodeConfigAt(root: string): Promise<OpenCodeConfigState> {
         return { status: 'invalid', file: selected.name, depth: null };
     }
 }
-function compareVersions(left: string, right: string): number {
-    const a = left.split('.').map(Number);
-    const b = right.split('.').map(Number);
-    for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
-        const difference = (a[index] ?? 0) - (b[index] ?? 0);
-        if (difference !== 0)
-            return Math.sign(difference);
-    }
-    return 0;
+export function evaluateDoctorOpenCodeOutput(output: unknown, successful = true): OpenCodeCompatibility {
+    const profile = 'stable';
+    const recognizedBuilds = COMPATIBILITY_POLICY.profiles.stable.recognizedBuilds;
+    const evaluation = evaluateOpenCodeVersion(profile, output);
+    if (!successful || evaluation.status === 'unrecognized')
+        return { status: 'unknown', version: null, profile, recognizedBuilds };
+    return {
+        status: evaluation.status === 'supported' ? 'supported' : 'unsupported',
+        version: evaluation.observed,
+        profile,
+        recognizedBuilds,
+    };
 }
 function openCodeCompatibility(): OpenCodeCompatibility {
+    const profile = 'stable';
+    const recognizedBuilds = COMPATIBILITY_POLICY.profiles.stable.recognizedBuilds;
     const result = spawnSync('opencode', ['--version'], {
         encoding: 'utf8',
         timeout: 2_000,
@@ -278,23 +283,12 @@ function openCodeCompatibility(): OpenCodeCompatibility {
         stdio: ['ignore', 'pipe', 'pipe'],
     });
     if (result.error && 'code' in result.error && result.error.code === 'ENOENT') {
-        return { status: 'not-found', version: null, minimum: MIN_OPENCODE_VERSION };
+        return { status: 'not-found', version: null, profile, recognizedBuilds };
     }
     if (result.error && 'code' in result.error && result.error.code === 'ETIMEDOUT') {
-        return { status: 'timeout', version: null, minimum: MIN_OPENCODE_VERSION };
+        return { status: 'timeout', version: null, profile, recognizedBuilds };
     }
-    const match = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.match(/\b(\d+\.\d+\.\d+)\b/);
-    if (result.status !== 0 || match === null) {
-        return { status: 'unknown', version: null, minimum: MIN_OPENCODE_VERSION };
-    }
-    const version = match[1];
-    if (!version)
-        return { status: 'unknown', version: null, minimum: MIN_OPENCODE_VERSION };
-    return {
-        status: compareVersions(version, MIN_OPENCODE_VERSION) >= 0 ? 'supported' : 'unsupported',
-        version,
-        minimum: MIN_OPENCODE_VERSION,
-    };
+    return evaluateDoctorOpenCodeOutput(`${result.stdout ?? ''}\n${result.stderr ?? ''}`, result.status === 0);
 }
 function addIssue(issues: DoctorIssue[], code: string, scope: string, detail: string): void {
     if (issues.length >= MAX_ISSUES)
@@ -529,7 +523,7 @@ export async function buildDoctorReport(options: DoctorOptions): Promise<DoctorR
         },
     };
     if (compatibility.opencode.status !== 'supported') {
-        addIssue(issues, 'opencode-compatibility', 'host', `OpenCode ${MIN_OPENCODE_VERSION} or later was not confirmed`);
+        addIssue(issues, 'opencode-compatibility', 'host', `a recognized stable OpenCode build (${COMPATIBILITY_POLICY.profiles.stable.recognizedBuilds.join(', ')}) was not confirmed`);
     }
     const depth = await depthState(options, issues);
     const scopes: ScopeReport[] = [];
@@ -554,7 +548,7 @@ export async function buildDoctorReport(options: DoctorOptions): Promise<DoctorR
 function renderPlain(report: DoctorReport): string {
     const lines = [
         `Naru doctor: ${report.status}`,
-        `OpenCode: ${report.compatibility.opencode.status}${report.compatibility.opencode.version ? ` (${report.compatibility.opencode.version})` : ''}; minimum ${report.compatibility.opencode.minimum}`,
+        `OpenCode: ${report.compatibility.opencode.status}${report.compatibility.opencode.version ? ` (${report.compatibility.opencode.version})` : ''}; stable profile builds ${report.compatibility.opencode.recognizedBuilds.join(', ')}`,
         `Runtime: ${report.compatibility.runtime.name} ${report.compatibility.runtime.version}`,
         `Effective subagent_depth: ${report.depth.effective ?? 'unknown'} (${report.depth.source})`,
     ];

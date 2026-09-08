@@ -1,9 +1,16 @@
-export const COMPATIBILITY_SCHEMA_VERSION = 1;
+export const COMPATIBILITY_SCHEMA_VERSION = 2;
 const COMPATIBILITY_COMPONENTS = ['opencode', 'node', 'bun', 'git', 'gh'] as const;
 const CHECK_STATUSES = ['passed', 'failed', 'omitted'] as const;
+const COMPATIBILITY_PROFILES = ['stable', 'v2-beta-exploratory'] as const;
 type UnknownRecord = Record<string, unknown>;
 export type CompatibilityComponent = typeof COMPATIBILITY_COMPONENTS[number];
 export type CompatibilityCheckStatus = typeof CHECK_STATUSES[number];
+export type CompatibilityProfile = typeof COMPATIBILITY_PROFILES[number];
+export const REQUIRED_COMPATIBILITY_CHECKS: Readonly<Record<CompatibilityProfile, readonly string[]>> = Object.freeze({
+    stable: Object.freeze(['target-platform', 'opencode-version', 'install-preview', 'install-apply', 'naru-doctor', 'opencode-help', 'opencode-debug-paths', 'opencode-debug-config', 'opencode-agent-list', 'opencode-startup', 'cleanup']),
+    'v2-beta-exploratory': Object.freeze(['target-platform', 'opencode-version', 'opencode-help', 'cleanup']),
+});
+export type CompatibilityQualification = 'stable' | 'exploratory';
 export type ObservedVersionStatus = 'unrecognized' | 'recorded' | 'supported' | 'unsupported' | 'targeted' | 'non-target';
 
 export interface ParsedSemver {
@@ -16,8 +23,9 @@ export interface ParsedSemver {
 }
 
 export interface CompatibilityRequirement {
-    kind: 'minimum' | 'major-target' | 'exact-target' | 'feature-prerequisite';
+    kind: 'explicit-builds' | 'major-target' | 'exact-target' | 'feature-prerequisite';
     version: string | null;
+    builds?: readonly string[];
 }
 
 export interface ObservedVersionEvaluation {
@@ -60,13 +68,15 @@ export interface CompatibilityVersionEvaluations {
 }
 
 export interface CompatibilityEvidence {
-    schemaVersion: 1;
+    schemaVersion: 2;
     kind: 'naru-compatibility-evidence';
-    policyVersion: 1;
+    policyVersion: 2;
     providerFree: true;
-    releaseQualification: 'not-established';
+    profile: CompatibilityProfile;
+    qualification: CompatibilityQualification;
+    releaseQualification: 'not-established' | 'ineligible-exploratory';
     candidateIdentity: 'unverified';
-    status: 'passed-local-smoke' | 'failed-local-smoke';
+    status: 'passed-local-smoke' | 'passed-exploratory-smoke' | 'failed-local-smoke' | 'failed-exploratory-smoke';
     platform: PlatformEvaluation | undefined;
     versions: CompatibilityVersionEvaluations;
     checks: CompatibilityCheck[];
@@ -92,16 +102,30 @@ function isCompatibilityComponent(value: unknown): value is CompatibilityCompone
 function isCheckStatus(value: unknown): value is CompatibilityCheckStatus {
     return typeof value === 'string' && CHECK_STATUSES.some((status) => status === value);
 }
+export function isCompatibilityProfile(value: unknown): value is CompatibilityProfile {
+    return typeof value === 'string' && COMPATIBILITY_PROFILES.some((profile) => profile === value);
+}
 function isRecord(value: unknown): value is UnknownRecord {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 export const COMPATIBILITY_POLICY = deepFreeze({
     schemaVersion: COMPATIBILITY_SCHEMA_VERSION,
-    policyVersion: 1,
+    policyVersion: 2,
     release: {
         opencode: {
             floor: '1.18.4',
-            current: '1.18.4',
+            current: '1.18.28',
+            recognizedBuilds: ['1.18.4', '1.18.28'],
+        },
+    },
+    profiles: {
+        stable: {
+            qualification: 'stable',
+            recognizedBuilds: ['1.18.4', '1.18.28'],
+        },
+        'v2-beta-exploratory': {
+            qualification: 'exploratory',
+            recognizedBuilds: ['0.0.0-beta-19086'],
         },
     },
     targets: {
@@ -210,24 +234,42 @@ export function sanitizeObservedVersion(value: unknown): string | null {
     if (typeof value !== 'string')
         return null;
     const bounded = value.slice(0, COMPATIBILITY_LIMITS.maxVersionInputChars);
-    const match = bounded.match(/(?:^|[^0-9A-Za-z.-])v?((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)(?=$|[^0-9A-Za-z.-])/);
-    const parsed = match === null ? null : parseSemver(match[1]);
+    if (bounded.length !== value.length)
+        return null;
+    const version = '((?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?)';
+    const match = bounded.match(new RegExp(`^[ \\t\\r\\n]*(?:v${version}|${version}|opencode2 v${version})[ \\t\\r\\n]*$`));
+    const parsed = match === null ? null : parseSemver(match[1] ?? match[2] ?? match[3]);
     return parsed?.normalized ?? null;
 }
-export function evaluateObservedVersion(component: unknown, output: unknown): ObservedVersionEvaluation {
+function profilePolicy(profile: unknown) {
+    if (!isCompatibilityProfile(profile))
+        throw new TypeError('unknown compatibility profile');
+    return COMPATIBILITY_POLICY.profiles[profile];
+}
+export function evaluateOpenCodeVersion(profile: unknown, output: unknown): ObservedVersionEvaluation {
+    const selected = profilePolicy(profile);
+    const observed = sanitizeObservedVersion(output);
+    return {
+        component: 'opencode',
+        observed,
+        status: observed !== null && selected.recognizedBuilds.some(build => build === observed) ? 'supported' : observed === null ? 'unrecognized' : 'unsupported',
+        requirement: { kind: 'explicit-builds', version: null, builds: selected.recognizedBuilds },
+        exactCurrent: profile === 'stable' && observed === COMPATIBILITY_POLICY.release.opencode.current,
+    };
+}
+export function evaluateObservedVersion(component: unknown, output: unknown, profile: CompatibilityProfile = 'stable'): ObservedVersionEvaluation {
     if (!isCompatibilityComponent(component)) {
         throw new TypeError('unknown compatibility component');
     }
     const typedComponent = component;
+    if (typedComponent === 'opencode')
+        return evaluateOpenCodeVersion(profile, output);
     const observed = sanitizeObservedVersion(output);
     if (observed === null) {
         return { component: typedComponent, observed: null, status: 'unrecognized', requirement: requirementFor(typedComponent) };
     }
     let status: ObservedVersionStatus = 'recorded';
-    if (typedComponent === 'opencode') {
-        status = compareSemver(observed, COMPATIBILITY_POLICY.release.opencode.floor) >= 0 ? 'supported' : 'unsupported';
-    }
-    else if (typedComponent === 'node') {
+    if (typedComponent === 'node') {
         const parsed = parseSemver(observed);
         status = parsed?.major === COMPATIBILITY_POLICY.targets.runtimes.node.major ? 'targeted' : 'non-target';
     }
@@ -239,14 +281,11 @@ export function evaluateObservedVersion(component: unknown, output: unknown): Ob
         observed,
         status,
         requirement: requirementFor(typedComponent),
-        ...(typedComponent === 'opencode' ? {
-            exactCurrent: compareSemver(observed, COMPATIBILITY_POLICY.release.opencode.current) === 0,
-        } : {}),
     };
 }
 function requirementFor(component: CompatibilityComponent): CompatibilityRequirement {
     if (component === 'opencode')
-        return { kind: 'minimum', version: COMPATIBILITY_POLICY.release.opencode.floor };
+        return { kind: 'explicit-builds', version: null, builds: COMPATIBILITY_POLICY.profiles.stable.recognizedBuilds };
     if (component === 'node')
         return { kind: 'major-target', version: '24' };
     if (component === 'bun')
@@ -317,19 +356,23 @@ function boundedCheck(value: unknown): CompatibilityCheck {
         : null;
     return { id: check.id, status: check.status, durationMs, diagnostic: diagnostic || null };
 }
-export function createCompatibilityEvidence({ platform, versions, checks, dashboard }: {
+export function createCompatibilityEvidence({ profile, platform, versions, checks, dashboard }: {
+    profile: CompatibilityProfile;
     platform?: PlatformEvaluation;
     versions?: unknown;
     checks: unknown;
     dashboard?: DashboardEvidence;
 }): CompatibilityEvidence {
+    const selectedProfile = profilePolicy(profile);
     if (!Array.isArray(checks) || checks.length > COMPATIBILITY_LIMITS.maxChecks) {
         throw new TypeError(`checks must contain at most ${COMPATIBILITY_LIMITS.maxChecks} entries`);
     }
     const boundedChecks = checks.map(boundedCheck);
+    const checkIds = new Set(boundedChecks.map(check => check.id));
+    if (checkIds.size !== boundedChecks.length) throw new TypeError('check ids must be unique');
     const versionRecord = isRecord(versions) ? versions : undefined;
     const evaluatedVersions: CompatibilityVersionEvaluations = {
-        opencode: evaluateObservedVersion('opencode', versionRecord?.opencode ?? ''),
+        opencode: evaluateOpenCodeVersion(profile, versionRecord?.opencode ?? ''),
         node: evaluateObservedVersion('node', versionRecord?.node ?? ''),
         bun: evaluateObservedVersion('bun', versionRecord?.bun ?? ''),
         git: evaluateObservedVersion('git', versionRecord?.git ?? ''),
@@ -339,16 +382,22 @@ export function createCompatibilityEvidence({ platform, versions, checks, dashbo
     const successful = platform?.status === 'targeted'
         && evaluatedVersions.opencode.status === 'supported'
         && evaluatedVersions.node.status === 'targeted'
+        && REQUIRED_COMPATIBILITY_CHECKS[profile].every(id => boundedChecks.some(check => check.id === id && check.status === 'passed'))
         && boundedChecks.every(check => check.status !== 'failed')
         && dashboardEvidence.status !== 'failed';
+    const passed = successful
+        ? selectedProfile.qualification === 'stable' ? 'passed-local-smoke' : 'passed-exploratory-smoke'
+        : selectedProfile.qualification === 'stable' ? 'failed-local-smoke' : 'failed-exploratory-smoke';
     const result: CompatibilityEvidence = {
         schemaVersion: COMPATIBILITY_SCHEMA_VERSION,
         kind: 'naru-compatibility-evidence',
         policyVersion: COMPATIBILITY_POLICY.policyVersion,
         providerFree: true,
-        releaseQualification: 'not-established',
+        profile,
+        qualification: selectedProfile.qualification,
+        releaseQualification: selectedProfile.qualification === 'stable' ? 'not-established' : 'ineligible-exploratory',
         candidateIdentity: 'unverified',
-        status: successful ? 'passed-local-smoke' : 'failed-local-smoke',
+        status: passed,
         platform,
         versions: evaluatedVersions,
         checks: boundedChecks,

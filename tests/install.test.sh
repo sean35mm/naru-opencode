@@ -30,6 +30,7 @@ cp "$ROOT/agents/naru-writer.md" "$FIXTURE/agents/naru-writer.md"
 cp "$ROOT/commands/naru.md" "$FIXTURE/commands/naru.md"
 
 # Tools
+touch "$FIXTURE/tools/naru-check.js"
 touch "$FIXTURE/tools/naru-git-read.js"
 touch "$FIXTURE/tools/naru-github-read.js"
 touch "$FIXTURE/tools/naru-github-post-review.js"

@@ -39,14 +39,14 @@ jobs:
         run: npm ci --prefix docs
       - name: Build documentation
         run: npm run build --prefix docs
-      - name: Run provider-free OpenCode compatibility smoke
+      - name: Run stable OpenCode compatibility smoke
         shell: bash
         run: |
           set -euo pipefail
-          npm install --prefix "$RUNNER_TEMP/opencode-linux-x64-1.18.4" --no-save --package-lock=false --ignore-scripts --omit=dev --no-audit --no-fund opencode-linux-x64@1.18.4
-          package_root="$(realpath "$RUNNER_TEMP/opencode-linux-x64-1.18.4")"
+          npm install --prefix "$RUNNER_TEMP/opencode-linux-x64-1.18.28" --no-save --package-lock=false --ignore-scripts --omit=dev --no-audit --no-fund opencode-linux-x64@1.18.28
+          package_root="$(realpath "$RUNNER_TEMP/opencode-linux-x64-1.18.28")"
           package_json="$package_root/node_modules/opencode-linux-x64/package.json"
-          test "$(node -p 'require(process.argv[1]).version' "$package_json")" = "1.18.4"
+          test "$(node -p 'require(process.argv[1]).version' "$package_json")" = "1.18.28"
           opencode_path="$(realpath "$package_root/node_modules/opencode-linux-x64/bin/opencode")"
           case "$opencode_path" in
             "$package_root"/*) ;;
@@ -54,6 +54,53 @@ jobs:
           esac
           test -f "$opencode_path"
           test -x "$opencode_path"
-          node .naru-build/scripts/naru-compat-smoke.mjs --opencode "$opencode_path" --source "$GITHUB_WORKSPACE/.naru-build" --json
+          node .naru-build/scripts/naru-compat-smoke.mjs --profile stable --opencode "$opencode_path" --source "$GITHUB_WORKSPACE/.naru-build" --json
+      - name: Run pinned OpenCode v2 beta exploratory smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          disposable="$(mktemp -d "$RUNNER_TEMP/opencode-v2-beta-19086.XXXXXX")"
+          trap 'rm -rf "$disposable"' EXIT
+          export HOME="$disposable/home"
+          export XDG_CONFIG_HOME="$disposable/config"
+          export XDG_DATA_HOME="$disposable/data"
+          export XDG_CACHE_HOME="$disposable/cache"
+          export XDG_STATE_HOME="$disposable/state"
+          export OPENCODE_DB="$XDG_STATE_HOME/opencode.db"
+          export npm_config_cache="$disposable/npm-cache"
+          export TMPDIR="$disposable/tmp"
+          export TMP="$TMPDIR"
+          export TEMP="$TMPDIR"
+          mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME" "$npm_config_cache" "$TMPDIR"
+
+          tarball="$TMPDIR/cli-linux-x64-0.0.0-beta-19086.tgz"
+          extract_root="$disposable/extract"
+          mkdir -p "$extract_root"
+          extract_root="$(realpath "$extract_root")"
+          curl --fail --location --silent --show-error --output "$tarball" "https://registry.npmjs.org/@opencode-ai/cli-linux-x64/-/cli-linux-x64-0.0.0-beta-19086.tgz"
+          node -e 'const { createHash } = require("node:crypto"); const { readFileSync } = require("node:fs"); const actual = "sha512-" + createHash("sha512").update(readFileSync(process.argv[1])).digest("base64"); if (actual !== "sha512-fN0YUC5Ztb76tW1yNMAIo3urC63CFUwS2gsp5NqnZMgPoZym9xdEBehpKmLsbefWnbnBfMSG4JKXHQCBOnbfLQ==") process.exit(1)' "$tarball"
+          archive_entries="$(tar -tzf "$tarball")"
+          test "$archive_entries" = $'package/package.json\npackage/bin/opencode2'
+          tar -xzf "$tarball" --directory "$extract_root" --no-same-owner --no-same-permissions
+
+          package_root="$(realpath "$extract_root/package")"
+          case "$package_root" in
+            "$extract_root"/*) ;;
+            *) exit 1 ;;
+          esac
+          test ! -L "$extract_root/package"
+          package_json="$package_root/package.json"
+          test -f "$package_json"
+          test ! -L "$package_json"
+          node -e 'const value = require(process.argv[1]); if (value.name !== "@opencode-ai/cli-linux-x64" || value.version !== "0.0.0-beta-19086") process.exit(1)' "$package_json"
+          opencode_path="$(realpath "$package_root/bin/opencode2")"
+          case "$opencode_path" in
+            "$package_root"/*) ;;
+            *) exit 1 ;;
+          esac
+          test -f "$opencode_path"
+          test ! -L "$package_root/bin/opencode2"
+          test -x "$opencode_path"
+          node .naru-build/scripts/naru-compat-smoke.mjs --profile v2-beta-exploratory --opencode "$opencode_path" --source "$GITHUB_WORKSPACE/.naru-build" --json
       - name: Check whitespace
         run: git diff --check

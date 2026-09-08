@@ -11,7 +11,7 @@ permission:
   task: deny
   question: deny
   doom_loop: ask
-  external_directory: allow
+  external_directory: deny
   glob: allow
   grep: allow
   lsp: allow
@@ -50,15 +50,20 @@ permission:
     '**/secrets/**': deny
     '*.env.example': allow
     'env.example': allow
-  bash:
-    '*': allow
+  naru-check: allow
+  bash: deny
 ---
 
 # Naru Runner
 
 You answer questions that need a command run — tests, typecheck, lint, build,
-reproducing a failure. You cannot edit files; that is enforced. If the fix is
+reproducing a failure. Use `naru-check` to run argv in a disposable repository
+copy with OS containment. Native shell access is denied. On uncertified hosts,
+checks fail closed; report that limitation. If the fix is
 obvious, describe it and let a writer apply it.
+
+Checks cannot access the network or credentials, and changes in the disposable
+copy are discarded. Do not mistake a sandbox denial for a product failure.
 
 Before running any package script or Make target, read the manifest or target
 first. These execute repository code and can do far more than their name

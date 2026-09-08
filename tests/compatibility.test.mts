@@ -9,13 +9,16 @@ import {
   classifyDashboardEvidence,
   compareSemver,
   COMPATIBILITY_POLICY,
+  REQUIRED_COMPATIBILITY_CHECKS,
   createCompatibilityEvidence,
+  evaluateOpenCodeVersion,
   evaluateObservedVersion,
   evaluatePlatformTarget,
   sanitizeObservedVersion,
 } from '../tools/naru-lib/compatibility.mjs';
 import {
   OPENCODE_SAFE_COMMANDS,
+  OPENCODE_V2_EXPLORATORY_COMMANDS,
   runBoundedProcess,
   runCompatibilitySmoke,
 } from '../scripts/naru-compat-smoke.mjs';
@@ -28,10 +31,16 @@ interface FakeOpenCodeOptions {
   agentListOutputBytes?: number;
   debugConfigOutputBytes?: number;
   failDebugConfig?: boolean;
+  disablePlugin?: boolean;
+  version?: string;
 }
 
 test('compatibility policy fixes approved targets without inventing Git or gh floors', () => {
-  assert.deepEqual(COMPATIBILITY_POLICY.release.opencode, { floor: '1.18.4', current: '1.18.4' });
+  assert.deepEqual(COMPATIBILITY_POLICY.release.opencode, {
+    floor: '1.18.4', current: '1.18.28', recognizedBuilds: ['1.18.4', '1.18.28'],
+  });
+  assert.deepEqual(COMPATIBILITY_POLICY.profiles.stable.recognizedBuilds, ['1.18.4', '1.18.28']);
+  assert.deepEqual(COMPATIBILITY_POLICY.profiles['v2-beta-exploratory'].recognizedBuilds, ['0.0.0-beta-19086']);
   assert.deepEqual(COMPATIBILITY_POLICY.targets.platforms.map(target => target.id), ['macos-arm64', 'ubuntu-x64']);
   assert.equal(COMPATIBILITY_POLICY.targets.runtimes.node.major, 24);
   assert.equal(COMPATIBILITY_POLICY.targets.runtimes.bun.exact, '1.3.9');
@@ -42,11 +51,22 @@ test('compatibility policy fixes approved targets without inventing Git or gh fl
   assert.equal(COMPATIBILITY_POLICY.features.core.minimumSubagentDepth, 1);
 });
 
-test('semantic versions and sanitized observations enforce floor versus exact-current evidence', () => {
+test('semantic versions and sanitized observations fail closed outside explicit stable builds', () => {
   assert.equal(compareSemver('1.18.4', '1.18.4'), 0);
   assert.equal(compareSemver('1.18.5', '1.18.4'), 1);
   assert.equal(compareSemver('1.18.4-rc.1', '1.18.4'), -1);
-  assert.equal(sanitizeObservedVersion('opencode version v1.18.4\nTOKEN=do-not-copy'), '1.18.4');
+  assert.equal(sanitizeObservedVersion(' \t1.18.28\n'), '1.18.28');
+  assert.equal(sanitizeObservedVersion('\nopencode2 v0.0.0-beta-19086 \t'), '0.0.0-beta-19086');
+  assert.equal(sanitizeObservedVersion('v24.4.0'), '24.4.0');
+  for (const output of [
+    'opencode version v1.18.4',
+    'release 1.18.28',
+    '1.18.28 release',
+    '1.18.28\n0.0.0-beta-19086',
+    'opencode2 v0.0.0-beta-19086 (beta)',
+    '1.18.28+',
+    '1.18.28 banner v1.18.28',
+  ]) assert.equal(sanitizeObservedVersion(output), null, output);
   assert.equal(sanitizeObservedVersion('TOKEN=do-not-copy'), null);
   assert.deepEqual(
     evaluateObservedVersion('opencode', '1.18.3'),
@@ -54,12 +74,19 @@ test('semantic versions and sanitized observations enforce floor versus exact-cu
       component: 'opencode',
       observed: '1.18.3',
       status: 'unsupported',
-      requirement: { kind: 'minimum', version: '1.18.4' },
+      requirement: { kind: 'explicit-builds', version: null, builds: ['1.18.4', '1.18.28'] },
       exactCurrent: false,
     },
   );
-  assert.equal(evaluateObservedVersion('opencode', '1.18.5').status, 'supported');
+  assert.equal(evaluateObservedVersion('opencode', '1.18.4').status, 'supported');
+  assert.equal(evaluateObservedVersion('opencode', '1.18.28').status, 'supported');
+  assert.equal(evaluateObservedVersion('opencode', '1.18.5').status, 'unsupported');
   assert.equal(evaluateObservedVersion('opencode', '1.18.5').exactCurrent, false);
+  assert.equal(evaluateObservedVersion('opencode', '1.99.0').status, 'unsupported');
+  assert.equal(evaluateObservedVersion('opencode', '2.0.0').status, 'unsupported');
+  assert.equal(evaluateOpenCodeVersion('v2-beta-exploratory', ' \nopencode2 v0.0.0-beta-19086\t').status, 'supported');
+  assert.equal(evaluateOpenCodeVersion('v2-beta-exploratory', '0.0.0-beta-19087').status, 'unsupported');
+  assert.throws(() => evaluateOpenCodeVersion('unknown-profile', '1.18.28'), /unknown compatibility profile/);
   assert.equal(evaluateObservedVersion('node', 'v24.4.0').status, 'targeted');
   assert.equal(evaluateObservedVersion('bun', '1.3.8').status, 'non-target');
 });
@@ -69,6 +96,7 @@ test('unsupported and unverified hosts cannot become successful local evidence',
   assert.equal(evaluatePlatformTarget({ platform: 'linux', arch: 'x64', osId: 'debian' }).status, 'unverified');
   assert.equal(evaluatePlatformTarget({ platform: 'linux', arch: 'x64', osId: 'ubuntu', wsl: true }).reason, 'wsl-unclaimed');
   const evidence = createCompatibilityEvidence({
+    profile: 'stable',
     platform: evaluatePlatformTarget({ platform: 'freebsd', arch: 'x64' }),
     versions: { node: '24.0.0', opencode: '1.18.4' },
     checks: [],
@@ -76,6 +104,38 @@ test('unsupported and unverified hosts cannot become successful local evidence',
   });
   assert.equal(evidence.status, 'failed-local-smoke');
   assert.equal(evidence.releaseQualification, 'not-established');
+});
+
+test('exploratory evidence is visibly distinct and never release-qualified', () => {
+  const evidence = createCompatibilityEvidence({
+    profile: 'v2-beta-exploratory',
+    platform: evaluatePlatformTarget({ platform: 'darwin', arch: 'arm64' }),
+    versions: { node: '24.0.0', opencode: '0.0.0-beta-19086' },
+    checks: REQUIRED_COMPATIBILITY_CHECKS['v2-beta-exploratory'].map(id => ({ id, status: 'passed', durationMs: 0, diagnostic: null })),
+  });
+  assert.equal(evidence.status, 'passed-exploratory-smoke');
+  assert.equal(evidence.profile, 'v2-beta-exploratory');
+  assert.equal(evidence.qualification, 'exploratory');
+  assert.equal(evidence.releaseQualification, 'ineligible-exploratory');
+});
+
+test('missing, omitted, failed, and duplicate required checks cannot produce passing evidence', () => {
+  for (const profile of ['stable', 'v2-beta-exploratory'] as const) {
+    const required = REQUIRED_COMPATIBILITY_CHECKS[profile].map(id => ({ id, status: 'passed', durationMs: 0, diagnostic: null }));
+    const base = { profile, platform: evaluatePlatformTarget({ platform: 'darwin', arch: 'arm64' }), versions: { node: '24.0.0', opencode: profile === 'stable' ? '1.18.28' : '0.0.0-beta-19086' } };
+    for (const checks of [[], required.slice(1), required.map(check => ({ ...check, status: 'omitted' })), required.map(check => ({ ...check, status: 'failed' }))]) {
+      assert.match(createCompatibilityEvidence({ ...base, checks }).status, /^failed-/);
+    }
+    assert.throws(() => createCompatibilityEvidence({ ...base, checks: [...required, required[0]] }), /unique/);
+  }
+});
+
+test('smoke API rejects an unknown profile before inspecting paths', async () => {
+  await assert.rejects(runCompatibilitySmoke({
+    opencodePath: '/not/inspected',
+    profile: 'unknown' as never,
+    sourcePath: '/not/inspected',
+  }), /unknown compatibility profile/);
 });
 
 test('OpenCode command allowlist contains only provider-free inspection and localhost startup surfaces', () => {
@@ -89,12 +149,15 @@ test('OpenCode command allowlist contains only provider-free inspection and loca
   ]);
   const serialized = JSON.stringify(OPENCODE_SAFE_COMMANDS);
   for (const forbidden of ['auth', 'model', 'run', 'prompt']) assert.doesNotMatch(serialized, new RegExp(`"${forbidden}"`));
+  assert.deepEqual(OPENCODE_V2_EXPLORATORY_COMMANDS.map(command => command.args), [['--version'], ['--help']]);
 });
 
 async function fakeOpenCode(directory: string, {
   agentListOutputBytes = 0,
   debugConfigOutputBytes = 0,
   failDebugConfig = false,
+  disablePlugin = false,
+  version = '1.18.4',
 }: FakeOpenCodeOptions = {}): Promise<string> {
   const executable = path.join(directory, 'fake-opencode.mjs');
   const source = `#!${process.execPath}
@@ -105,15 +168,24 @@ const agentListOutputBytes = ${agentListOutputBytes};
 const agentListOutputMarker = ${JSON.stringify(AGENT_LIST_OUTPUT_MARKER)};
 const debugConfigOutputBytes = ${debugConfigOutputBytes};
 const debugConfigOutputMarker = ${JSON.stringify(DEBUG_CONFIG_OUTPUT_MARKER)};
+const agent = { 'naru-orchestrator': { mode: 'primary', permission: { task: { '*': 'deny' } }, prompt: ${disablePlugin ? "'Plugin disabled'" : "'Effective defaults: profile=release-critical; decision=comment-only; output=concise.'"} } };
+for (const role of ['naru-reader', 'naru-runner', 'naru-writer']) {
+  agent[role] = { mode: 'subagent', permission: { '*': 'deny', task: 'deny', edit: role === 'naru-writer' ? 'allow' : 'deny', ...(role === 'naru-runner' ? { bash: 'deny', 'naru-check': 'allow' } : {}) } };
+  agent['naru-orchestrator'].permission.task[role] = 'allow';
+  if (!${disablePlugin}) {
+    agent[role + '-smoke'] = { ...agent[role], model: 'openai/naru-compat-fixture', variant: 'high' };
+    agent['naru-orchestrator'].permission.task[role + '-smoke'] = 'allow';
+  }
+}
 const required = ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'TMPDIR', 'GH_CONFIG_DIR'];
 const boundary = path.dirname(process.env.HOME || '');
 if (!boundary || required.some(key => !process.env[key]?.startsWith(boundary + path.sep))) process.exit(70);
 if (Object.keys(process.env).some(key => /(?:API_KEY|TOKEN|SECRET|PASSWORD|AUTH)$/i.test(key))) process.exit(71);
-if (args.length === 1 && args[0] === '--version') console.log('opencode 1.18.4');
+if (args.length === 1 && args[0] === '--version') console.log(${JSON.stringify(version)}.startsWith('0.0.0-beta-') ? 'opencode2 v' + ${JSON.stringify(version)} : ${JSON.stringify(version)});
 else if (args.length === 1 && args[0] === '--help') console.log('safe help');
 else if (args.join(' ') === 'debug paths') console.log('isolated paths');
 else if (args.join(' ') === 'debug config') {
-  ${failDebugConfig ? "console.error('SUPER_SECRET_VALUE'); process.exit(9);" : "if (debugConfigOutputBytes === 0) console.log('{}'); else process.stdout.write(debugConfigOutputMarker.repeat(Math.ceil(debugConfigOutputBytes / debugConfigOutputMarker.length)).slice(0, debugConfigOutputBytes));"}
+  ${failDebugConfig ? "console.error('SUPER_SECRET_VALUE'); process.exit(9);" : "console.log(JSON.stringify({agent, padding: debugConfigOutputMarker.repeat(Math.ceil(debugConfigOutputBytes / debugConfigOutputMarker.length)).slice(0, debugConfigOutputBytes)}));"}
 } else if (args.join(' ') === 'agent list') {
   if (agentListOutputBytes === 0) console.log('naru-orchestrator');
   else process.stdout.write(agentListOutputMarker.repeat(Math.ceil(agentListOutputBytes / agentListOutputMarker.length)).slice(0, agentListOutputBytes));
@@ -145,6 +217,7 @@ test('provider-free fake OpenCode smoke isolates environment, checks depth/defau
       : { platform: 'linux', arch: 'x64', osId: 'ubuntu', wsl: false };
     const report = await runCompatibilitySmoke({
       opencodePath: fake,
+      profile: 'stable',
       sourcePath: root,
       platformEvidence,
     }, { onDisposableRoot: value => { disposable = value; } });
@@ -170,12 +243,53 @@ test('failed tool output is redacted from bounded evidence', async () => {
     const fake = await fakeOpenCode(temporary, { failDebugConfig: true });
     const report = await runCompatibilitySmoke({
       opencodePath: fake,
+      profile: 'stable',
       sourcePath: root,
       platformEvidence: { platform: 'darwin', arch: 'arm64', osId: null, wsl: false },
     });
     assert.equal(report.status, 'failed-local-smoke');
     assert.equal(report.checks.find(check => check.id === 'opencode-debug-config')?.status, 'failed');
     assert.doesNotMatch(JSON.stringify(report), /SUPER_SECRET_VALUE/);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('successful host commands cannot hide a disabled dispatch plugin', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-compat-no-plugin-'));
+  try {
+    const report = await runCompatibilitySmoke({
+      opencodePath: await fakeOpenCode(temporary, { disablePlugin: true }),
+      profile: 'stable', sourcePath: root,
+      platformEvidence: { platform: 'darwin', arch: 'arm64' },
+    });
+    assert.equal(report.status, 'failed-local-smoke');
+    assert.equal(report.checks.find(check => check.id === 'opencode-debug-config')?.diagnostic, 'opencode-debug-config-naru-config-contract-failed');
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test('v2 beta smoke is exact-build exploratory and runs only confirmed commands', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-compat-v2-'));
+  try {
+    const fake = await fakeOpenCode(temporary, { version: '0.0.0-beta-19086' });
+    const report = await runCompatibilitySmoke({
+      opencodePath: fake,
+      profile: 'v2-beta-exploratory',
+      sourcePath: root,
+      platformEvidence: { platform: 'darwin', arch: 'arm64', osId: null, wsl: false },
+    });
+    assert.equal(report.status, 'passed-exploratory-smoke');
+    assert.deepEqual(report.checks.map(check => check.id), ['target-platform', 'opencode-version', 'opencode-help', 'cleanup']);
+
+    const drift = await fakeOpenCode(temporary, { version: '0.0.0-beta-19087' });
+    const failed = await runCompatibilitySmoke({
+      opencodePath: drift,
+      profile: 'v2-beta-exploratory',
+      sourcePath: root,
+      platformEvidence: { platform: 'darwin', arch: 'arm64', osId: null, wsl: false },
+    });
+    assert.equal(failed.status, 'failed-exploratory-smoke');
+    assert.deepEqual(failed.checks.map(check => check.id), ['target-platform', 'opencode-version', 'cleanup']);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

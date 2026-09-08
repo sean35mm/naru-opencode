@@ -558,6 +558,7 @@ add_md "${SRC_DIR}/agents/naru-runner.md"       "agents/naru-runner.md"
 add_md "${SRC_DIR}/agents/naru-writer.md"       "agents/naru-writer.md"
 
 # Tools and helper library (always copy-pinned).
+add_copy "${SRC_DIR}/tools/naru-check.js"             "tools/naru-check.js"
 add_copy "${SRC_DIR}/tools/naru-git-read.js"          "tools/naru-git-read.js"
 add_copy "${SRC_DIR}/tools/naru-github-read.js"       "tools/naru-github-read.js"
 add_copy "${SRC_DIR}/tools/naru-github-post-review.js" "tools/naru-github-post-review.js"

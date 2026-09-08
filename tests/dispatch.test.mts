@@ -205,6 +205,10 @@ test('the plugin hooks config only and fails open on unusable configs', async ()
   const broken = { agent: {} };
   await hooks.config(broken);
   assert.deepEqual(broken, { agent: {} });
+  const missingWriter = fakeConfig();
+  delete missingWriter.agent['naru-writer'];
+  await hooks.config(missingWriter);
+  assert.match(agent(missingWriter, 'naru-orchestrator').prompt ?? '', /Review defaults \(generated/);
 });
 
 test('appendix and labels render as documented', () => {

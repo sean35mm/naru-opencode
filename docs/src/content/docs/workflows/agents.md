@@ -35,7 +35,7 @@ flowchart TB
 | --- | --- | --- |
 | `naru-orchestrator` | primary, visible | Plans, delegates, integrates, reports |
 | `naru-reader` | subagent, hidden | Read-only investigation |
-| `naru-runner` | subagent, hidden | Read-only plus a shell |
+| `naru-runner` | subagent, hidden | Read-only plus contained verification in a disposable copy |
 | `naru-writer` | subagent, hidden | The only role that can edit |
 
 You select `naru-orchestrator` in the OpenCode agent picker. The three subagents are `hidden: true`; they are dispatch targets for the orchestrator, not things you pick.
@@ -102,10 +102,11 @@ Every agent starts from `'*': deny` and allows only what its role needs.
 | --- | --- | --- | --- | --- |
 | `read` | allow | allow | allow | allow |
 | `glob`, `grep`, `lsp` | allow | allow | allow | allow |
-| `bash` | deny | deny | allow | allow |
+| `bash` | deny | deny | deny | allow |
+| `naru-check` | deny | deny | allow | allow |
 | `edit`, `apply_patch` | deny | deny | deny | **allow** |
 | `task` (spawn) | three subagents (plus their generated class variants) | deny | deny | deny |
-| `external_directory` | — | deny | allow | allow |
+| `external_directory` | — | deny | deny | allow |
 | `question` (ask the user) | allow | deny | deny | deny |
 | `naru-git-read`, `naru-github-read` | allow | allow | allow | allow |
 | `naru-github-post-review` | allow | deny | deny | deny |

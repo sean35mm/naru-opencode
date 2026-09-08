@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { evaluateDoctorOpenCodeOutput } from '../tools/naru-doctor.js';
 import { parseRuntimeConfig } from '../tools/naru-lib/runtime-config.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -32,6 +33,7 @@ interface DoctorReport {
   diagnostic: string;
   providerFree: boolean;
   readOnly: boolean;
+  compatibility: { opencode: { status: string; version: string | null; profile: string; recognizedBuilds: string[] } };
   depth: { effective: number; source: string };
   scopes: DoctorScope[];
   issues: Array<{ code: string }>;
@@ -54,6 +56,17 @@ test('runtime review defaults are backward-safe and strictly validated', () => {
   });
   assert.throws(() => parseRuntimeConfig({ review: { defaultProfile: 'critical' } }), /defaultProfile/);
   assert.throws(() => parseRuntimeConfig({ review: { ticket: true } }), /unknown fields/);
+});
+
+test('doctor supports only explicit stable OpenCode builds', () => {
+  assert.equal(evaluateDoctorOpenCodeOutput('1.18.4').status, 'supported');
+  assert.equal(evaluateDoctorOpenCodeOutput('1.18.28').status, 'supported');
+  assert.equal(evaluateDoctorOpenCodeOutput('1.18.29').status, 'unsupported');
+  assert.equal(evaluateDoctorOpenCodeOutput('1.99.0').status, 'unsupported');
+  assert.equal(evaluateDoctorOpenCodeOutput('2.0.0').status, 'unsupported');
+  assert.equal(evaluateDoctorOpenCodeOutput('opencode2 v0.0.0-beta-19086').status, 'unsupported');
+  assert.equal(evaluateDoctorOpenCodeOutput('not a version').status, 'unknown');
+  assert.equal(evaluateDoctorOpenCodeOutput('1.18.28', false).status, 'unknown');
 });
 
 async function copyInstallSource(destination: string): Promise<void> {
@@ -124,7 +137,7 @@ test('doctor is read-only and diagnoses scope, default depth, and source generat
     const manifestBefore = await readFile(manifestPath, 'utf8');
 
     let report = runDoctor(doctor, { home, project, source });
-    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.schemaVersion, 2);
     assert.equal(report.diagnostic, 'naru-doctor');
     assert.equal(report.providerFree, true);
     assert.equal(report.readOnly, true);

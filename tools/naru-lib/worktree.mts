@@ -1,6 +1,6 @@
 import { constants as fsConstants } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { lstat, mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -24,6 +24,7 @@ export interface WorktreeItem {
     ownedWriteScope: string[];
     integrated: boolean;
     changedPaths: string[];
+    approvedDigest?: string;
 }
 
 export interface WorktreeRun {
@@ -99,6 +100,13 @@ export interface CreateWriterWorktreeOptions extends BaseRunOptions {
 
 export interface WriterWorktreeOptions extends BaseRunOptions {
     itemId: string;
+    approved?: ApprovedWriterChanges | undefined;
+}
+
+export interface ApprovedWriterChanges {
+    patch: string;
+    changedPaths: string[];
+    files: Array<{ path: string; content: string }>;
 }
 
 export interface RecoverWorktreeRunOptions extends BaseRunOptions {
@@ -326,6 +334,9 @@ function publicRun(runState: WorktreeRunState): WorktreeRun {
             changedPaths: [...item.changedPaths],
         })),
     };
+}
+function digestApprovedChanges(approved: ApprovedWriterChanges): string {
+    return createHash('sha256').update(JSON.stringify(approved)).digest('hex');
 }
 function stateFor(runId: string, stateRegistry: WorktreeRegistry = registry()): WorktreeRunState {
     const state = stateRegistry.get(runId);
@@ -611,6 +622,35 @@ async function copyUntracked(source: string, target: string, paths: string[], cr
     for (const path of paths)
         await copyRegularFile(source, target, path, created);
 }
+async function copyCapturedFile(target: string, path: string, content: string, created: FilesystemOperationRecord[]): Promise<void> {
+    if (typeof content !== 'string' || Buffer.byteLength(content) > MAX_UNTRACKED_FILE_BYTES)
+        throw new Error(`approved untracked file exceeds ${MAX_UNTRACKED_FILE_BYTES} bytes: ${path}`);
+    const targetParent = await safeAncestor(target, path, { create: true });
+    const destination = join(target, path);
+    let handle: FileHandle | undefined;
+    let record: FilesystemOperationRecord | undefined;
+    try {
+        handle = await open(destination, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0), 0o600);
+        const stats = await handle.stat({ bigint: true });
+        record = { path, destination, dev: stats.dev, ino: stats.ino, expected: undefined };
+        created.push(record);
+        const pathStats = await lstat(destination, { bigint: true });
+        if (await realpath(targetParent) !== targetParent || pathStats.dev !== stats.dev || pathStats.ino !== stats.ino)
+            throw new Error(`approved target escaped its root while opening: ${path}`);
+        await handle.writeFile(content);
+        await handle.sync();
+    }
+    catch (error) {
+        if (hasErrorCode(error, 'EEXIST')) throw new Error(`approved untracked path already exists in target workspace: ${path}`);
+        throw error;
+    }
+    finally {
+        if (handle) {
+            try { if (record) record.expected = await handle.stat({ bigint: true }); }
+            finally { await handle.close().catch(() => { }); }
+        }
+    }
+}
 function sameCreatedFile(stats: BigIntStats, record: FilesystemOperationRecord): boolean {
     return record.expected !== undefined
         && stats.isFile()
@@ -659,7 +699,7 @@ async function faultAfterRollback(runState: WorktreeRunState, error: unknown, ta
     const rollback = residuals.length ? `rollback residual: ${residuals.join('; ')}` : 'rollback completed';
     throw new Error(`${error instanceof Error ? error.message : String(error)}; ${rollback}`, { cause: error });
 }
-async function integrateWriterWorktreeUnlocked({ runId, itemId, spawn, stateRegistry, }: WriterWorktreeOptions & { stateRegistry: WorktreeRegistry }): Promise<IntegrationResult> {
+async function integrateWriterWorktreeUnlocked({ runId, itemId, approved, spawn, stateRegistry, }: WriterWorktreeOptions & { stateRegistry: WorktreeRegistry }): Promise<IntegrationResult> {
     const runState = stateFor(runId, stateRegistry);
     if (runState.finalized || runState.faulted)
         throw new Error('worktree run cannot integrate more items');
@@ -668,22 +708,50 @@ async function integrateWriterWorktreeUnlocked({ runId, itemId, spawn, stateRegi
         throw new Error(`unknown writer worktree: ${itemId}`);
     if (item.integrated)
         throw new Error(`writer worktree is already integrated: ${itemId}`);
-    const changes = await changesAt(item.path, spawn);
+    let changes: WorktreeChanges;
+    if (approved) {
+        if (runState.integratedPaths.size !== 0)
+            throw new Error('approved writer bundles require an empty integration workspace');
+        if (typeof approved.patch !== 'string' || Buffer.byteLength(approved.patch) > MAX_OUTPUT_BYTES
+            || !Array.isArray(approved.changedPaths) || approved.changedPaths.length > 65536
+            || !Array.isArray(approved.files) || approved.files.length > 50000)
+            throw new Error('approved writer bundle is invalid');
+        const paths = [...new Set(approved.changedPaths)].sort();
+        if (paths.length !== approved.changedPaths.length || !paths.every((path, index) => path === approved.changedPaths[index]))
+            throw new Error('approved writer paths must be unique and sorted');
+        const filePaths = approved.files.map((file) => file.path);
+        if (approved.files.some((file) => typeof file.path !== 'string' || typeof file.content !== 'string')
+            || new Set(filePaths).size !== filePaths.length
+            || filePaths.some((path) => !paths.includes(path))
+            || approved.files.reduce((total, file) => total + (typeof file.content === 'string' ? Buffer.byteLength(file.content) : 0), 0) > 512 * 1024 * 1024) {
+            throw new Error('approved untracked files do not match approved writer paths');
+        }
+        changes = { tracked: paths.filter((path) => !filePaths.includes(path)), untracked: [...filePaths].sort(), all: paths };
+    }
+    else changes = await changesAt(item.path, spawn);
     assertContained(item, changes.all);
-    await rejectSymlinks(item.path, changes.all);
+    if (!approved) await rejectSymlinks(item.path, changes.all);
     const overlap = changes.all.filter((path) => runState.integratedPaths.has(path));
     if (overlap.length)
         throw new Error(`writer changes overlap previously integrated paths: ${overlap.join(', ')}`);
-    const patch = await trackedPatch(item.path, spawn);
+    const patch = approved?.patch ?? await trackedPatch(item.path, spawn);
     const created: FilesystemOperationRecord[] = [];
     let patchApplied = false;
     try {
         await applyPatch(runState.integrationPath, patch, spawn, true);
         await applyPatch(runState.integrationPath, patch, spawn, false);
         patchApplied = Boolean(patch);
-        await copyUntracked(item.path, runState.integrationPath, changes.untracked, created);
+        if (approved) {
+            for (const file of approved.files) await copyCapturedFile(runState.integrationPath, file.path, file.content, created);
+            const actual = (await changesAt(runState.integrationPath, spawn)).all.filter((path) => !runState.integratedPaths.has(path));
+            if (actual.length !== changes.all.length || actual.some((path, index) => path !== changes.all[index]))
+                throw new Error('approved patch paths do not match the captured bundle');
+            await rejectSymlinks(runState.integrationPath, changes.all);
+        }
+        else await copyUntracked(item.path, runState.integrationPath, changes.untracked, created);
         item.integrated = true;
         item.changedPaths = changes.all;
+        if (approved) item.approvedDigest = digestApprovedChanges(approved);
         for (const path of changes.all)
             runState.integratedPaths.add(path);
         await writeMetadata(runState);
@@ -691,13 +759,14 @@ async function integrateWriterWorktreeUnlocked({ runId, itemId, spawn, stateRegi
     catch (error) {
         item.integrated = false;
         item.changedPaths = [];
+        delete item.approvedDigest;
         for (const path of changes.all)
             runState.integratedPaths.delete(path);
         await faultAfterRollback(runState, error, runState.integrationPath, patchApplied ? patch : '', created, spawn);
     }
     return { itemId, changedPaths: [...changes.all], integrationPath: runState.integrationPath };
 }
-async function finalizeWorktreeRunUnlocked({ runId, spawn, stateRegistry, }: BaseRunOptions & { stateRegistry: WorktreeRegistry }): Promise<FinalizationResult> {
+async function finalizeWorktreeRunUnlocked({ runId, approved, spawn, stateRegistry, }: BaseRunOptions & { approved?: ApprovedWriterChanges; stateRegistry: WorktreeRegistry }): Promise<FinalizationResult> {
     const runState = stateFor(runId, stateRegistry);
     if (runState.finalized || runState.faulted)
         throw new Error('worktree run cannot be finalized');
@@ -718,19 +787,40 @@ async function finalizeWorktreeRunUnlocked({ runId, spawn, stateRegistry, }: Bas
     })).trim();
     if (head !== runState.baseSha)
         throw new Error('main workspace revision changed during isolated writer run');
-    const changes = await changesAt(runState.integrationPath, spawn);
-    const unexpected = changes.all.filter((path) => !runState.integratedPaths.has(path));
-    if (unexpected.length)
-        throw new Error(`integration workspace contains unowned changes: ${unexpected.join(', ')}`);
-    const patch = await trackedPatch(runState.integrationPath, spawn);
-    await rejectSymlinks(runState.integrationPath, changes.all);
+    let changes: WorktreeChanges;
+    let patch: string;
+    if (approved) {
+        const item = [...runState.items.values()].find(candidate => candidate.approvedDigest === digestApprovedChanges(approved));
+        if (!item || item.changedPaths.length !== approved.changedPaths.length
+            || item.changedPaths.some((path, index) => path !== approved.changedPaths[index])) {
+            throw new Error('finalization bundle does not match the approved integration');
+        }
+        const untracked = approved.files.map(file => file.path).sort();
+        changes = { tracked: approved.changedPaths.filter(path => !untracked.includes(path)), untracked, all: approved.changedPaths };
+        patch = approved.patch;
+    }
+    else {
+        changes = await changesAt(runState.integrationPath, spawn);
+        const unexpected = changes.all.filter((path) => !runState.integratedPaths.has(path));
+        if (unexpected.length)
+            throw new Error(`integration workspace contains unowned changes: ${unexpected.join(', ')}`);
+        patch = await trackedPatch(runState.integrationPath, spawn);
+        await rejectSymlinks(runState.integrationPath, changes.all);
+    }
     await applyPatch(runState.repository, patch, spawn, true);
     const created: FilesystemOperationRecord[] = [];
     let patchApplied = false;
     try {
         await applyPatch(runState.repository, patch, spawn, false);
         patchApplied = Boolean(patch);
-        await copyUntracked(runState.integrationPath, runState.repository, changes.untracked, created);
+        if (approved) {
+            for (const file of approved.files) await copyCapturedFile(runState.repository, file.path, file.content, created);
+            const actual = (await changesAt(runState.repository, spawn)).all;
+            if (actual.length !== changes.all.length || actual.some((path, index) => path !== changes.all[index]))
+                throw new Error('finalized patch paths do not match the approved bundle');
+            await rejectSymlinks(runState.repository, changes.all);
+        }
+        else await copyUntracked(runState.integrationPath, runState.repository, changes.untracked, created);
         runState.finalized = true;
         await writeMetadata(runState);
     }
@@ -894,7 +984,7 @@ export async function integrateWriterWorktree(options: WriterWorktreeOptions): P
     const stateRegistry = options.stateRegistry ?? registry();
     return withRunLock(options.runId, () => integrateWriterWorktreeUnlocked({ ...options, stateRegistry }));
 }
-export async function finalizeWorktreeRun(options: BaseRunOptions): Promise<FinalizationResult> {
+export async function finalizeWorktreeRun(options: BaseRunOptions & { approved?: ApprovedWriterChanges }): Promise<FinalizationResult> {
     const stateRegistry = options.stateRegistry ?? registry();
     return withRunLock(options.runId, () => finalizeWorktreeRunUnlocked({ ...options, stateRegistry }));
 }

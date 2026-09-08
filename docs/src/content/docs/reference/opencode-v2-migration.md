@@ -1,119 +1,127 @@
 ---
-title: OpenCode v2 migration plan
-description: What Naru must carry across to OpenCode v2, and what it no longer has to.
+title: OpenCode v2 migration and local preview
+description: The plugin-free local preview, supported boundaries, and remaining conformance work.
 ---
 
-> **Research snapshot: August 4, 2026**, pinned to the OpenCode `v2` branch at [`28d784b`](https://github.com/anomalyco/opencode/tree/28d784b83a413c5d4c306de7ba1a229462e40a6b). Provisional until revalidated against a released public API. This page does not claim v2 compatibility or predict a release date.
+The host-neutral architecture in `OVERHAUL_PLAN.md` supersedes the earlier
+prompt-only migration strategy. OpenCode owns conversations, inference, provider
+credentials, and UI. Naru owns repository enrollment, scoped tool access, durable
+attempt records, isolated writer worktrees, and explicit integration approval.
+Naru must not add an autonomous scheduler that invents or starts work.
 
-## The migration got much smaller
+## Local development preview
 
-Naru's v-next simplification deleted most of what would have needed migrating.
-The Protocol 3 scheduler was coupled to the v1 `task` tool's
-`tool.execute.before` hook via an admission marker smuggled through the Task
-description. The delegate plugin mutated OpenCode's live agent config to inject
-hidden model aliases. The dashboard was a bespoke TUI plugin. All three were the
-deepest v1 couplings Naru had, and all three are gone.
+The preview uses the existing native `@opencode-ai/cli@0.0.0-beta-19086`
+installation. It does not upgrade OpenCode or install an OpenCode plugin.
+Its command, configuration, host data, broker socket, and worktrees live in a
+separate preview root. The stable Naru installer and upgrade channel are unchanged.
 
-What remains to migrate:
+From the checkout, with Node 24 and the isolated beta already installed, build and
+install a fresh snapshot. Both destinations must be absent; the installer refuses
+to overwrite them:
 
-- **Agent definitions** — already plain OpenCode agent markdown with permission
-  frontmatter and static `model:` fields. v2's agent-level model configuration is
-  what these already assume, so this should be close to a no-op.
-- **Five custom tools** — `naru-git-read`, `naru-github-read`,
-  `naru-github-post-review`, `naru-worktree`, plus `naru-doctor`. These depend on
-  the custom-tool calling convention and its input-schema validation.
-- **One worktree adapter** — the only component with real platform overlap.
+```sh
+npm run build
+node .naru-build/tools/install-oc2.mjs \
+  --preview-cli "$PWD/.naru-build/tools/naru-preview.mjs" \
+  --opencode "$HOME/.local/share/naru-opencode-v2/node_modules/@opencode-ai/cli/bin/opencode2.exe" \
+  --v2-wrapper "$HOME/.local/bin/opencode2-naru" \
+  --root "$HOME/.local/share/naru-preview-oc2" \
+  --bin "$HOME/.local/bin/oc2"
+```
 
-One plugin remains: `naru-dispatch`, which uses only the `config` hook to generate per-class agent variants — no tool registration, no session creation. It is the only Naru dependency on the plugin API surface.
+Bare `oc2` remains vanilla OpenCode v2 through the isolated `opencode2-naru`
+wrapper. It is not Naru by default. Use the explicit `naru` route for:
 
-## Architectural boundary
+```sh
+oc2 naru auth login
+oc2 naru models
+oc2 naru enroll /path/to/repository --model provider/model --write 'src/**'
+oc2 naru open /path/to/repository
+oc2 naru status
+oc2 naru integrate TASK_ID
+oc2 naru stop
+```
 
-**OpenCode owns execution; Naru owns policy.**
+Replace `provider/model` with an exact model available to your authenticated
+OpenCode account. `--model` accepts comma-separated exact models; `--write`
+accepts comma-separated scopes. Omitting `--write` enrolls read-only access.
+Provider login is handled by OpenCode in the preview profile; credentials are
+never copied from stable OpenCode. Pick the orchestrator model in OpenCode.
+OpenCode keeps preview credentials and conversations in one preview-only database;
+each host process has separate configuration and an authenticated local server.
+The adapter waits for MCP registration before inference to avoid the pinned beta's
+initial tool-catalog race. Project configuration loading is disabled in these hosts.
 
-OpenCode owns sessions, subagent execution, cancellation, permission evaluation,
-project copies, and transport. Naru owns which walls exist and where: who may
-edit, what needs a checkpoint, and what evidence completion requires.
+The host projection denies native tools and exposes Naru over MCP. The broker
+issues separate capabilities to the orchestrator and each leaf attempt. Workers
+cannot start other workers, choose another repository, or integrate changes.
+Model selection must match the enrollment allowlist; no fallback is performed.
+There are at most two simultaneous attempts and no autonomous queue.
 
-The lesson from the v-next simplification is that this boundary was previously
-drawn in the wrong place. Naru had reimplemented scheduling, admission control,
-and telemetry — all of it process-local, non-durable, and off by default. Do not
-rebuild any of that against v2.
+Writers start from a clean Git repository in isolated worktrees. File writes are
+restricted to enrollment scopes and checked against the hash returned by a prior
+read. Existing source files stay unchanged until `integrate` displays a finite
+bundle and the user confirms its digest in a terminal. The digest authorizes
+immutable patch and untracked-file bytes captured in that bundle. Integration uses
+those same bytes; later writer-worktree changes are not re-read into the target.
+Integration creates no commit and performs no remote delivery.
 
-## Build now
+Verification commands run in disposable copies under macOS filesystem/network
+containment. They cannot access user credentials or mutate the original checkout.
+They may change the disposable copy; those changes are discarded. A sandbox denial
+is a failed check, not a successful verification. Other platforms fail closed for
+this operation until independently certified. Dependency directories such as
+`node_modules` are omitted, and the preview never installs dependencies. These checks
+are usable only when dependency-free or when the required runtime is already available.
+This boundary constrains preview workers; it is not a claim that Naru can sandbox a
+malicious host executable itself.
 
-Keep policy in prompts and enforcement in permissions. The orchestrator decides
-fan-out at reasoning time; there is no scheduler, no mode matrix, and no
-child-count contract to preserve across the migration. The only durable runtime
-settings are `implementation.workspaceMode` and a `maxConcurrentWriters` brake.
+## Evidence and limitations
 
-## Avoid now
+The original `v2-beta-exploratory` profile verifies only the exact executable's
+version/help surfaces and remains release-ineligible. It is not the preview's
+behavioral conformance test and cannot establish full v2 parity.
 
-Do not build a background job or session store, a workflow DSL or TUI, a durable
-scheduler, another low-level worktree implementation, or any new coupling to the
-v1 `task` tool internals. Each duplicates likely platform ownership or re-creates
-what was just removed.
+Run the native local workflow check on macOS with Node 24 after building:
 
-## Current v2 substrate and gaps
+```sh
+npm run test:preview:built -- /absolute/path/to/the/pinned/native/opencode2
+```
 
-The pinned v2 source already provides foreground and background subagents backed
-by child sessions, agent-level model configuration, durable session inputs with
-managed restart continuity, typed Effect and Promise plugin/client APIs, and a
-Git-backed project-copy worktree primitive.
+It uses the real beta with a local mock provider to exercise MCP, exact-model
+dispatch, isolated editing and verification, and finite integration. It uses no
+provider credentials or paid inference. `auth login --help` and `models --help` on
+the pinned beta confirm the standalone flags used by the preview, but no real provider
+was authenticated or inferred against. Those remain user verification steps.
 
-Open gaps: the Job registry is intentionally process-local; parent/child subagent
-completion across restart is unresolved; no durable workflow or DAG scheduler has
-merged; the subagent tool has no resume argument; parent permission inheritance is
-incomplete; and APIs are still moving.
+This is a development preview, not completion of the overhaul. It supports local
+inspection, exact-model leaf attempts, scoped text edits, bounded isolated checks,
+and terminal-approved integration. Durable records survive broker restarts;
+interrupted attempts are not automatically retried. An integration interrupted at
+an uncertain boundary requires manual inspection and is not replayed.
 
-Only the last two matter to Naru now. **Permission inheritance is the critical
-one** — Naru's entire safety model rests on the permission frontmatter being
-enforced, especially that only `naru-writer` holds `edit`. Verify that first.
+Still pending: semantic model routing and catalog policy, full DAG/gate contracts,
+resume/reconciliation across every failure boundary, retention/pinning, staged
+delivery, Claude Code, Linux containment certification, and curl-distributed
+preview releases with migration/rollback evidence. Keep this branch away from
+`main` until the plan's applicable acceptance gates pass.
 
-## Migration triggers and stages
+## Upstream contracts
 
-Start only after OpenCode publishes a stable v2 release and public API. Then, in
-reversible stages:
+The installed beta has native `permissions` rules, agent `system` prompts,
+`mcp.servers`, `debug agents`, and standalone API/run commands. Pin and exercise
+these concrete surfaces rather than assuming a v1 custom-tool interface works.
+The current upstream subagent contract includes `sessionID` for continuation;
+the older August 2026 statement that no resume argument exists is superseded.
+Source snapshots remain provisional until validated against the selected binary
+and a stable public release.
 
-1. **Freeze evidence.** Pin the released version and add compatibility fixtures
-   for the public surfaces Naru uses.
-2. **Verify permissions first.** Confirm parent-to-child permission inheritance
-   and denial behavior, and that a non-writer agent genuinely cannot edit. If this
-   does not hold, stop — nothing else is worth migrating until it does.
-3. **Port the custom tools.** Map the five tools onto the v2 tool convention,
-   preserving schema validation, policy-and-evidence-derived review events, and
-   the orchestrator-only one-POST/no-retry boundary.
-4. **Confirm agent routing.** Per-agent model selection, overrides, and
-   unavailable-model failures, using the static `model:` frontmatter.
-5. **Migrate worktrees last.** Replace `naru-worktree` with the native
-   project-copy primitive only once containment, integration, and rollback are at
-   least equivalent.
-6. **Retain fallback** until the v2 path passes the supported matrix.
+## Required release gates
 
-## Upstream watchlist
-
-Merged code beats open proposals. Recheck at migration time.
-
-| Upstream item | Snapshot status | Still relevant? |
-| --- | --- | --- |
-| [`v2` branch](https://github.com/anomalyco/opencode/tree/v2) | Source under evaluation | Yes — authoritative surface |
-| [Issue #36349](https://github.com/anomalyco/opencode/issues/36349) | Open issue | Yes — restart-safe parent completion |
-| [PR #36530](https://github.com/anomalyco/opencode/pull/36530) | Merged | Yes — background completion UI |
-| [PR #34947](https://github.com/anomalyco/opencode/pull/34947) | Open proposal | Yes — dispatch controls |
-| [PR #38954](https://github.com/anomalyco/opencode/pull/38954) | Open proposal | Yes — child cap |
-| [PR #29789](https://github.com/anomalyco/opencode/pull/29789) | Open proposal | No — Naru no longer has a workflow engine to reconcile |
-| [PR #40327](https://github.com/anomalyco/opencode/pull/40327) | Open proposal | Revisit — the `naru-dispatch` plugin now uses only the `config` hook, not tool registration |
-| [PR #35935](https://github.com/anomalyco/opencode/pull/35935) | Open proposal | No — no telemetry surface remains |
-| [Issue #34359](https://github.com/anomalyco/opencode/issues/34359) | Open issue | No — no TUI surface remains |
-
-## Release-day revalidation
-
-- [ ] Pin the released version, public API, and source revisions.
-- [ ] Run compatibility fixtures without provider credentials.
-- [ ] **Confirm only `naru-writer` can edit, and that read-only agents cannot shell out.**
-- [ ] Confirm parent-to-child permission inheritance and denial behavior.
-- [ ] Confirm per-agent model routing and unavailable-model failures.
-- [ ] Confirm the posting tool accepts no raw event, derives formal decisions only within explicit current-message policy and complete evidence, and still cannot merge.
-- [ ] Validate project-copy containment, integration, cleanup, and rollback.
-- [ ] Confirm cancellation reaches child work and reports a terminal state.
-- [ ] Exercise fallback to the prior adapter without changing agent identifiers.
-- [ ] Recheck every watchlist item and drop assumptions that did not merge.
+- Prove permission denial, leaf-only execution, repository narrowing, and containment.
+- Prove exact and semantic routing and pre-execution-only fallback rules.
+- Exercise cancellation, restarts, duplicate requests, uncertain integration, and recovery.
+- Prove trusted finite approval and protection against untrusted MCP metadata.
+- Run the same conformance expectations for each supported host and platform.
+- Keep the legacy plugin for a documented deprecation release until replacement parity passes.

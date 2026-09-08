@@ -15,6 +15,7 @@ permission:
   glob: allow
   grep: allow
   lsp: allow
+  naru-check: allow
   naru-git-read: allow
   naru-github-read: allow
   codebase-memory-mcp_list_projects: allow

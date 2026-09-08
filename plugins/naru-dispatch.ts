@@ -12,7 +12,8 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
-    applyRuntimeToConfigAtomically,
+    applyReviewDefaultsToConfig,
+    applyVariantsToConfig,
     parseModelsConfig,
     readAuthProviders,
 } from '../tools/naru-lib/dispatch.mjs';
@@ -74,11 +75,15 @@ export const NaruDispatchPlugin = async (): Promise<OpenCodePluginHooks> => {
         config: async (config: OpenCodeConfig) => {
             if (!runtime) return;
             try {
-                applyRuntimeToConfigAtomically(config, classes, authProviders, runtime.review);
+                applyReviewDefaultsToConfig(config, runtime.review);
             }
             catch {
-                // Fail open: a config this hook cannot safely extend is left
-                // exactly as OpenCode built it.
+                // Review configuration does not depend on model dispatch.
+            }
+            try {
+                applyVariantsToConfig(config, classes, authProviders);
+            } catch {
+                // Broken routing leaves the independently applied review defaults intact.
             }
         },
     };

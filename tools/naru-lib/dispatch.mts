@@ -1,3 +1,5 @@
+import { buildReviewDefaultsAppendix } from './review-defaults.mjs';
+export { buildReviewDefaultsAppendix } from './review-defaults.mjs';
 // Naru dispatch: per-task model selection via generated agent variants.
 //
 // The optional `models` block in naru-runtime.json defines model classes.
@@ -174,22 +176,6 @@ function replaceBoundedAppendix(prompt: string, beginMarker: string, endMarker: 
         ? prompt.trimEnd()
         : (prompt.slice(0, begin) + (end === -1 ? '' : prompt.slice(end + endMarker.length))).trimEnd();
     return appendix ? `${bare}\n\n${appendix}` : bare;
-}
-
-export function buildReviewDefaultsAppendix(review: RuntimeReviewConfig): string {
-    return [
-        REVIEW_APPENDIX_BEGIN,
-        '',
-        '## Review defaults (generated from naru-runtime.json)',
-        '',
-        `Effective defaults: profile=${review.defaultProfile}; decision=${review.defaultDecision}; output=${review.defaultOutput}.`,
-        'Persistent configuration never authorizes a post or formal review state. For generic',
-        'current-message post/comment/submit requests, decision is always comment-only even when',
-        'defaultDecision=automatic. Only the native /naru ship-review invocation itself authorizes',
-        'automatic select-state for its finite targets; it also supplies release-critical/concise defaults.',
-        '',
-        REVIEW_APPENDIX_END,
-    ].join('\n');
 }
 
 export function applyReviewDefaultsToConfig(config: unknown, review: RuntimeReviewConfig): void {

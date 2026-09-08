@@ -2,13 +2,13 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { chmod, lstat, mkdir, mkdtemp, open, realpath, rm, symlink, } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, open, realpath, rm, symlink, writeFile, } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classifyDashboardEvidence, COMPATIBILITY_POLICY, createCompatibilityEvidence, evaluatePlatformTarget, sanitizeObservedVersion, } from '../tools/naru-lib/compatibility.mjs';
-import type { CompatibilityCheck, CompatibilityEvidence, CompatibilityCheckStatus } from '../tools/naru-lib/compatibility.mjs';
+import { classifyDashboardEvidence, COMPATIBILITY_POLICY, createCompatibilityEvidence, evaluateOpenCodeVersion, evaluatePlatformTarget, isCompatibilityProfile, sanitizeObservedVersion, } from '../tools/naru-lib/compatibility.mjs';
+import type { CompatibilityCheck, CompatibilityEvidence, CompatibilityCheckStatus, CompatibilityProfile } from '../tools/naru-lib/compatibility.mjs';
 
 interface CompatibilityCliOptions {
     bunPath: string | null;
@@ -17,6 +17,7 @@ interface CompatibilityCliOptions {
     json: boolean;
     opencodePath: string | null;
     output: string | null;
+    profile: CompatibilityProfile | null;
     sourcePath: string | null;
 }
 interface PlatformEvidence { platform?: unknown; arch?: unknown; osId?: unknown; wsl?: unknown }
@@ -24,6 +25,7 @@ export interface CompatibilitySmokeOptions {
     bunPath?: string | null;
     dashboard?: boolean;
     opencodePath: string;
+    profile: CompatibilityProfile;
     sourcePath: string;
     timeoutMs?: number;
     platformEvidence?: PlatformEvidence;
@@ -33,6 +35,7 @@ type ProcessFailureReason = 'timeout' | 'output-limit' | 'spawn-failed' | 'nonze
 interface BoundedProcessResult {
     durationMs: number;
     output: string;
+    stdout: string;
     status: 'passed' | 'failed';
     reason: ProcessFailureReason | string | null;
 }
@@ -74,7 +77,7 @@ export const OPENCODE_SAFE_COMMANDS: readonly SafeCommand[] = Object.freeze([
         id: 'opencode-debug-config',
         args: Object.freeze(['debug', 'config']),
         maxOutputBytes: MAX_AGENT_LIST_OUTPUT_BYTES,
-        retainOutput: false,
+        retainOutput: true,
     }),
     Object.freeze({
         id: 'opencode-agent-list',
@@ -84,11 +87,15 @@ export const OPENCODE_SAFE_COMMANDS: readonly SafeCommand[] = Object.freeze([
     }),
     Object.freeze({ id: 'opencode-startup', args: Object.freeze(['serve', '--hostname', '127.0.0.1', '--port', '<ephemeral>']) }),
 ]);
+export const OPENCODE_V2_EXPLORATORY_COMMANDS: readonly SafeCommand[] = Object.freeze([
+    Object.freeze({ id: 'opencode-version', args: Object.freeze(['--version']) }),
+    Object.freeze({ id: 'opencode-help', args: Object.freeze(['--help']) }),
+]);
 function usage() {
-    return 'Usage: node scripts/naru-compat-smoke.mjs --opencode PATH --source PATH [--json] [--output PATH] [--dashboard --bun PATH]\n';
+    return 'Usage: node scripts/naru-compat-smoke.mjs --profile stable|v2-beta-exploratory --opencode PATH --source PATH [--json] [--output PATH] [--dashboard --bun PATH]\n';
 }
 function parseArgs(argv: string[]): CompatibilityCliOptions {
-    const options: CompatibilityCliOptions = { bunPath: null, dashboard: false, json: false, opencodePath: null, output: null, sourcePath: null };
+    const options: CompatibilityCliOptions = { bunPath: null, dashboard: false, json: false, opencodePath: null, output: null, profile: null, sourcePath: null };
     for (let index = 0; index < argv.length; index += 1) {
         const argument = argv[index];
         if (argument === undefined)
@@ -97,7 +104,7 @@ function parseArgs(argv: string[]): CompatibilityCliOptions {
             options.json = true;
         else if (argument === '--dashboard')
             options.dashboard = true;
-        else if (['--opencode', '--source', '--output', '--bun'].includes(argument)) {
+        else if (['--opencode', '--source', '--output', '--bun', '--profile'].includes(argument)) {
             const value = argv[index + 1];
             if (value === undefined || value.startsWith('-'))
                 throw new Error(`${argument} requires a value`);
@@ -108,6 +115,11 @@ function parseArgs(argv: string[]): CompatibilityCliOptions {
                 options.sourcePath = value;
             else if (argument === '--output')
                 options.output = value;
+            else if (argument === '--profile') {
+                if (!isCompatibilityProfile(value))
+                    throw new Error(`unknown compatibility profile: ${value}`);
+                options.profile = value;
+            }
             else
                 options.bunPath = value;
         }
@@ -116,8 +128,10 @@ function parseArgs(argv: string[]): CompatibilityCliOptions {
         else
             throw new Error(`unknown option: ${argument}`);
     }
-    if (!options.help && (!options.opencodePath || !options.sourcePath))
-        throw new Error('--opencode and --source are required');
+    if (!options.help && (!options.profile || !options.opencodePath || !options.sourcePath))
+        throw new Error('--profile, --opencode, and --source are required');
+    if (options.profile === 'v2-beta-exploratory' && options.dashboard)
+        throw new Error('--dashboard is unavailable for the v2 beta exploratory profile');
     if (options.dashboard !== Boolean(options.bunPath))
         throw new Error('--dashboard and --bun PATH must be supplied together');
     return options;
@@ -168,6 +182,7 @@ function isolatedEnvironment(root: string, privateBin: string): NodeJS.ProcessEn
         LANG: 'C',
         LC_ALL: 'C',
         NO_COLOR: '1',
+        OPENCODE_DB: path.join(root, 'state', 'opencode.db'),
         OPENCODE_DISABLE_AUTOUPDATE: 'true',
         PATH: [privateBin, path.dirname(process.execPath), '/usr/bin', '/bin'].join(path.delimiter),
         TEMP: tmp,
@@ -224,6 +239,7 @@ export async function runBoundedProcess(executable: string, args: readonly strin
     validateOutputLimit(maxOutputBytes);
     const started = Date.now();
     let output = Buffer.alloc(0);
+    let stdout = Buffer.alloc(0);
     let outputBytes = 0;
     let overflow = false;
     let spawnError = false;
@@ -245,14 +261,17 @@ export async function runBoundedProcess(executable: string, args: readonly strin
             signalChild(child, 'SIGTERM');
         }
     };
-    child.stdout.on('data', append);
+    child.stdout.on('data', (chunk: Buffer) => {
+        if (retainOutput && !overflow) stdout = Buffer.concat([stdout, chunk]).subarray(0, maxOutputBytes);
+        append(chunk);
+    });
     child.stderr.on('data', append);
     const exited = new Promise(resolvePromise => {
         child.once('error', () => {
             spawnError = true;
             resolvePromise(false);
         });
-        child.once('exit', code => resolvePromise(code === 0));
+        child.once('close', code => resolvePromise(code === 0));
     });
     let timedOut = false;
     let timeout;
@@ -272,9 +291,29 @@ export async function runBoundedProcess(executable: string, args: readonly strin
     return {
         durationMs: Date.now() - started,
         output: output.toString('utf8'),
+        stdout: stdout.toString('utf8'),
         status: successful && !timedOut && !overflow && !spawnError ? 'passed' : 'failed',
         reason: timedOut ? 'timeout' : overflow ? 'output-limit' : spawnError ? 'spawn-failed' : successful ? null : 'nonzero-exit',
     };
+}
+export function validStableNaruConfig(value: unknown): boolean {
+    if (!isRecord(value) || !isRecord(value.agent)) return false;
+    const agents = value.agent;
+    const orchestrator = agents['naru-orchestrator'];
+    if (!isRecord(orchestrator) || orchestrator.mode !== 'primary' || !isRecord(orchestrator.permission)) return false;
+    const task = orchestrator.permission.task;
+    if (!isRecord(task) || task['*'] !== 'deny' || typeof orchestrator.prompt !== 'string') return false;
+    if (!orchestrator.prompt.includes('Effective defaults: profile=release-critical; decision=comment-only; output=concise.')) return false;
+    for (const role of ['naru-reader', 'naru-runner', 'naru-writer']) {
+        const base = agents[role];
+        const variant = agents[`${role}-smoke`];
+        if (!isRecord(base) || !isRecord(base.permission) || base.mode !== 'subagent' || task[role] !== 'allow') return false;
+        if (base.permission['*'] !== 'deny' || base.permission.task !== 'deny' || base.permission.edit !== (role === 'naru-writer' ? 'allow' : 'deny')) return false;
+        if (role === 'naru-runner' && (base.permission.bash !== 'deny' || base.permission['naru-check'] !== 'allow')) return false;
+        if (!isRecord(variant) || variant.model !== 'openai/naru-compat-fixture' || variant.variant !== 'high' || task[`${role}-smoke`] !== 'allow') return false;
+        if (JSON.stringify(base.permission) !== JSON.stringify(variant.permission)) return false;
+    }
+    return true;
 }
 function commandCheck(id: string, result: CommandResult): CompatibilityCheck {
     return {
@@ -389,6 +428,8 @@ async function linuxIdentity(): Promise<{ osId: string | null; wsl: boolean }> {
     }
 }
 export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, hooks: CompatibilitySmokeHooks = {}): Promise<CompatibilityEvidence> {
+    if (!isCompatibilityProfile(options.profile))
+        throw new Error(`unknown compatibility profile: ${String(options.profile)}`);
     const timeoutMs = validateTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     const opencode = await executablePath(options.opencodePath, 'OpenCode');
     const source = await sourceRoot(options.sourcePath);
@@ -413,19 +454,40 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
         const target = path.join(home, '.config', 'opencode');
         const project = path.join(root, 'project');
         const env = isolatedEnvironment(root, privateBin);
+        const versionEnv = isolatedEnvironment(path.join(root, 'version-check'), privateBin);
         try {
             await chmod(root, 0o700);
             hooks.onDisposableRoot?.(root);
-            for (const directory of [privateBin, home, project, env.TMPDIR, env.XDG_CACHE_HOME, env.XDG_CONFIG_HOME, env.XDG_DATA_HOME, env.XDG_STATE_HOME, env.GH_CONFIG_DIR]) {
+            for (const directory of [privateBin, home, project, env.TMPDIR, env.XDG_CACHE_HOME, env.XDG_CONFIG_HOME, env.XDG_DATA_HOME, env.XDG_STATE_HOME, env.GH_CONFIG_DIR, versionEnv.HOME, versionEnv.TMPDIR, versionEnv.XDG_CACHE_HOME, versionEnv.XDG_CONFIG_HOME, versionEnv.XDG_DATA_HOME, versionEnv.XDG_STATE_HOME, versionEnv.GH_CONFIG_DIR]) {
                 if (directory === undefined)
                     throw new Error('isolated environment directory is unavailable');
                 await mkdir(directory, { recursive: true, mode: 0o700 });
             }
             await symlink(opencode, path.join(privateBin, 'opencode'));
-            const installArgs = [path.join(source, 'install.sh'), '--copy'];
-            if (options.dashboard)
-                installArgs.push('--with-dashboard');
-            let result = await runBoundedProcess('/bin/sh', [...installArgs, '--preview'], { cwd: project, env, timeoutMs });
+            const versionCommand = options.profile === 'stable' ? OPENCODE_SAFE_COMMANDS[0] : OPENCODE_V2_EXPLORATORY_COMMANDS[0];
+            if (!versionCommand)
+                throw new Error('OpenCode version command is unavailable');
+            let result = await runBoundedProcess(opencode, versionCommand.args, { cwd: project, env: versionEnv, timeoutMs });
+            versions.opencode = sanitizeObservedVersion(result.output) ?? '';
+            const versionEvaluation = evaluateOpenCodeVersion(options.profile, result.output);
+            checks.push({
+                id: versionCommand.id,
+                status: result.status === 'passed' && versionEvaluation.status === 'supported' ? 'passed' : 'failed',
+                durationMs: result.durationMs,
+                diagnostic: result.status !== 'passed' ? `opencode-version-${result.reason}` : versionEvaluation.status === 'supported' ? null : 'opencode-version-unlisted-for-profile',
+            });
+            if (result.status === 'passed' && versionEvaluation.status === 'supported' && options.profile === 'v2-beta-exploratory') {
+                const helpCommand = OPENCODE_V2_EXPLORATORY_COMMANDS[1];
+                if (!helpCommand)
+                    throw new Error('OpenCode exploratory help command is unavailable');
+                result = await runBoundedProcess(opencode, helpCommand.args, { cwd: project, env: versionEnv, timeoutMs });
+                checks.push(commandCheck(helpCommand.id, result));
+            }
+            if (result.status === 'passed' && versionEvaluation.status === 'supported' && options.profile === 'stable') {
+                const installArgs = [path.join(source, 'install.sh'), '--copy'];
+                if (options.dashboard)
+                    installArgs.push('--with-dashboard');
+                result = await runBoundedProcess('/bin/sh', [...installArgs, '--preview'], { cwd: project, env, timeoutMs });
             let targetExists = true;
             try {
                 await lstat(target);
@@ -442,16 +504,15 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
             if (result.status === 'passed') {
                 result = await runBoundedProcess('/bin/sh', [...installArgs, '--apply'], { cwd: project, env, timeoutMs });
                 checks.push(commandCheck('install-apply', result));
+                if (result.status === 'passed') await writeFile(path.join(target, 'naru-runtime.json'), JSON.stringify({
+                    schemaVersion: 1,
+                    models: { smoke: { use: 'Provider-free configuration fixture; never execute', chain: ['openai/naru-compat-fixture@high'] } },
+                    review: { defaultProfile: 'release-critical', defaultDecision: 'comment-only', defaultOutput: 'concise' },
+                }), { mode: 0o600 });
             }
             else {
                 checks.push({ id: 'install-apply', status: 'omitted', durationMs: 0, diagnostic: 'preview-failed' });
             }
-            const versionCommand = OPENCODE_SAFE_COMMANDS[0];
-            if (!versionCommand)
-                throw new Error('OpenCode version command is unavailable');
-            result = await runBoundedProcess(opencode, versionCommand.args, { cwd: project, env, timeoutMs });
-            versions.opencode = sanitizeObservedVersion(result.output) ?? '';
-            checks.push(commandCheck(versionCommand.id, result));
             const doctorPath = path.join(target, 'tools', 'naru-doctor.js');
             result = await runBoundedProcess(process.execPath, [doctorPath, '--json', '--project-root', project, '--source', source], {
                 cwd: project,
@@ -491,6 +552,11 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
                     ...(command.retainOutput === undefined ? {} : { retainOutput: command.retainOutput }),
                     timeoutMs,
                 });
+                if (command.id === 'opencode-debug-config' && result.status === 'passed') {
+                    let valid = false;
+                    try { valid = validStableNaruConfig(JSON.parse(result.stdout)); } catch { /* Invalid effective config fails the check. */ }
+                    if (!valid) result = { ...result, status: 'failed', reason: 'naru-config-contract-failed' };
+                }
                 checks.push(commandCheck(command.id, result));
             }
             const startupResult = await startupCheck(opencode, { cwd: project, env, timeoutMs });
@@ -530,6 +596,7 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
                     diagnostic: dashboardRegistration === 'passed' ? null : 'dashboard-registration-invalid',
                 });
             }
+            }
         }
         catch {
             checks.push({ id: 'harness', status: 'failed', durationMs: 0, diagnostic: 'harness-failed-safely' });
@@ -550,7 +617,7 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
         syntax: dashboardSyntax,
         registration: dashboardRegistration,
     });
-    return createCompatibilityEvidence({ platform, versions, checks, dashboard });
+    return createCompatibilityEvidence({ profile: options.profile, platform, versions, checks, dashboard });
 }
 async function writeOutput(file: string, report: CompatibilityEvidence): Promise<void> {
     const resolved = path.resolve(file);
@@ -589,12 +656,13 @@ async function main() {
         process.stdout.write(usage());
         return;
     }
-    if (!options.opencodePath || !options.sourcePath)
+    if (!options.profile || !options.opencodePath || !options.sourcePath)
         throw new Error('required smoke paths are unavailable');
     try {
         const report = await runCompatibilitySmoke({
             ...options,
             opencodePath: options.opencodePath,
+            profile: options.profile,
             sourcePath: options.sourcePath,
         });
         if (options.output)
@@ -602,8 +670,8 @@ async function main() {
         if (options.json)
             process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
         else
-            process.stdout.write(`Naru compatibility smoke: ${report.status}; release qualification not established\n`);
-        if (report.status !== 'passed-local-smoke')
+            process.stdout.write(`Naru compatibility smoke: ${report.status}; profile ${report.profile}; qualification ${report.qualification}; release qualification ${report.releaseQualification}\n`);
+        if (report.status !== 'passed-local-smoke' && report.status !== 'passed-exploratory-smoke')
             process.exitCode = 1;
     }
     catch {

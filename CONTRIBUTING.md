@@ -28,7 +28,7 @@ npm run test:bun
 npm run test:installer
 ```
 
-The three test commands build first and execute only the generated tree. CI can build once and use the corresponding `*:built` scripts. For documentation changes, also run `npm --prefix docs run build`. To verify Naru still loads in a real OpenCode, run `npm run test:compat -- --opencode "$(command -v opencode)" --json`; it installs the built tree into a disposable HOME and needs no provider credentials. Run `git diff --check` for every change. Inspect package scripts before running commands; do not add a dependency or run a mutation-capable workflow as an incidental check.
+The three test commands build first and execute only the generated tree. CI can build once and use the corresponding `*:built` scripts. For documentation changes, also run `npm --prefix docs run build`. To verify Naru still loads in a real OpenCode, run `npm run test:compat -- --profile stable --opencode "$(command -v opencode)" --json`; it installs the built tree into a disposable HOME and needs no provider credentials. Run `git diff --check` for every change. Inspect package scripts before running commands; do not add a dependency or run a mutation-capable workflow as an incidental check.
 
 ## Boundaries
 
