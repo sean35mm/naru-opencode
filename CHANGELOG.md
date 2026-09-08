@@ -2,6 +2,13 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.7.2] - 2026-09-08
+
+### Changed
+
+- Added review capability preflight and a single evidence-acquisition owner that shares immutable exact-SHA evidence and coordinates supplemental read-only local Git access.
+- Centralized review drift and rate-limit handling across agents while preserving schema v5 evidence, freshness, and posting guards.
+
 ## [0.7.1] - 2026-09-02
 
 ### Fixed
