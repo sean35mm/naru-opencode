@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import {
+  analyzeConfiguredMcp,
+  applyConfiguredMcpPermissionsToConfig,
+  applyDispatchToConfigAtomically,
   applyVariantsToConfig,
   applyReviewDefaultsToConfig,
   applyRuntimeToConfigAtomically,
@@ -13,7 +19,8 @@ import {
   variantAgentName,
   VARIANT_ROLES,
 } from '../tools/naru-lib/dispatch.mjs';
-import { NaruDispatchPlugin } from '../plugins/naru-dispatch.js';
+import { createNaruDispatchHooks, createNaruDispatchPlugin } from '../plugins/naru-dispatch.js';
+import { globalRuntimeConfigPath, loadRuntimeConfigFile, loadRuntimeConfigLayers, mergeRuntimeConfigLayers, parseRuntimeConfig } from '../tools/naru-lib/runtime-config.mjs';
 
 const CLASSES = parseModelsConfig({
   light: { use: 'wide fan-out', chain: ['openai/gpt-5.6-luna-fast@high', 'opencode-go/deepseek-v4-flash'] },
@@ -29,13 +36,15 @@ interface TestAgent {
   prompt?: string;
   model?: string;
   variant?: string;
-  options?: { naruVariant?: boolean };
+  options?: { naruVariant?: boolean; naruConfiguredMcpPolicy?: unknown };
   permission?: Record<string, string | Record<string, string>>;
 }
 
 interface TestConfig {
   [key: string]: unknown;
   agent: Record<string, TestAgent>;
+  mcp?: unknown;
+  permission?: Record<string, unknown>;
 }
 
 function fakeConfig(): TestConfig {
@@ -81,6 +90,23 @@ function agent(config: TestConfig, name: string): TestAgent {
   return requiredValue(config.agent[name], `agent ${name}`);
 }
 
+async function writeJson(file: string, value: unknown): Promise<void> {
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, `${JSON.stringify(value)}\n`);
+}
+
+// OpenCode 1.18.29 evaluates the last matching permission rule. These tests
+// pin effective outcomes rather than relying only on generated key presence.
+function effectiveToolPermission(permission: TestAgent['permission'], tool: string): unknown {
+  if (!permission) return undefined;
+  for (const [pattern, action] of Object.entries(permission).reverse()) {
+    if (typeof action !== 'string') continue;
+    const regex = new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*')}$`);
+    if (regex.test(tool)) return action;
+  }
+  return undefined;
+}
+
 test('chain entries parse model and optional effort exactly', () => {
   assert.deepEqual(parseChainEntry('openai/gpt-5.6-sol@xhigh'), {
     providerID: 'openai',
@@ -104,6 +130,50 @@ test('models config validation rejects malformed classes and accepts absence', (
   assert.throws(() => parseModelsConfig({ light: { use: 'x' } }), /chain/);
   assert.throws(() => parseModelsConfig({ light: { use: 'x', chain: [] } }), /chain/);
   assert.throws(() => parseModelsConfig({ light: { use: 'x', chain: ['a/b'], extra: 1 } }), /unknown fields/);
+});
+
+test('raw runtime layers merge before defaults and arrays replace', () => {
+  const runtime = mergeRuntimeConfigLayers([
+    {
+      mcp: { configuredTools: 'ask' },
+      models: { smoke: { use: 'global class', chain: ['openai/global@high'] } },
+      review: { defaultProfile: 'release-critical' },
+    },
+    {
+      models: { smoke: { chain: ['openai/local@low'] } },
+      review: { defaultOutput: 'concise' },
+    },
+  ]);
+  assert.equal(runtime.mcp.configuredTools, 'ask');
+  assert.deepEqual(runtime.review, { defaultProfile: 'release-critical', defaultDecision: 'comment-only', defaultOutput: 'concise' });
+  assert.deepEqual(runtime.models, { smoke: { use: 'global class', chain: ['openai/local@low'] } });
+  assert.deepEqual(mergeRuntimeConfigLayers([{ models: { smoke: { use: 'x', chain: ['a/b'] } } }, { models: {} }]).models, {});
+  assert.throws(() => mergeRuntimeConfigLayers([{ schemaVersion: 2 }, { schemaVersion: 1 }]), /schemaVersion/);
+  assert.equal(globalRuntimeConfigPath({ XDG_CONFIG_HOME: '/tmp/naru-xdg' }, '/tmp/ignored-home'), '/tmp/naru-xdg/opencode/naru-runtime.json');
+  assert.equal(globalRuntimeConfigPath({}, '/tmp/naru-home'), '/tmp/naru-home/.config/opencode/naru-runtime.json');
+});
+
+test('direct runtime loading preserves ENOENT while layered absence uses defaults', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-runtime-loader-'));
+  try {
+    const missing = path.join(temporary, 'missing', 'naru-runtime.json');
+    await assert.rejects(loadRuntimeConfigFile(missing), (error: unknown) =>
+      error instanceof Error && 'code' in error && error.code === 'ENOENT');
+    assert.deepEqual(await loadRuntimeConfigLayers([missing]), parseRuntimeConfig());
+
+    const malformed = path.join(temporary, 'malformed', 'naru-runtime.json');
+    await mkdir(path.dirname(malformed), { recursive: true });
+    await writeFile(malformed, '{ invalid\n');
+    await assert.rejects(loadRuntimeConfigFile(malformed), /invalid JSON/);
+    await assert.rejects(loadRuntimeConfigLayers([malformed]), /invalid JSON/);
+
+    await writeJson(malformed, { schemaVersion: 2 });
+    await assert.rejects(loadRuntimeConfigFile(malformed), /schemaVersion/);
+    await assert.rejects(loadRuntimeConfigLayers([malformed]), /schemaVersion/);
+  }
+  finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 });
 
 test('chain selection honors auth and falls to null when nothing is available', () => {
@@ -195,8 +265,222 @@ test('runtime config application is atomic when review defaults fail after varia
   assert.equal(config.agent['naru-reader-deep'], undefined);
 });
 
+test('configured MCP analysis normalizes like OpenCode and fails collisions closed', () => {
+  const analysis = analyzeConfiguredMcp({
+    'design.api': { type: 'remote' },
+    design_api: { type: 'local' },
+    foo: {},
+    foo_bar: {},
+    apply: {},
+    disabled: { enabled: false },
+    'codebase-memory-mcp': {},
+    'codebase-memory-mcp_delete': {},
+    'codebase-memory-mcp_query': { enabled: false },
+    codebase: {},
+    bad: { enabled: 'yes' },
+    'keeps-hyphens': {},
+  });
+  const categories = Object.fromEntries(analysis.diagnostics.map(item => [item.serverName, item.category]));
+  assert.equal(categories['design.api'], 'collision');
+  assert.equal(categories.design_api, 'collision');
+  assert.equal(categories.foo, 'collision');
+  assert.equal(categories.foo_bar, 'collision');
+  assert.equal(categories.apply, 'collision');
+  assert.equal(categories.disabled, 'disabled');
+  assert.equal(categories['codebase-memory-mcp'], 'protected');
+  assert.equal(categories['codebase-memory-mcp_delete'], 'protected');
+  assert.equal(categories['codebase-memory-mcp_query'], 'protected');
+  assert.equal(categories.codebase, 'eligible');
+  assert.equal(categories.bad, 'malformed');
+  assert.deepEqual(analysis.rules, ['codebase_*', 'keeps-hyphens_*']);
+  assert.equal(analyzeConfiguredMcp([]).diagnostics[0]?.category, 'malformed');
+});
+
+test('ask mode affects only orchestrator, writer, and generated writer variants', () => {
+  const config = fakeConfig();
+  applyDispatchToConfigAtomically(config, CLASSES, null, 'ask', {
+    future: {},
+    disabled: { enabled: false },
+  });
+  for (const name of ['naru-orchestrator', 'naru-writer', 'naru-writer-light', 'naru-writer-deep', 'naru-writer-crosscheck']) {
+    assert.equal(effectiveToolPermission(agent(config, name).permission, 'future_brand_new_tool'), 'ask', name);
+    assert.equal(effectiveToolPermission(agent(config, name).permission, 'disabled_tool'), 'deny', name);
+  }
+  for (const name of ['naru-reader', 'naru-runner', 'naru-reader-light', 'naru-runner-light']) {
+    assert.equal(effectiveToolPermission(agent(config, name).permission, 'future_brand_new_tool'), 'deny', name);
+  }
+  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'bash'), 'deny');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-writer').permission, 'task'), 'deny');
+});
+
+test('off mode leaves an ungenerated permission policy unchanged', () => {
+  const config = fakeConfig();
+  config.permission = { '*': 'ask', bash: 'deny' };
+  const before = JSON.stringify(config);
+  applyConfiguredMcpPermissionsToConfig(config, 'off', { future: {} });
+  assert.equal(JSON.stringify(config), before);
+});
+
+test('specific and server-wide policies retain last-match precedence over generated asks', () => {
+  const config = fakeConfig();
+  const orchestratorPermission = requiredValue(agent(config, 'naru-orchestrator').permission, 'orchestrator permission');
+  for (const tool of ['get_design_context', 'get_variable_defs', 'get_screenshot', 'get_motion_context', 'get_metadata', 'get_figjam']) {
+    orchestratorPermission[`figma-desktop_${tool}`] = 'allow';
+  }
+  orchestratorPermission['figma-desktop_delete_file'] = 'deny';
+  const writerPermission = requiredValue(agent(config, 'naru-writer').permission, 'writer permission');
+  writerPermission['locked_*'] = 'deny';
+  applyConfiguredMcpPermissionsToConfig(config, 'ask', { 'figma-desktop': {}, locked: {}, open: {} });
+
+  for (const tool of ['get_design_context', 'get_variable_defs', 'get_screenshot', 'get_motion_context', 'get_metadata', 'get_figjam']) {
+    assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, `figma-desktop_${tool}`), 'allow');
+  }
+  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'figma-desktop_new_future_tool'), 'ask');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'figma-desktop_delete_file'), 'deny');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-writer').permission, 'locked_anything'), 'deny');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-writer').permission, 'open_future'), 'ask');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-writer').permission, 'unrelated_builtin'), 'deny');
+});
+
+test('protected codebase namespace retains curated exact tools without exposing administrative tools', () => {
+  const config = fakeConfig();
+  const permission = requiredValue(agent(config, 'naru-orchestrator').permission, 'orchestrator permission');
+  permission['codebase-memory-mcp_search_graph'] = 'allow';
+  applyConfiguredMcpPermissionsToConfig(config, 'ask', {
+    'codebase-memory-mcp_delete': {},
+    'codebase-memory-mcp_query': { enabled: false },
+  });
+  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'codebase-memory-mcp_search_graph'), 'allow');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'codebase-memory-mcp_delete_project'), 'deny');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'codebase-memory-mcp_query_graph'), 'deny');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-writer').permission, 'codebase-memory-mcp_delete_project'), 'deny');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-writer').permission, 'codebase-memory-mcp_query_graph'), 'deny');
+  assert.equal(Object.hasOwn(agent(config, 'naru-orchestrator').permission ?? {}, 'codebase-memory-mcp_*'), false);
+});
+
+test('ordinary codebase namespace stays eligible without broadening protected tools', () => {
+  const config = fakeConfig();
+  const analysis = applyConfiguredMcpPermissionsToConfig(config, 'ask', {
+    shadow: {},
+    shadow_admin: { enabled: false },
+    codebase: {},
+    safe: {},
+  });
+  assert.deepEqual(analysis.rules, ['codebase_*', 'safe_*', 'shadow_*']);
+  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'shadow_admin_delete'), 'ask');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'codebase_future'), 'ask');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'codebase-memory-mcp_delete_project'), 'deny');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'safe_future'), 'ask');
+});
+
+test('generated MCP rules are idempotent, removable, and preserve user modifications', () => {
+  const config = fakeConfig();
+  applyConfiguredMcpPermissionsToConfig(config, 'ask', { alpha: {} });
+  const once = JSON.stringify(config);
+  applyConfiguredMcpPermissionsToConfig(config, 'ask', { alpha: {} });
+  assert.equal(JSON.stringify(config), once);
+
+  const permission = requiredValue(agent(config, 'naru-writer').permission, 'writer permission');
+  permission['alpha_*'] = 'allow';
+  applyConfiguredMcpPermissionsToConfig(config, 'ask', {});
+  assert.equal(agent(config, 'naru-writer').permission?.['alpha_*'], 'allow');
+  assert.equal(Object.hasOwn(agent(config, 'naru-orchestrator').permission ?? {}, 'alpha_*'), false);
+
+  applyConfiguredMcpPermissionsToConfig(config, 'ask', { beta: {} });
+  applyConfiguredMcpPermissionsToConfig(config, 'off', { beta: {} });
+  assert.equal(Object.hasOwn(agent(config, 'naru-orchestrator').permission ?? {}, 'beta_*'), false);
+});
+
+test('variant and MCP synthesis is atomic on a fail-closed permission error', () => {
+  const config = fakeConfig();
+  const writerPermission = requiredValue(agent(config, 'naru-writer').permission, 'writer permission');
+  delete writerPermission['*'];
+  writerPermission['*'] = 'deny';
+  const before = JSON.stringify(config);
+  assert.throws(() => applyDispatchToConfigAtomically(config, CLASSES, null, 'ask', { alpha: {} }), /begin with a wildcard deny/);
+  assert.equal(JSON.stringify(config), before);
+});
+
+test('real config hook applies ask policy without MCP connection or provider access', async () => {
+  const runtime = parseRuntimeConfig({ mcp: { configuredTools: 'ask' } });
+  const hooks = createNaruDispatchHooks(runtime, {}, new Set());
+  const config = fakeConfig();
+  config.mcp = { 'figma-desktop': { type: 'remote', url: 'not-read-by-policy.invalid', enabled: true } };
+  await hooks.config(config);
+  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'figma-desktop_future'), 'ask');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-writer').permission, 'figma-desktop_future'), 'ask');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-reader').permission, 'figma-desktop_future'), 'deny');
+});
+
+test('plugin layers global and adjacent runtime across repeated hooks', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-dispatch-layers-'));
+  try {
+    const globalPath = path.join(temporary, 'global', 'naru-runtime.json');
+    const projectPath = path.join(temporary, 'project', 'naru-runtime.json');
+    const absentPath = path.join(temporary, 'absent', 'naru-runtime.json');
+    await writeJson(globalPath, {
+      schemaVersion: 1,
+      mcp: { configuredTools: 'ask' },
+      models: { smoke: { use: 'global class', chain: ['openai/naru-layer@high'] } },
+      review: { defaultProfile: 'release-critical', defaultDecision: 'automatic' },
+    });
+
+    const projectOnly = await createNaruDispatchPlugin({ globalRuntimePath: globalPath, localRuntimePath: absentPath, authProviders: null });
+    const inherited = fakeConfig();
+    inherited.mcp = { future: {} };
+    await projectOnly.config(inherited);
+    assert.equal(effectiveToolPermission(agent(inherited, 'naru-writer').permission, 'future_tool'), 'ask');
+    assert.equal(agent(inherited, 'naru-writer-smoke').model, 'openai/naru-layer');
+
+    await writeJson(projectPath, { review: { defaultOutput: 'concise' } });
+    const globalPlugin = await createNaruDispatchPlugin({ globalRuntimePath: globalPath, localRuntimePath: globalPath, authProviders: null });
+    const projectPlugin = await createNaruDispatchPlugin({ globalRuntimePath: globalPath, localRuntimePath: projectPath, authProviders: null });
+    const combined = fakeConfig();
+    combined.mcp = { future: {} };
+    await globalPlugin.config(combined);
+    await projectPlugin.config(combined);
+    const combinedOnce = JSON.stringify(combined);
+    await projectPlugin.config(combined);
+    assert.equal(JSON.stringify(combined), combinedOnce);
+    assert.equal(effectiveToolPermission(agent(combined, 'naru-orchestrator').permission, 'future_tool'), 'ask');
+    assert.equal(agent(combined, 'naru-writer-smoke').model, 'openai/naru-layer');
+    assert.match(agent(combined, 'naru-orchestrator').prompt ?? '', /profile=release-critical; decision=automatic; output=concise/);
+
+    await writeJson(projectPath, { mcp: { configuredTools: 'off' } });
+    const localOff = await createNaruDispatchPlugin({ globalRuntimePath: globalPath, localRuntimePath: projectPath, authProviders: null });
+    await localOff.config(combined);
+    assert.equal(effectiveToolPermission(agent(combined, 'naru-orchestrator').permission, 'future_tool'), 'deny');
+    assert.equal(agent(combined, 'naru-writer-smoke').model, 'openai/naru-layer');
+
+    await writeJson(projectPath, { models: {} });
+    const noLocalClasses = await createNaruDispatchPlugin({ globalRuntimePath: globalPath, localRuntimePath: projectPath, authProviders: null });
+    await noLocalClasses.config(combined);
+    assert.equal(effectiveToolPermission(agent(combined, 'naru-orchestrator').permission, 'future_tool'), 'ask');
+    assert.equal(combined.agent['naru-writer-smoke'], undefined);
+
+    await writeJson(projectPath, { schemaVersion: 2 });
+    const invalidLocal = await createNaruDispatchPlugin({ globalRuntimePath: globalPath, localRuntimePath: projectPath, authProviders: null });
+    await globalPlugin.config(combined);
+    assert.equal(effectiveToolPermission(agent(combined, 'naru-orchestrator').permission, 'future_tool'), 'ask');
+    await invalidLocal.config(combined);
+    assert.equal(effectiveToolPermission(agent(combined, 'naru-orchestrator').permission, 'future_tool'), 'deny');
+    assert.equal(combined.agent['naru-writer-smoke'], undefined);
+
+    const defaults = await createNaruDispatchPlugin({ globalRuntimePath: absentPath, localRuntimePath: path.join(temporary, 'also-absent.json'), authProviders: null });
+    const defaultConfig = fakeConfig();
+    defaultConfig.mcp = { future: {} };
+    await defaults.config(defaultConfig);
+    assert.equal(effectiveToolPermission(agent(defaultConfig, 'naru-orchestrator').permission, 'future_tool'), 'deny');
+    assert.equal(defaultConfig.agent['naru-writer-smoke'], undefined);
+  }
+  finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
 test('the plugin hooks config only and fails open on unusable configs', async () => {
-  const hooks = await NaruDispatchPlugin();
+  const missing = path.join(os.tmpdir(), `naru-dispatch-missing-${process.pid}-${Date.now()}.json`);
+  const hooks = await createNaruDispatchPlugin({ globalRuntimePath: missing, localRuntimePath: missing, authProviders: null });
   assert.deepEqual(Object.keys(hooks), ['config']);
   const withoutModels = fakeConfig();
   await hooks.config(withoutModels);

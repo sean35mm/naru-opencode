@@ -10,14 +10,14 @@ export { buildReviewDefaultsAppendix } from './review-defaults.mjs';
 // tool, which keeps the TUI's subagent rendering, click-through, and thread
 // cycling intact.
 //
-// Safety: variants are byte-for-byte clones of the base agents' permission
-// maps with only model/variant/description changed. Model selection never
-// touches permissions. The names naru-reader-*, naru-runner-*, and
+// Safety: variants begin as byte-for-byte clones of the base agents' permission
+// maps. A separate policy pass may add provenance-tracked MCP asks to writer
+// variants only; model selection itself never changes permissions. The names naru-reader-*, naru-runner-*, and
 // naru-writer-* are a reserved, Naru-managed namespace.
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { RuntimeReviewConfig } from './runtime-config.mjs';
+import type { RuntimeMcpConfig, RuntimeReviewConfig } from './runtime-config.mjs';
 
 export const VARIANT_ROLES = Object.freeze(['naru-reader', 'naru-runner', 'naru-writer'] as const);
 export const ORCHESTRATOR = 'naru-orchestrator';
@@ -49,6 +49,21 @@ export interface VariantApplicationSummary {
     classes: string[];
 }
 
+export type ConfiguredMcpCategory = 'collision' | 'disabled' | 'eligible' | 'malformed' | 'protected';
+export interface ConfiguredMcpDiagnostic {
+    serverName: string;
+    normalizedName: string | null;
+    category: ConfiguredMcpCategory;
+    reason: string;
+}
+export interface ConfiguredMcpAnalysis {
+    diagnostics: ConfiguredMcpDiagnostic[];
+    rules: string[];
+}
+export interface DispatchApplicationSummary extends VariantApplicationSummary {
+    configuredMcp: ConfiguredMcpAnalysis;
+}
+
 const MAX_CLASSES = 16;
 const MAX_CHAIN = 4;
 const MAX_USE_LENGTH = 200;
@@ -60,6 +75,20 @@ const APPENDIX_BEGIN = '<!-- naru-model-classes:begin -->';
 const APPENDIX_END = '<!-- naru-model-classes:end -->';
 const REVIEW_APPENDIX_BEGIN = '<!-- naru-review-defaults:begin -->';
 const REVIEW_APPENDIX_END = '<!-- naru-review-defaults:end -->';
+const MCP_POLICY_METADATA = 'naruConfiguredMcpPolicy';
+const PROTECTED_MCP_NAMESPACES = new Set(['codebase-memory-mcp']);
+const PROTECTED_MCP_TOOLS = Object.freeze([
+    'codebase-memory-mcp_delete_project',
+    'codebase-memory-mcp_index_repository',
+    'codebase-memory-mcp_ingest_traces',
+    'codebase-memory-mcp_query_graph',
+    'codebase-memory-mcp_search_graph',
+]);
+const KNOWN_NON_MCP_TOOLS = Object.freeze([
+    'apply_patch', 'bash', 'batch', 'codesearch', 'doom_loop', 'edit', 'external_directory', 'glob', 'grep', 'lsp', 'multi_tool_use', 'multiedit', 'naru-check',
+    'naru-git-read', 'naru-github-post-review', 'naru-github-read', 'naru-worktree',
+    'question', 'read', 'skill', 'task', 'todowrite', 'webfetch', 'websearch', 'write',
+]);
 
 export function parseChainEntry(value: unknown, label = 'chain entry'): ModelCandidate {
     if (typeof value !== 'string' || value.length === 0 || value.length > 128) {
@@ -153,6 +182,90 @@ export function variantAgentName(role: VariantRole, className: string): string {
 
 function isPlainObject(value: unknown): value is UnknownRecord {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function normalizeMcpServerName(name: string): string {
+    return name.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function safeServerName(name: string): boolean {
+    if (name.length === 0 || name.length > 128) return false;
+    for (let index = 0; index < name.length; index += 1) {
+        const code = name.charCodeAt(index);
+        if (code <= 31 || code === 127) return false;
+    }
+    return true;
+}
+
+function overlapsProtectedMcp(normalizedName: string): boolean {
+    const generatedPrefix = `${normalizedName}_`;
+    return [...PROTECTED_MCP_NAMESPACES].some((protectedName) =>
+        normalizedName === protectedName ||
+        normalizedName.startsWith(`${protectedName}_`) ||
+        protectedName.startsWith(`${normalizedName}_`)) ||
+        PROTECTED_MCP_TOOLS.some((tool) => tool.startsWith(generatedPrefix));
+}
+
+// OpenCode 1.18.29 registers MCP tools as
+// `${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${toolName}`. This analysis
+// deliberately uses only server names and `enabled`; connection details never
+// enter Naru policy state or diagnostics.
+export function analyzeConfiguredMcp(value: unknown): ConfiguredMcpAnalysis {
+    if (value === undefined || value === null) return { diagnostics: [], rules: [] };
+    if (!isPlainObject(value)) {
+        return { diagnostics: [{ serverName: '', normalizedName: null, category: 'malformed', reason: 'mcp config is not a server map' }], rules: [] };
+    }
+    const diagnostics: ConfiguredMcpDiagnostic[] = [];
+    const valid: Array<{ serverName: string; normalizedName: string; category: 'candidate' | 'disabled' | 'protected' }> = [];
+    for (const serverName of Object.keys(value).sort()) {
+        const server = value[serverName];
+        const normalizedName = safeServerName(serverName) ? normalizeMcpServerName(serverName) : null;
+        if (!isPlainObject(server) || normalizedName === null || normalizedName.length === 0 ||
+            (server.enabled !== undefined && typeof server.enabled !== 'boolean')) {
+            diagnostics.push({ serverName, normalizedName, category: 'malformed', reason: 'server name or enabled state is malformed' });
+            continue;
+        }
+        if (overlapsProtectedMcp(normalizedName)) valid.push({ serverName, normalizedName, category: 'protected' });
+        else if (server.enabled === false) valid.push({ serverName, normalizedName, category: 'disabled' });
+        else valid.push({ serverName, normalizedName, category: 'candidate' });
+    }
+    const collided = new Set<string>();
+    for (let left = 0; left < valid.length; left += 1) {
+        const first = valid[left];
+        if (!first || first.category !== 'candidate') continue;
+        const prefix = `${first.normalizedName}_`;
+        if (KNOWN_NON_MCP_TOOLS.some((tool) => tool.startsWith(prefix))) collided.add(first.serverName);
+        for (let right = 0; right < valid.length; right += 1) {
+            const second = valid[right];
+            if (!second || second.category === 'disabled' || first.serverName === second.serverName) continue;
+            if (first.normalizedName === second.normalizedName ||
+                first.normalizedName.startsWith(`${second.normalizedName}_`) ||
+                second.normalizedName.startsWith(`${first.normalizedName}_`)) {
+                collided.add(first.serverName);
+                if (second.category === 'candidate') collided.add(second.serverName);
+            }
+        }
+    }
+    for (const entry of valid) {
+        if (entry.category === 'protected') {
+            diagnostics.push({ ...entry, category: 'protected', reason: 'namespace overlaps an explicitly curated namespace; absent administrative tools stay unavailable' });
+        }
+        else if (entry.category === 'disabled') {
+            diagnostics.push({ ...entry, category: 'disabled', reason: 'server is disabled' });
+        }
+        else if (collided.has(entry.serverName)) {
+            diagnostics.push({ ...entry, category: 'collision', reason: 'namespace overlaps another configured server namespace or a known non-MCP tool' });
+        }
+        else {
+            diagnostics.push({ ...entry, category: 'eligible', reason: 'enabled server has an isolated namespace' });
+        }
+    }
+    diagnostics.sort((left, right) => left.serverName.localeCompare(right.serverName) || left.category.localeCompare(right.category));
+    const rules = diagnostics
+        .filter((entry) => entry.category === 'eligible' && entry.normalizedName !== null)
+        .map((entry) => `${entry.normalizedName}_*`)
+        .sort();
+    return { diagnostics, rules };
 }
 
 function clone(value: UnknownRecord): UnknownRecord {
@@ -281,6 +394,57 @@ export function applyVariantsToConfig(config: unknown, classes: ModelsConfig, au
     return { variants: Object.keys(variants).sort(), classes: generated.map((item) => item.className) };
 }
 
+function ownedMcpRules(options: unknown): Record<string, 'ask'> {
+    if (!isPlainObject(options)) return {};
+    const metadata = options[MCP_POLICY_METADATA];
+    if (!isPlainObject(metadata) || metadata.version !== 1 || !isPlainObject(metadata.rules)) return {};
+    const rules: Record<string, 'ask'> = {};
+    for (const [key, action] of Object.entries(metadata.rules)) {
+        if (action === 'ask') rules[key] = action;
+    }
+    return rules;
+}
+
+function applyMcpRulesToAgent(agent: UnknownRecord, rules: readonly string[]): void {
+    if (!isPlainObject(agent.permission) || agent.permission['*'] !== 'deny' || Object.keys(agent.permission)[0] !== '*') {
+        throw new Error('eligible agent permissions must begin with a wildcard deny');
+    }
+    const permission = { ...agent.permission };
+    const options = isPlainObject(agent.options) ? { ...agent.options } : {};
+    for (const [key, action] of Object.entries(ownedMcpRules(options))) {
+        if (permission[key] === action) delete permission[key];
+    }
+    delete options[MCP_POLICY_METADATA];
+
+    const generated: Record<string, 'ask'> = {};
+    for (const key of rules) {
+        // An existing exact or wildcard policy is user/Naru authored and wins.
+        if (!Object.hasOwn(permission, key)) generated[key] = 'ask';
+    }
+    const rebuilt: UnknownRecord = { '*': permission['*'], ...generated };
+    for (const [key, action] of Object.entries(permission)) {
+        if (key !== '*') rebuilt[key] = action;
+    }
+    agent.permission = rebuilt;
+    if (Object.keys(generated).length > 0) {
+        options[MCP_POLICY_METADATA] = { version: 1, rules: generated };
+    }
+    if (Object.keys(options).length > 0 || isPlainObject(agent.options)) agent.options = options;
+}
+
+export function applyConfiguredMcpPermissionsToConfig(config: unknown, mode: RuntimeMcpConfig['configuredTools'], mcp: unknown): ConfiguredMcpAnalysis {
+    if (!isPlainObject(config) || !isPlainObject(config.agent)) throw new Error('OpenCode configuration has no agent map');
+    const analysis = analyzeConfiguredMcp(mcp);
+    const rules = mode === 'ask' ? analysis.rules : [];
+    const eligible = [ORCHESTRATOR, 'naru-writer', ...Object.keys(config.agent).filter((name) => /^naru-writer-[a-z][a-z0-9-]{0,31}$/.test(name))];
+    for (const name of eligible) {
+        const candidate = config.agent[name];
+        if (!isPlainObject(candidate)) throw new Error(`agent ${name} is not configured`);
+        applyMcpRulesToAgent(candidate, rules);
+    }
+    return analysis;
+}
+
 function configDraft(config: UnknownRecord): UnknownRecord {
     if (!isPlainObject(config.agent)) throw new Error('OpenCode configuration has no agent map');
     const agents: UnknownRecord = {};
@@ -295,9 +459,22 @@ function configDraft(config: UnknownRecord): UnknownRecord {
             if (isPlainObject(value.permission.task)) permission.task = { ...value.permission.task };
             agent.permission = permission;
         }
+        if (isPlainObject(value.options)) agent.options = { ...value.options };
         agents[name] = agent;
     }
     return { ...config, agent: agents };
+}
+
+export function applyDispatchToConfigAtomically(config: unknown, classes: ModelsConfig, authProviders: ReadonlySet<string> | null | undefined, mcpMode: RuntimeMcpConfig['configuredTools'], mcp: unknown): DispatchApplicationSummary {
+    if (!isPlainObject(config) || !isPlainObject(config.agent)) throw new Error('OpenCode configuration has no agent map');
+    const draft = configDraft(config);
+    const summary = applyVariantsToConfig(draft, classes, authProviders);
+    const configuredMcp = applyConfiguredMcpPermissionsToConfig(draft, mcpMode, mcp);
+    const draftAgents = draft.agent;
+    if (!isPlainObject(draftAgents)) throw new Error('draft OpenCode configuration has no agent map');
+    for (const name of Object.keys(config.agent)) delete config.agent[name];
+    Object.assign(config.agent, draftAgents);
+    return { ...summary, configuredMcp };
 }
 
 export function applyRuntimeToConfigAtomically(config: unknown, classes: ModelsConfig, authProviders: ReadonlySet<string> | null | undefined, review: RuntimeReviewConfig): VariantApplicationSummary {

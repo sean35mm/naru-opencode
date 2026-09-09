@@ -37,6 +37,7 @@ Usage: naru <command> [options]
 Install/upgrade options are passed through to the installer:
   --apply            Skip the confirmation prompt (for non-interactive use)
   --copy             Copy assets instead of symlinking them
+  --only PATH        Update an installed, manifest-owned path using its prior mode
   --project          Install into ./.opencode instead of the global config
   --dir PATH         Install into an exact directory
   --replace-conflicts  Replace conflicting managed files (reviewed in preview)
@@ -94,10 +95,12 @@ run_installer() {
   # prune — leaving dangling links. Cloned checkouts still default to symlinks
   # via install.sh directly, where `git pull` is the point.
   copy=false
+  selective=false
   for arg in "$@"; do
     [ "$arg" = "--copy" ] && copy=true
+    [ "$arg" = "--only" ] && selective=true
   done
-  [ "$copy" = true ] || set -- "$@" --copy
+  [ "$copy" = true ] || [ "$selective" = true ] || set -- "$@" --copy
 
   if [ "$apply" = true ]; then
     # Caller already opted in; pass through untouched.
@@ -174,7 +177,7 @@ case "$command" in
   doctor)
     need node
     [ -f "$DOCTOR" ] || { echo "naru: doctor not found at ${DOCTOR}" >&2; exit 1; }
-    node "$DOCTOR" "$@"
+    node "$DOCTOR" --host-contract-root "$ROOT" "$@"
     ;;
 
   uninstall)

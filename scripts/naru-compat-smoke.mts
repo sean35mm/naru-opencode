@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import type { ChildProcess } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { chmod, lstat, mkdir, mkdtemp, open, realpath, rm, symlink, writeFile, } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, open, realpath, symlink, writeFile, } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { classifyDashboardEvidence, COMPATIBILITY_POLICY, createCompatibilityEvidence, evaluateOpenCodeVersion, evaluatePlatformTarget, isCompatibilityProfile, sanitizeObservedVersion, } from '../tools/naru-lib/compatibility.mjs';
 import type { CompatibilityCheck, CompatibilityEvidence, CompatibilityCheckStatus, CompatibilityProfile } from '../tools/naru-lib/compatibility.mjs';
+import { coreConfigContractFailures, guardedRemoveDisposableRoot, HOST_CONTRACT_TIMEOUT_MS, runBoundedProcess, runHostContractProbe, signalProcessGroup, stopProcessGroup, validateCoreConfigContract, writeHostContractFixtures, } from '../tools/naru-lib/host-contract-probe.mjs';
+export { runBoundedProcess } from '../tools/naru-lib/host-contract-probe.mjs';
 
 interface CompatibilityCliOptions {
     bunPath: string | null;
@@ -31,21 +32,6 @@ export interface CompatibilitySmokeOptions {
     platformEvidence?: PlatformEvidence;
 }
 interface CompatibilitySmokeHooks { onDisposableRoot?(root: string): void }
-type ProcessFailureReason = 'timeout' | 'output-limit' | 'spawn-failed' | 'nonzero-exit';
-interface BoundedProcessResult {
-    durationMs: number;
-    output: string;
-    stdout: string;
-    status: 'passed' | 'failed';
-    reason: ProcessFailureReason | string | null;
-}
-interface ProcessOptions {
-    cwd: string;
-    env: NodeJS.ProcessEnv;
-    maxOutputBytes?: number;
-    retainOutput?: boolean;
-    timeoutMs?: number;
-}
 interface StartupOptions { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }
 interface CommandResult { durationMs: number; status: 'passed' | 'failed'; reason: string | null }
 interface SafeCommand {
@@ -64,10 +50,9 @@ function errorMessage(error: unknown): string {
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-const DEFAULT_TIMEOUT_MS = 20_000;
+const DEFAULT_TIMEOUT_MS = HOST_CONTRACT_TIMEOUT_MS;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_AGENT_LIST_OUTPUT_BYTES = 1024 * 1024;
-const TERMINATION_GRACE_MS = 1_000;
 const CONFIG_MAX_BYTES = 64 * 1024;
 export const OPENCODE_SAFE_COMMANDS: readonly SafeCommand[] = Object.freeze([
     Object.freeze({ id: 'opencode-version', args: Object.freeze(['--version']) }),
@@ -165,12 +150,6 @@ function validateTimeout(value: unknown): number {
     }
     return value;
 }
-function validateOutputLimit(value: unknown): number {
-    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < MAX_OUTPUT_BYTES || value > MAX_AGENT_LIST_OUTPUT_BYTES) {
-        throw new Error(`output limit must be from ${MAX_OUTPUT_BYTES} to ${MAX_AGENT_LIST_OUTPUT_BYTES} bytes`);
-    }
-    return value;
-}
 function isolatedEnvironment(root: string, privateBin: string): NodeJS.ProcessEnv & Record<string, string> {
     const home = path.join(root, 'home');
     const tmp = path.join(root, 'tmp');
@@ -195,126 +174,7 @@ function isolatedEnvironment(root: string, privateBin: string): NodeJS.ProcessEn
         XDG_STATE_HOME: path.join(root, 'state'),
     };
 }
-function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
-    if (child.exitCode !== null || child.signalCode !== null)
-        return Promise.resolve(true);
-    return new Promise(resolvePromise => {
-        const timer = setTimeout(() => {
-            child.removeListener('exit', onExit);
-            resolvePromise(false);
-        }, timeoutMs);
-        function onExit() {
-            clearTimeout(timer);
-            resolvePromise(true);
-        }
-        child.once('exit', onExit);
-    });
-}
-function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
-    try {
-        if (child.pid === undefined)
-            return;
-        process.kill(-child.pid, signal);
-    }
-    catch {
-        try {
-            child.kill(signal);
-        }
-        catch {
-            // The process already exited.
-        }
-    }
-}
-async function stopChild(child: ChildProcess): Promise<void> {
-    if (child.exitCode !== null || child.signalCode !== null)
-        return;
-    signalChild(child, 'SIGTERM');
-    if (await waitForExit(child, TERMINATION_GRACE_MS))
-        return;
-    signalChild(child, 'SIGKILL');
-    await waitForExit(child, 250);
-}
-export async function runBoundedProcess(executable: string, args: readonly string[], { cwd, env, maxOutputBytes = MAX_OUTPUT_BYTES, retainOutput = true, timeoutMs = DEFAULT_TIMEOUT_MS, }: ProcessOptions): Promise<BoundedProcessResult> {
-    validateTimeout(timeoutMs);
-    validateOutputLimit(maxOutputBytes);
-    const started = Date.now();
-    let output = Buffer.alloc(0);
-    let stdout = Buffer.alloc(0);
-    let outputBytes = 0;
-    let overflow = false;
-    let spawnError = false;
-    const child = spawn(executable, args, {
-        cwd,
-        detached: true,
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const append = (chunk: Buffer) => {
-        if (overflow)
-            return;
-        outputBytes += chunk.length;
-        if (retainOutput)
-            output = Buffer.concat([output, Buffer.from(chunk)]);
-        if (outputBytes > maxOutputBytes) {
-            overflow = true;
-            output = output.subarray(0, maxOutputBytes);
-            signalChild(child, 'SIGTERM');
-        }
-    };
-    child.stdout.on('data', (chunk: Buffer) => {
-        if (retainOutput && !overflow) stdout = Buffer.concat([stdout, chunk]).subarray(0, maxOutputBytes);
-        append(chunk);
-    });
-    child.stderr.on('data', append);
-    const exited = new Promise(resolvePromise => {
-        child.once('error', () => {
-            spawnError = true;
-            resolvePromise(false);
-        });
-        child.once('close', code => resolvePromise(code === 0));
-    });
-    let timedOut = false;
-    let timeout;
-    const successful = await Promise.race([
-        exited,
-        new Promise(resolvePromise => {
-            timeout = setTimeout(() => {
-                timedOut = true;
-                resolvePromise(false);
-            }, timeoutMs);
-        }),
-    ]);
-    if (timeout)
-        clearTimeout(timeout);
-    if (timedOut || overflow || spawnError)
-        await stopChild(child);
-    return {
-        durationMs: Date.now() - started,
-        output: output.toString('utf8'),
-        stdout: stdout.toString('utf8'),
-        status: successful && !timedOut && !overflow && !spawnError ? 'passed' : 'failed',
-        reason: timedOut ? 'timeout' : overflow ? 'output-limit' : spawnError ? 'spawn-failed' : successful ? null : 'nonzero-exit',
-    };
-}
-export function validStableNaruConfig(value: unknown): boolean {
-    if (!isRecord(value) || !isRecord(value.agent)) return false;
-    const agents = value.agent;
-    const orchestrator = agents['naru-orchestrator'];
-    if (!isRecord(orchestrator) || orchestrator.mode !== 'primary' || !isRecord(orchestrator.permission)) return false;
-    const task = orchestrator.permission.task;
-    if (!isRecord(task) || task['*'] !== 'deny' || typeof orchestrator.prompt !== 'string') return false;
-    if (!orchestrator.prompt.includes('Effective defaults: profile=release-critical; decision=comment-only; output=concise.')) return false;
-    for (const role of ['naru-reader', 'naru-runner', 'naru-writer']) {
-        const base = agents[role];
-        const variant = agents[`${role}-smoke`];
-        if (!isRecord(base) || !isRecord(base.permission) || base.mode !== 'subagent' || task[role] !== 'allow') return false;
-        if (base.permission['*'] !== 'deny' || base.permission.task !== 'deny' || base.permission.edit !== (role === 'naru-writer' ? 'allow' : 'deny')) return false;
-        if (role === 'naru-runner' && (base.permission.bash !== 'deny' || base.permission['naru-check'] !== 'allow')) return false;
-        if (!isRecord(variant) || variant.model !== 'openai/naru-compat-fixture' || variant.variant !== 'high' || task[`${role}-smoke`] !== 'allow') return false;
-        if (JSON.stringify(base.permission) !== JSON.stringify(variant.permission)) return false;
-    }
-    return true;
-}
+export const validStableNaruConfig = validateCoreConfigContract;
 function commandCheck(id: string, result: CommandResult): CompatibilityCheck {
     return {
         id,
@@ -347,7 +207,7 @@ async function startupCheck(executable: string, { cwd, env, timeoutMs }: Startup
         bytes += chunk.length;
         if (bytes > MAX_OUTPUT_BYTES) {
             overflow = true;
-            signalChild(child, 'SIGTERM');
+            signalProcessGroup(child, 'SIGTERM');
         }
     };
     child.stdout.on('data', count);
@@ -382,7 +242,7 @@ async function startupCheck(executable: string, { cwd, env, timeoutMs }: Startup
             reason = 'early-exit';
     }
     finally {
-        await stopChild(child);
+        await stopProcessGroup(child);
     }
     return { durationMs: Date.now() - started, status: passed ? 'passed' : 'failed', reason };
 }
@@ -448,7 +308,7 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
     let dashboardSyntax: CompatibilityCheckStatus = 'omitted';
     let dashboardRegistration: CompatibilityCheckStatus = 'omitted';
     if (platform.status === 'targeted') {
-        const root = await mkdtemp('/tmp/naru-compat-');
+        const root = await mkdtemp(path.join(await realpath(os.tmpdir()), 'naru-compat-'));
         const privateBin = path.join(root, 'bin');
         const home = path.join(root, 'home');
         const target = path.join(home, '.config', 'opencode');
@@ -470,11 +330,12 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
             let result = await runBoundedProcess(opencode, versionCommand.args, { cwd: project, env: versionEnv, timeoutMs });
             versions.opencode = sanitizeObservedVersion(result.output) ?? '';
             const versionEvaluation = evaluateOpenCodeVersion(options.profile, result.output);
+            const versionAccepted = versionEvaluation.status === 'supported' || (options.profile === 'stable' && versionEvaluation.status === 'candidate');
             checks.push({
                 id: versionCommand.id,
-                status: result.status === 'passed' && versionEvaluation.status === 'supported' ? 'passed' : 'failed',
+                status: result.status === 'passed' && versionAccepted ? 'passed' : 'failed',
                 durationMs: result.durationMs,
-                diagnostic: result.status !== 'passed' ? `opencode-version-${result.reason}` : versionEvaluation.status === 'supported' ? null : 'opencode-version-unlisted-for-profile',
+                diagnostic: result.status !== 'passed' ? `opencode-version-${result.reason}` : versionAccepted ? null : versionEvaluation.status === 'unrecognized' ? 'opencode-version-invalid' : 'opencode-version-not-eligible-for-profile',
             });
             if (result.status === 'passed' && versionEvaluation.status === 'supported' && options.profile === 'v2-beta-exploratory') {
                 const helpCommand = OPENCODE_V2_EXPLORATORY_COMMANDS[1];
@@ -483,7 +344,8 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
                 result = await runBoundedProcess(opencode, helpCommand.args, { cwd: project, env: versionEnv, timeoutMs });
                 checks.push(commandCheck(helpCommand.id, result));
             }
-            if (result.status === 'passed' && versionEvaluation.status === 'supported' && options.profile === 'stable') {
+            let hostContractMarker = '';
+            if (result.status === 'passed' && (versionEvaluation.status === 'supported' || versionEvaluation.status === 'candidate') && options.profile === 'stable') {
                 const installArgs = [path.join(source, 'install.sh'), '--copy'];
                 if (options.dashboard)
                     installArgs.push('--with-dashboard');
@@ -508,13 +370,17 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
                     schemaVersion: 1,
                     models: { smoke: { use: 'Provider-free configuration fixture; never execute', chain: ['openai/naru-compat-fixture@high'] } },
                     review: { defaultProfile: 'release-critical', defaultDecision: 'comment-only', defaultOutput: 'concise' },
+                    mcp: { configuredTools: 'ask' },
                 }), { mode: 0o600 });
+                if (result.status === 'passed') hostContractMarker = await writeHostContractFixtures(target, project);
             }
             else {
                 checks.push({ id: 'install-apply', status: 'omitted', durationMs: 0, diagnostic: 'preview-failed' });
             }
             const doctorPath = path.join(target, 'tools', 'naru-doctor.js');
-            result = await runBoundedProcess(process.execPath, [doctorPath, '--json', '--project-root', project, '--source', source], {
+            const doctorEntry = path.join(root, 'doctor-static.mjs');
+            await writeFile(doctorEntry, `import { buildStaticDoctorReport } from ${JSON.stringify(pathToFileURL(doctorPath).href)};\nconst report = await buildStaticDoctorReport({ customDir: null, projectRoot: process.argv[2], sourceRoot: process.argv[3], json: true });\nprocess.stdout.write(JSON.stringify(report));\n`, { mode: 0o600 });
+            result = await runBoundedProcess(process.execPath, [doctorEntry, project, source], {
                 cwd: project,
                 env,
                 timeoutMs,
@@ -552,13 +418,19 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
                     ...(command.retainOutput === undefined ? {} : { retainOutput: command.retainOutput }),
                     timeoutMs,
                 });
-                if (command.id === 'opencode-debug-config' && result.status === 'passed') {
-                    let valid = false;
-                    try { valid = validStableNaruConfig(JSON.parse(result.stdout)); } catch { /* Invalid effective config fails the check. */ }
-                    if (!valid) result = { ...result, status: 'failed', reason: 'naru-config-contract-failed' };
-                }
                 checks.push(commandCheck(command.id, result));
+                if (command.id === 'opencode-debug-config') {
+                    let parsed: unknown;
+                    try { parsed = result.status === 'passed' ? JSON.parse(result.stdout) : undefined; } catch { /* Invalid effective config fails both contracts. */ }
+                    const coreFailures = result.status === 'passed' ? coreConfigContractFailures(parsed) : ['debug-config-command-failed'];
+                    const coreValid = coreFailures.length === 0;
+                    checks.push({ id: 'core-config', status: coreValid ? 'passed' : 'failed', durationMs: 0, diagnostic: coreValid ? null : coreFailures.join(',') });
+                }
             }
+            const hostContract = hostContractMarker
+                ? await runHostContractProbe({ executable: opencode, cwd: project, env, marker: hostContractMarker, timeoutMs })
+                : { status: 'failed' as const, diagnostic: 'host-contract-fixture-unavailable', observations: [] };
+            checks.push({ id: 'mcp-contract', status: hostContract.status, durationMs: 0, diagnostic: hostContract.diagnostic });
             const startupResult = await startupCheck(opencode, { cwd: project, env, timeoutMs });
             checks.push(commandCheck('opencode-startup', startupResult));
             if (options.dashboard) {
@@ -603,7 +475,7 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
         }
         finally {
             try {
-                await rm(root, { recursive: true, force: true });
+                await guardedRemoveDisposableRoot(root);
                 checks.push({ id: 'cleanup', status: 'passed', durationMs: 0, diagnostic: null });
             }
             catch {

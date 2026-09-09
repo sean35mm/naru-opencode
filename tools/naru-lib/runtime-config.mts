@@ -3,12 +3,14 @@
 // only durable settings are the workspace mode and a runaway-concurrency brake.
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 const MAX_CONFIG_BYTES = 64 * 1024;
 const WORKSPACE_MODES = Object.freeze(['auto', 'shared', 'worktree'] as const);
 const REVIEW_PROFILES = Object.freeze(['standard', 'release-critical'] as const);
 const REVIEW_DECISIONS = Object.freeze(['automatic', 'comment-only'] as const);
 const REVIEW_OUTPUTS = Object.freeze(['concise', 'detailed'] as const);
+const CONFIGURED_MCP_TOOL_MODES = Object.freeze(['off', 'ask'] as const);
 const MAX_CONCURRENT_WRITERS = 50;
 type UnknownRecord = Record<string, unknown>;
 
@@ -23,10 +25,14 @@ export interface RuntimeReviewConfig {
     defaultDecision: typeof REVIEW_DECISIONS[number];
     defaultOutput: typeof REVIEW_OUTPUTS[number];
 }
+export interface RuntimeMcpConfig {
+    configuredTools: typeof CONFIGURED_MCP_TOOL_MODES[number];
+}
 
 export interface RuntimeConfig {
     schemaVersion: 1;
     implementation: RuntimeImplementationConfig;
+    mcp: RuntimeMcpConfig;
     review: RuntimeReviewConfig;
     models?: UnknownRecord;
 }
@@ -37,6 +43,9 @@ export const DEFAULT_RUNTIME_CONFIG = Object.freeze({
         workspaceMode: 'auto',
         maxConcurrentWriters: MAX_CONCURRENT_WRITERS,
         cleanWorkspaceRequired: true,
+    }),
+    mcp: Object.freeze({
+        configuredTools: 'off',
     }),
     review: Object.freeze({
         defaultProfile: 'standard',
@@ -76,10 +85,10 @@ function enumOption<T extends string>(value: unknown, fallback: T, allowed: read
 }
 export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
     if (value === undefined || value === null) {
-        return { schemaVersion: 1, implementation: { ...DEFAULT_RUNTIME_CONFIG.implementation }, review: { ...DEFAULT_RUNTIME_CONFIG.review } };
+        return { schemaVersion: 1, implementation: { ...DEFAULT_RUNTIME_CONFIG.implementation }, mcp: { ...DEFAULT_RUNTIME_CONFIG.mcp }, review: { ...DEFAULT_RUNTIME_CONFIG.review } };
     }
     assertObject(value, 'naru runtime config');
-    assertAllowedKeys(value, ['implementation', 'models', 'review', 'schemaVersion'], 'naru runtime config');
+    assertAllowedKeys(value, ['implementation', 'mcp', 'models', 'review', 'schemaVersion'], 'naru runtime config');
     if (value.schemaVersion !== undefined && value.schemaVersion !== 1) {
         throw new Error('naru runtime config schemaVersion must be 1');
     }
@@ -95,6 +104,9 @@ export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
     if (value.models !== undefined && !isPlainObject(value.models)) {
         throw new Error('models must be a plain object of model classes');
     }
+    const mcp = value.mcp ?? {};
+    assertObject(mcp, 'mcp config');
+    assertAllowedKeys(mcp, Object.keys(DEFAULT_RUNTIME_CONFIG.mcp), 'mcp config');
     const review = value.review ?? {};
     assertObject(review, 'review config');
     assertAllowedKeys(review, Object.keys(DEFAULT_RUNTIME_CONFIG.review), 'review config');
@@ -106,12 +118,36 @@ export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
             maxConcurrentWriters: integerOption(implementation.maxConcurrentWriters, DEFAULT_RUNTIME_CONFIG.implementation.maxConcurrentWriters, 'implementation.maxConcurrentWriters', { minimum: 1, maximum: MAX_CONCURRENT_WRITERS }),
             cleanWorkspaceRequired: true,
         },
+        mcp: {
+            configuredTools: enumOption(mcp.configuredTools, DEFAULT_RUNTIME_CONFIG.mcp.configuredTools, CONFIGURED_MCP_TOOL_MODES, 'mcp.configuredTools'),
+        },
         review: {
             defaultProfile: enumOption(review.defaultProfile, DEFAULT_RUNTIME_CONFIG.review.defaultProfile, REVIEW_PROFILES, 'review.defaultProfile'),
             defaultDecision: enumOption(review.defaultDecision, DEFAULT_RUNTIME_CONFIG.review.defaultDecision, REVIEW_DECISIONS, 'review.defaultDecision'),
             defaultOutput: enumOption(review.defaultOutput, DEFAULT_RUNTIME_CONFIG.review.defaultOutput, REVIEW_OUTPUTS, 'review.defaultOutput'),
         },
     };
+}
+function mergeRawRuntimeValue(base: unknown, overlay: unknown): unknown {
+    if (!isPlainObject(base) || !isPlainObject(overlay)) return overlay;
+    const result: UnknownRecord = {};
+    const set = (key: string, value: unknown) => Object.defineProperty(result, key, { configurable: true, enumerable: true, value, writable: true });
+    for (const [key, value] of Object.entries(base)) set(key, value);
+    for (const [key, value] of Object.entries(overlay)) {
+        if (key === 'models' && isPlainObject(value) && Object.keys(value).length === 0) set(key, {});
+        else set(key, mergeRawRuntimeValue(result[key], value));
+    }
+    return result;
+}
+export function mergeRuntimeConfigLayers(layers: readonly unknown[]): RuntimeConfig {
+    let merged: unknown = {};
+    for (const layer of layers) {
+        if (layer === undefined || layer === null) continue;
+        // Validate every layer before it can be hidden by a later override.
+        parseRuntimeConfig(layer);
+        merged = mergeRawRuntimeValue(merged, layer);
+    }
+    return parseRuntimeConfig(merged);
 }
 function hasControl(value: string): boolean {
     for (let index = 0; index < value.length; index += 1) {
@@ -134,8 +170,19 @@ function assertSafeConfigPath(path: unknown): asserts path is string {
     }
 }
 export async function loadRuntimeConfigFile(path: string): Promise<RuntimeConfig> {
+    const value = await loadRawRuntimeConfigFile(path, false);
+    return parseRuntimeConfig(value);
+}
+async function loadRawRuntimeConfigFile(path: string, optional: boolean): Promise<unknown | undefined> {
     assertSafeConfigPath(path);
-    const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    let handle;
+    try {
+        handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    }
+    catch (error) {
+        if (optional && error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+        throw error;
+    }
     try {
         const stats = await handle.stat();
         if (!stats.isFile())
@@ -153,10 +200,26 @@ export async function loadRuntimeConfigFile(path: string): Promise<RuntimeConfig
         catch {
             throw new Error('runtime config contains invalid JSON');
         }
-        return parseRuntimeConfig(value);
+        return value;
     }
     finally {
         await handle.close();
     }
+}
+export async function loadRuntimeConfigLayers(paths: readonly string[]): Promise<RuntimeConfig> {
+    const values: unknown[] = [];
+    const seen = new Set<string>();
+    for (const path of paths) {
+        const canonical = resolve(path);
+        if (seen.has(canonical)) continue;
+        seen.add(canonical);
+        const value = await loadRawRuntimeConfigFile(canonical, true);
+        if (value !== undefined) values.push(value);
+    }
+    return mergeRuntimeConfigLayers(values);
+}
+export function globalRuntimeConfigPath(env: Readonly<Record<string, string | undefined>> = process.env, home = homedir()): string {
+    const configHome = env.XDG_CONFIG_HOME;
+    return join(configHome && configHome.length > 0 ? resolve(configHome) : join(resolve(home), '.config'), 'opencode', 'naru-runtime.json');
 }
 export const IMPLEMENTATION_WORKSPACE_MODES = WORKSPACE_MODES;

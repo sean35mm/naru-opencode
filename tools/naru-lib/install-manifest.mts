@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { constants as fsConstants, realpathSync } from 'node:fs';
 import type { Dirent, Stats } from 'node:fs';
-import { lstat, open, opendir, readlink, writeFile, } from 'node:fs/promises';
+import { copyFile, cp, lstat, mkdir, open, opendir, readlink, writeFile, } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 export const INSTALL_MANIFEST_FILE = '.naru-install.json';
@@ -136,6 +136,7 @@ interface ClassifyInstallPlanInput {
     desiredManifest: unknown;
     previousManifest: unknown;
     replaceConflicts?: boolean;
+    selectedPaths?: ReadonlySet<string> | null;
 }
 
 interface LifecycleTransactionInput {
@@ -171,10 +172,12 @@ interface UninstallPlanInput {
 
 export interface InstallPlanOperation {
     action: 'create' | 'update' | 'unchanged' | 'conflict-unowned' | 'conflict-modified'
-        | 'retire' | 'retire-missing' | 'preserve-retired-modified' | 'preserve-orphaned';
+        | 'retire' | 'retire-missing' | 'preserve-retired-modified' | 'preserve-orphaned'
+        | 'preserve-unselected';
     reason: string;
     entry: ManagedEntry;
     current: FilesystemSnapshot | null;
+    stageSource?: string;
 }
 
 export interface LifecycleOperation {
@@ -880,6 +883,171 @@ export async function buildInstallManifest({ sourceRoot, locationMode, installMo
         managed,
     });
 }
+
+function sourceVersionForManaged(managed: ManagedEntry[]): string {
+    const input = managed.map(entry => [
+        entry.sourcePath,
+        entry.sourceKind,
+        entry.sourceFingerprint,
+    ].join('\0')).join('\n');
+    return `sha256:${hashBytes(input)}`;
+}
+
+async function ensureContainedDirectory(root: string, relative: string): Promise<void> {
+    if (relative === '.' || relative === '')
+        return;
+    let cursor = path.resolve(root);
+    for (const part of normalizeManagedPath(relative, 'composite directory').split('/')) {
+        cursor = path.join(cursor, part);
+        const current = await statOrNull(cursor);
+        if (current === null) {
+            await mkdir(cursor);
+        }
+        else if (current.isSymbolicLink() || !current.isDirectory()) {
+            throw new Error('composite directory has an unsafe parent');
+        }
+    }
+}
+
+async function buildSelectedInstallManifest({
+    sourceRoot,
+    targetRoot,
+    requestedLocationMode,
+    planEntries,
+    selections,
+    compositeRoot,
+}: {
+    sourceRoot: string;
+    targetRoot: string;
+    requestedLocationMode: unknown;
+    planEntries: InstallPlanEntry[];
+    selections: string[];
+    compositeRoot: string;
+}): Promise<{ manifest: InstallManifest; selectedOwners: Set<string>; leafSelections: Map<string, string[]> }> {
+    const previous = await loadInstallManifest(targetRoot);
+    if (previous === null)
+        throw new Error('--only requires a valid prior .naru-install.json ownership manifest');
+    if (previous.locationMode !== requestedLocationMode)
+        throw new Error(`--only target location mode must remain ${previous.locationMode}`);
+    if (selections.length === 0)
+        throw new Error('--only requires at least one installed path');
+
+    const planByPath = new Map<string, InstallPlanEntry>();
+    for (const [index, entry] of planEntries.entries()) {
+        const managedPath = normalizeManagedPath(entry.path, `plan entry ${index} path`);
+        assertUnreservedManagedPath(managedPath, `plan entry ${index} path`);
+        if (planByPath.has(managedPath))
+            throw new Error(`duplicate plan path: ${managedPath}`);
+        planByPath.set(managedPath, entry);
+    }
+    assertDisjointManagedPaths(planByPath.keys(), 'install plan');
+
+    const normalizedSelections: string[] = [];
+    const seenSelections = new Set<string>();
+    for (const [index, selectionValue] of selections.entries()) {
+        const selection = normalizeManagedPath(selectionValue, `--only path ${index + 1}`);
+        assertUnreservedManagedPath(selection, `--only path ${index + 1}`);
+        if (seenSelections.has(selection))
+            throw new Error(`duplicate --only path: ${selection}`);
+        seenSelections.add(selection);
+        normalizedSelections.push(selection);
+    }
+    assertDisjointManagedPaths(normalizedSelections, '--only paths');
+
+    const previousByPath = new Map(previous.managed.map(entry => [entry.path, entry]));
+    const selectedOwners = new Set<string>();
+    const leafSelections = new Map<string, string[]>();
+    for (const selection of normalizedSelections) {
+        let owner = selection;
+        if (!planByPath.has(selection)) {
+            owner = 'tools/naru-lib';
+            if (!selection.startsWith(`${owner}/`) || !planByPath.has(owner))
+                throw new Error(`unknown --only installed path: ${selection}`);
+            const leaves = leafSelections.get(owner) ?? [];
+            leaves.push(selection.slice(owner.length + 1));
+            leafSelections.set(owner, leaves);
+        }
+        if (!previousByPath.has(owner))
+            throw new Error(`--only path is not owned by the prior manifest: ${selection}`);
+        selectedOwners.add(owner);
+    }
+
+    const adjustedPlan = planEntries.map(entry => ({
+        ...entry,
+        method: previousByPath.get(entry.path)?.method ?? entry.method,
+    }));
+    const packageManifest = await buildInstallManifest({
+        sourceRoot,
+        locationMode: previous.locationMode,
+        installMode: previous.installMode,
+        options: previous.options,
+        planEntries: adjustedPlan,
+    });
+    const packageByPath = new Map(packageManifest.managed.map(entry => [entry.path, entry]));
+    const selectedEntries = new Map<string, ManagedEntry>();
+    for (const owner of selectedOwners) {
+        const candidate = packageByPath.get(owner);
+        if (candidate === undefined)
+            throw new Error(`selected path is not in the fixed install plan: ${owner}`);
+        selectedEntries.set(owner, candidate);
+    }
+
+    for (const [owner, leaves] of leafSelections) {
+        const previousEntry = previousByPath.get(owner);
+        if (previousEntry === undefined || previousEntry.method !== 'copy' || previousEntry.installedKind !== 'directory') {
+            throw new Error(`--only descendants require an existing copy-managed directory: ${owner}`);
+        }
+        const targetOwner = await containedPathWithoutSymlinkParents(targetRoot, owner, 'composite target path');
+        const baseline = await fingerprintPath(targetOwner);
+        if (!stateMatches(baseline, previousEntry)) {
+            throw new Error(`copy-managed directory baseline is missing or modified: ${owner}`);
+        }
+        const compositeOwner = containedPath(compositeRoot, owner, 'composite path');
+        await mkdir(path.dirname(compositeOwner), { recursive: true });
+        await cp(targetOwner, compositeOwner, { recursive: true, dereference: false, errorOnExist: true });
+        const copiedBaseline = await fingerprintPath(compositeOwner);
+        if (!stateMatches(copiedBaseline, previousEntry))
+            throw new Error(`copy-managed directory changed while staging: ${owner}`);
+
+        for (const leaf of leaves) {
+            const sourceRelative = `${owner}/${leaf}`;
+            const sourceAbsolute = await containedPathWithoutSymlinkParents(sourceRoot, sourceRelative, 'selected package leaf');
+            const sourceStats = await statOrNull(sourceAbsolute);
+            if (sourceStats === null || sourceStats.isSymbolicLink() || !sourceStats.isFile())
+                throw new Error(`selected package leaf must be a regular file: ${sourceRelative}`);
+            await ensureContainedDirectory(compositeOwner, path.posix.dirname(leaf));
+            const compositeLeaf = await containedPathWithoutSymlinkParents(compositeOwner, leaf, 'composite leaf');
+            const existing = await statOrNull(compositeLeaf);
+            if (existing !== null && (existing.isSymbolicLink() || !existing.isFile()))
+                throw new Error(`composite leaf is not a regular file: ${sourceRelative}`);
+            await copyFile(sourceAbsolute, compositeLeaf);
+            const [sourceState, stagedState] = await Promise.all([
+                fingerprintPath(sourceAbsolute),
+                fingerprintPath(compositeLeaf),
+            ]);
+            if (!stateEqual(sourceState, stagedState))
+                throw new Error(`selected package leaf changed while staging: ${sourceRelative}`);
+        }
+        const compositeState = await fingerprintPath(compositeOwner);
+        if (compositeState === null || compositeState.kind !== 'directory')
+            throw new Error(`failed to stage copy-managed directory: ${owner}`);
+        selectedEntries.set(owner, {
+            ...previousEntry,
+            sourceKind: compositeState.kind,
+            sourceFingerprint: compositeState.fingerprint,
+            installedKind: compositeState.kind,
+            installedFingerprint: compositeState.fingerprint,
+        });
+    }
+
+    const managed = previous.managed.map(entry => selectedEntries.get(entry.path) ?? entry);
+    const manifest = validateInstallManifest({
+        ...previous,
+        sourceVersion: sourceVersionForManaged(managed),
+        managed,
+    });
+    return { manifest, selectedOwners, leafSelections };
+}
 function stateMatches(current: FilesystemSnapshot | null, entry: ManagedEntry): boolean {
     return current !== null
         && current.kind === entry.installedKind
@@ -927,7 +1095,7 @@ async function buildInstallTransaction({ transactionId, targetRoot, previousMani
         changes,
     });
 }
-export async function classifyInstallPlan({ targetRoot, desiredManifest: desiredManifestValue, previousManifest: previousManifestValue, replaceConflicts = false, }: ClassifyInstallPlanInput): Promise<InstallPlanOperation[]> {
+export async function classifyInstallPlan({ targetRoot, desiredManifest: desiredManifestValue, previousManifest: previousManifestValue, replaceConflicts = false, selectedPaths = null, }: ClassifyInstallPlanInput): Promise<InstallPlanOperation[]> {
     const desiredManifest = validateInstallManifest(desiredManifestValue);
     const previousManifest = previousManifestValue === null
         ? null
@@ -938,6 +1106,18 @@ export async function classifyInstallPlan({ targetRoot, desiredManifest: desired
     const targetBudget = fingerprintBudget();
     for (const entry of desiredManifest.managed) {
         const current = await fingerprintPath(await containedPathWithoutSymlinkParents(targetRoot, entry.path, 'target path'), targetBudget);
+        if (selectedPaths !== null && !selectedPaths.has(entry.path)) {
+            const previous = previousByPath.get(entry.path);
+            if (previous === undefined || JSON.stringify(previous) !== JSON.stringify(entry))
+                throw new Error(`unselected ownership changed unexpectedly: ${entry.path}`);
+            const reason = current === null
+                ? 'unselected-missing-preserved'
+                : stateMatches(current, previous)
+                    ? 'unselected-healthy-preserved'
+                    : 'unselected-modified-preserved';
+            operations.push({ action: 'preserve-unselected', reason, entry, current });
+            continue;
+        }
         let action: InstallPlanOperation['action'];
         let reason: string;
         if (current === null) {
@@ -965,7 +1145,7 @@ export async function classifyInstallPlan({ targetRoot, desiredManifest: desired
         }
         operations.push({ action, reason, entry, current });
     }
-    for (const entry of previousManifest?.managed ?? []) {
+    for (const entry of selectedPaths === null ? previousManifest?.managed ?? [] : []) {
         if (!desiredPaths.has(entry.path)) {
             if (RETIRED_MANAGED_PATHS.has(entry.path)) {
                 const current = await fingerprintPath(await containedPathWithoutSymlinkParents(targetRoot, entry.path, 'retired target path'), targetBudget);
@@ -1276,6 +1456,9 @@ interface PrepareArguments {
     '--configure-subagent-depth': string;
     '--migrate-orchestrator': string;
     '--replace-conflicts': string;
+    '--selected': string;
+    '--composite-root': string;
+    '--context-output': string;
 }
 
 interface LifecycleArguments {
@@ -1293,6 +1476,17 @@ interface VerifyArguments {
     '--target': string;
     '--backup-id': string;
     '--receipt': string;
+}
+
+interface VerifyPreparedArguments {
+    '--source': string;
+    '--target': string;
+    '--stage': string;
+    '--manifest': string;
+    '--operations': string;
+    '--receipt': string;
+    '--selected': string;
+    '--before-manifest-fingerprint': string;
 }
 
 function parseBoolean(value: string, label: string): boolean {
@@ -1333,6 +1527,9 @@ function parsePrepareArgs(argv: string[]): PrepareArguments {
         '--configure-subagent-depth',
         '--migrate-orchestrator',
         '--replace-conflicts',
+        '--selected',
+        '--composite-root',
+        '--context-output',
     ]);
     if (!TRANSACTION_ID_PATTERN.test(values['--transaction-id']))
         throw new Error('prepare transaction id is invalid');
@@ -1350,6 +1547,9 @@ function parsePrepareArgs(argv: string[]): PrepareArguments {
         '--configure-subagent-depth': values['--configure-subagent-depth'],
         '--migrate-orchestrator': values['--migrate-orchestrator'],
         '--replace-conflicts': values['--replace-conflicts'],
+        '--selected': values['--selected'],
+        '--composite-root': values['--composite-root'],
+        '--context-output': values['--context-output'],
     };
 }
 function parseLifecycleArgs(argv: string[]): LifecycleArguments {
@@ -1399,6 +1599,29 @@ function parseVerifyArgs(argv: string[]): VerifyArguments {
         '--receipt': values['--receipt'],
     };
 }
+
+function parseVerifyPreparedArgs(argv: string[]): VerifyPreparedArguments {
+    const values = parseKeyValueArgs(argv, 'verify-prepared', [
+        '--source',
+        '--target',
+        '--stage',
+        '--manifest',
+        '--operations',
+        '--receipt',
+        '--selected',
+        '--before-manifest-fingerprint',
+    ]);
+    return {
+        '--source': values['--source'],
+        '--target': values['--target'],
+        '--stage': values['--stage'],
+        '--manifest': values['--manifest'],
+        '--operations': values['--operations'],
+        '--receipt': values['--receipt'],
+        '--selected': values['--selected'],
+        '--before-manifest-fingerprint': values['--before-manifest-fingerprint'],
+    };
+}
 async function readPlan(planPath: string): Promise<InstallPlanEntry[]> {
     const handle = await open(planPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
     let text;
@@ -1425,27 +1648,74 @@ async function readPlan(planPath: string): Promise<InstallPlanEntry[]> {
     }
     return entries;
 }
+
+async function readSelectedPaths(selectedPath: string): Promise<string[]> {
+    if (selectedPath === '-')
+        return [];
+    const handle = await open(selectedPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    try {
+        const stats = await handle.stat();
+        if (!stats.isFile() || stats.size > MAX_INSTALL_MANIFEST_BYTES)
+            throw new Error('--only selection exceeds limits');
+        return (await handle.readFile({ encoding: 'utf8' })).split('\n').filter(line => line !== '');
+    }
+    finally {
+        await handle.close();
+    }
+}
+
 async function prepare(argv: string[]): Promise<void> {
     const values = parsePrepareArgs(argv);
     const planEntries = await readPlan(values['--plan']);
-    const desiredManifest = await buildInstallManifest({
-        sourceRoot: values['--source'],
-        locationMode: values['--location-mode'],
-        installMode: values['--install-mode'],
-        options: {
-            dashboard: parseBoolean(values['--dashboard'], '--dashboard'),
-            configureSubagentDepth: parseBoolean(values['--configure-subagent-depth'], '--configure-subagent-depth'),
-            migrateOrchestrator: parseBoolean(values['--migrate-orchestrator'], '--migrate-orchestrator'),
-        },
-        planEntries,
-    });
     const previousManifest = await loadInstallManifest(values['--target']);
+    const selections = await readSelectedPaths(values['--selected']);
+    let desiredManifest: InstallManifest;
+    let selectedOwners: Set<string> | null = null;
+    let leafSelections = new Map<string, string[]>();
+    if (values['--selected'] !== '-') {
+        const selected = await buildSelectedInstallManifest({
+            sourceRoot: values['--source'],
+            targetRoot: values['--target'],
+            requestedLocationMode: values['--location-mode'],
+            planEntries,
+            selections,
+            compositeRoot: values['--composite-root'],
+        });
+        desiredManifest = selected.manifest;
+        selectedOwners = selected.selectedOwners;
+        leafSelections = selected.leafSelections;
+    }
+    else {
+        desiredManifest = await buildInstallManifest({
+            sourceRoot: values['--source'],
+            locationMode: values['--location-mode'],
+            installMode: values['--install-mode'],
+            options: {
+                dashboard: parseBoolean(values['--dashboard'], '--dashboard'),
+                configureSubagentDepth: parseBoolean(values['--configure-subagent-depth'], '--configure-subagent-depth'),
+                migrateOrchestrator: parseBoolean(values['--migrate-orchestrator'], '--migrate-orchestrator'),
+            },
+            planEntries,
+        });
+    }
     const operations = await classifyInstallPlan({
         targetRoot: values['--target'],
         desiredManifest,
         previousManifest,
         replaceConflicts: parseBoolean(values['--replace-conflicts'], '--replace-conflicts'),
+        selectedPaths: selectedOwners,
     });
+    for (const owner of leafSelections.keys()) {
+        const previousEntry = previousManifest?.managed.find(entry => entry.path === owner);
+        const operation = operations.find(item => item.entry.path === owner);
+        if (previousEntry === undefined || operation === undefined || !stateMatches(operation.current, previousEntry)) {
+            throw new Error(`copy-managed directory baseline changed after staging: ${owner}`);
+        }
+    }
+    for (const operation of operations) {
+        if (leafSelections.has(operation.entry.path))
+            operation.stageSource = containedPath(values['--composite-root'], operation.entry.path, 'composite stage source');
+    }
     const receipt = await buildInstallTransaction({
         transactionId: values['--transaction-id'],
         targetRoot: values['--target'],
@@ -1454,15 +1724,19 @@ async function prepare(argv: string[]): Promise<void> {
         operations,
     });
     await writeFile(values['--manifest-output'], serializeInstallManifest(desiredManifest), { mode: 0o600 });
-    const lines = operations.map(({ action, reason, entry }) => [
-        action,
-        entry.method,
-        entry.sourcePath,
-        entry.path,
-        reason,
+    const lines = operations.map(operation => [
+        operation.action,
+        operation.entry.method,
+        operation.entry.sourcePath,
+        operation.entry.path,
+        operation.reason,
+        operation.stageSource ?? '-',
     ].join('\t'));
     await writeFile(values['--operations-output'], `${lines.join('\n')}\n`, { mode: 0o600 });
     await writeFile(values['--receipt-output'], receipt === null ? '' : serializeInstallTransaction(receipt), { mode: 0o600 });
+    const previousManifestState = await fingerprintPath(path.join(path.resolve(values['--target']), INSTALL_MANIFEST_FILE));
+    const previousManifestFingerprint = previousManifestState === null ? 'missing' : previousManifestState.fingerprint;
+    await writeFile(values['--context-output'], `${desiredManifest.locationMode}\t${desiredManifest.installMode}\t${previousManifestFingerprint}\n`, { mode: 0o600 });
 }
 async function planLifecycle(argv: string[]): Promise<void> {
     const values = parseLifecycleArgs(argv);
@@ -1498,6 +1772,119 @@ async function verify(argv: string[]): Promise<void> {
         receiptPath: values['--receipt'],
     });
 }
+
+async function verifyPrepared(argv: string[]): Promise<void> {
+    const values = parseVerifyPreparedArgs(argv);
+    const desiredManifest = validateInstallManifest(await loadJsonFile(values['--manifest'], MAX_INSTALL_MANIFEST_BYTES, 'prepared ownership manifest'));
+    const currentManifest = await loadInstallManifest(values['--target']);
+    const currentManifestState = await fingerprintPath(path.join(path.resolve(values['--target']), INSTALL_MANIFEST_FILE));
+    const currentManifestFingerprint = currentManifestState === null ? 'missing' : currentManifestState.fingerprint;
+    if (currentManifestFingerprint !== values['--before-manifest-fingerprint'])
+        throw new Error('ownership manifest bytes changed after install planning');
+    const receiptStats = await statOrNull(values['--receipt']);
+    const receipt = receiptStats === null || receiptStats.size === 0
+        ? null
+        : validateInstallTransaction(await loadJsonFile(values['--receipt'], MAX_INSTALL_TRANSACTION_BYTES, 'prepared install transaction receipt'));
+    if (receipt === null) {
+        if (!manifestEqual(currentManifest, desiredManifest))
+            throw new Error('ownership manifest changed after install planning');
+    }
+    else if (!manifestEqual(currentManifest, receipt.beforeManifest)) {
+        throw new Error('ownership manifest changed after install planning');
+    }
+    if (receipt !== null && !manifestEqual(receipt.afterManifest, desiredManifest))
+        throw new Error('prepared receipt does not match the desired ownership manifest');
+
+    const operationHandle = await open(values['--operations'], fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    let operationText: string;
+    try {
+        operationText = await operationHandle.readFile({ encoding: 'utf8' });
+    }
+    finally {
+        await operationHandle.close();
+    }
+    const desiredByPath = new Map(desiredManifest.managed.map(entry => [entry.path, entry]));
+    const receiptByPath = new Map(receipt?.changes.map(change => [change.path, change]) ?? []);
+    const selections = await readSelectedPaths(values['--selected']);
+    const selectedDescendantOwners = new Set(selections
+        .filter(selection => selection.startsWith('tools/naru-lib/'))
+        .map(() => 'tools/naru-lib'));
+    for (const owner of selectedDescendantOwners) {
+        const previousEntry = receipt?.beforeManifest?.managed.find(entry => entry.path === owner)
+            ?? currentManifest?.managed.find(entry => entry.path === owner);
+        const current = await fingerprintPath(await containedPathWithoutSymlinkParents(values['--target'], owner, 'prepared composite target path'));
+        if (previousEntry === undefined || !stateMatches(current, previousEntry))
+            throw new Error(`copy-managed directory baseline changed after install planning: ${owner}`);
+    }
+    for (const [index, line] of operationText.split('\n').entries()) {
+        if (line === '')
+            continue;
+        const fields = line.split('\t');
+        if (fields.length !== 6)
+            throw new Error(`prepared operation line ${index + 1} is malformed`);
+        const [action, , , operationPath] = fields;
+        if (action === undefined || operationPath === undefined)
+            throw new Error(`prepared operation line ${index + 1} is malformed`);
+        if (action === 'preserve-unselected' || action === 'preserve-orphaned' || action === 'retire-missing' || action === 'preserve-retired-modified')
+            continue;
+        const entry = desiredByPath.get(operationPath)
+            ?? receipt?.beforeManifest?.managed.find(candidate => candidate.path === operationPath);
+        if (entry === undefined)
+            throw new Error(`prepared operation path is not desired: ${operationPath}`);
+        const current = await fingerprintPath(await containedPathWithoutSymlinkParents(values['--target'], operationPath, 'prepared target path'));
+        if (action === 'unchanged') {
+            if (!stateMatches(current, entry))
+                throw new Error(`selected target changed after install planning: ${operationPath}`);
+            continue;
+        }
+        const change = receiptByPath.get(operationPath);
+        if (change === undefined || !stateEqual(current, change.before))
+            throw new Error(`selected target changed after install planning: ${operationPath}`);
+        if (action !== 'retire') {
+            const staged = await fingerprintPath(await containedPathWithoutSymlinkParents(values['--stage'], operationPath, 'prepared staged path'));
+            if (!stateEqual(staged, change.after))
+                throw new Error(`staged result does not match the prepared receipt: ${operationPath}`);
+        }
+    }
+
+    const manifestChange = receiptByPath.get(INSTALL_MANIFEST_FILE);
+    if (manifestChange !== undefined) {
+        const currentManifestState = await fingerprintPath(await containedPathWithoutSymlinkParents(values['--target'], INSTALL_MANIFEST_FILE, 'current manifest path'));
+        if (!stateEqual(currentManifestState, manifestChange.before))
+            throw new Error('ownership manifest bytes changed after install planning');
+        const stagedManifestState = await fingerprintPath(await containedPathWithoutSymlinkParents(values['--stage'], INSTALL_MANIFEST_FILE, 'staged manifest path'));
+        if (!stateEqual(stagedManifestState, manifestChange.after))
+            throw new Error('staged ownership manifest does not match the prepared receipt');
+    }
+    for (const change of receipt?.changes ?? []) {
+        if (change.path === INSTALL_MANIFEST_FILE || change.after === null)
+            continue;
+        const staged = await fingerprintPath(await containedPathWithoutSymlinkParents(values['--stage'], change.path, 'receipt staged path'));
+        if (!stateEqual(staged, change.after))
+            throw new Error(`staged result does not match the prepared receipt: ${change.path}`);
+    }
+
+    const leafSelections = selections.filter(selection => selection.startsWith('tools/naru-lib/'));
+    const leafOwnerSelected = leafSelections.length > 0;
+    for (const selection of selections) {
+        const normalized = normalizeManagedPath(selection, '--only verification path');
+        if (normalized.startsWith('tools/naru-lib/')) {
+            const source = await fingerprintPath(await containedPathWithoutSymlinkParents(values['--source'], normalized, 'selected package source'));
+            const staged = await fingerprintPath(await containedPathWithoutSymlinkParents(values['--stage'], normalized, 'selected staged leaf'));
+            if (source === null || source.kind !== 'file' || !stateEqual(source, staged))
+                throw new Error(`selected package source changed after staging: ${normalized}`);
+            continue;
+        }
+        const entry = desiredByPath.get(normalized);
+        if (entry === undefined)
+            throw new Error(`selected path is not desired: ${normalized}`);
+        if (normalized === 'tools/naru-lib' && leafOwnerSelected)
+            continue;
+        const source = await fingerprintPath(await containedPathWithoutSymlinkParents(values['--source'], entry.sourcePath, 'selected source path'));
+        if (source === null || source.kind !== entry.sourceKind || source.fingerprint !== entry.sourceFingerprint)
+            throw new Error(`selected source changed after install planning: ${normalized}`);
+    }
+}
 async function main(): Promise<void> {
     try {
         const argv = process.argv.slice(2);
@@ -1507,8 +1894,10 @@ async function main(): Promise<void> {
             await planLifecycle(argv);
         else if (argv[0] === 'verify')
             await verify(argv);
+        else if (argv[0] === 'verify-prepared')
+            await verifyPrepared(argv);
         else
-            throw new Error('expected prepare, lifecycle, or verify command');
+            throw new Error('expected prepare, lifecycle, verify, or verify-prepared command');
     }
     catch (error) {
         process.stderr.write(`install-manifest: ${error instanceof Error ? error.message : String(error)}\n`);

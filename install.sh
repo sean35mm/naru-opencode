@@ -2,7 +2,7 @@
 # Install Naru for OpenCode.
 #
 # Usage:
-#   ./install.sh [--preview | --apply] [--replace-conflicts] [--copy] [--project | --dir PATH] [--with-dashboard] [--configure-subagent-depth] [--migrate-orchestrator]
+#   ./install.sh [--preview | --apply] [--replace-conflicts] [--copy] [--project | --dir PATH] [--with-dashboard] [--configure-subagent-depth] [--migrate-orchestrator] [--only INSTALLED_PATH ...]
 #   ./install.sh --rollback BACKUP_ID [--preview | --apply --confirm-rollback TOKEN] [--replace-conflicts] [--project | --dir PATH]
 #   ./install.sh --uninstall [--preview | --apply --confirm-uninstall TOKEN] [--replace-conflicts] [--project | --dir PATH]
 #
@@ -40,6 +40,9 @@ CONFIRM_ROLLBACK=""
 CONFIRM_UNINSTALL=""
 COPY_REQUESTED=false
 INSTALL_OPTION_REQUESTED=false
+WITH_DASHBOARD_REQUESTED=false
+ONLY_REQUESTED=false
+ONLY_PATHS=""
 
 usage() {
   sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
@@ -64,9 +67,28 @@ while [ $# -gt 0 ]; do
       TARGET="$1"
       LOCATION_MODE=custom
       ;;
-    --with-dashboard) echo "install.sh: --with-dashboard is deprecated and ignored; the dashboard plugin was removed" >&2 ;;
+    --with-dashboard) WITH_DASHBOARD_REQUESTED=true; echo "install.sh: --with-dashboard is deprecated and ignored; the dashboard plugin was removed" >&2 ;;
     --migrate-orchestrator) MIGRATE_ORCHESTRATOR=true; INSTALL_OPTION_REQUESTED=true ;;
     --configure-subagent-depth) CONFIGURE_SUBAGENT_DEPTH=true; INSTALL_OPTION_REQUESTED=true ;;
+    --only)
+      if [ $# -lt 2 ]; then
+        echo "install.sh: --only requires an INSTALLED_PATH" >&2
+        exit 2
+      fi
+      shift
+      case "$1" in
+        -*) echo "install.sh: --only requires an INSTALLED_PATH, got $1" >&2; exit 2 ;;
+        *'
+'*) echo "install.sh: --only path contains an unsupported newline" >&2; exit 2 ;;
+      esac
+      if [ -z "$ONLY_PATHS" ]; then
+        ONLY_PATHS="$1"
+      else
+        ONLY_PATHS="${ONLY_PATHS}
+$1"
+      fi
+      ONLY_REQUESTED=true
+      ;;
     --rollback)
       if [ $# -lt 2 ]; then
         echo "install.sh: --rollback requires a BACKUP_ID" >&2
@@ -118,9 +140,13 @@ if [ "$LIFECYCLE_ACTION" = install ]; then
     echo "install.sh: lifecycle confirmation requires --rollback or --uninstall" >&2
     exit 2
   fi
+  if [ "$ONLY_REQUESTED" = true ] && { [ "$COPY_REQUESTED" = true ] || [ "$INSTALL_OPTION_REQUESTED" = true ] || [ "$WITH_DASHBOARD_REQUESTED" = true ]; }; then
+    echo "install.sh: --only infers the prior install method and options; do not combine it with inventory-wide install flags" >&2
+    exit 2
+  fi
 else
-  if [ "$COPY_REQUESTED" = true ] || [ "$INSTALL_OPTION_REQUESTED" = true ]; then
-    echo "install.sh: --copy, --with-dashboard, --configure-subagent-depth, and --migrate-orchestrator are install-only" >&2
+  if [ "$COPY_REQUESTED" = true ] || [ "$INSTALL_OPTION_REQUESTED" = true ] || [ "$ONLY_REQUESTED" = true ]; then
+    echo "install.sh: --copy, --only, --with-dashboard, --configure-subagent-depth, and --migrate-orchestrator are install-only" >&2
     exit 2
   fi
   if [ "$LIFECYCLE_ACTION" = rollback ] && [ -n "$CONFIRM_UNINSTALL" ]; then
@@ -235,6 +261,9 @@ MIGRATIONS="${TX_DIR}/migrations"
 TUI_OPERATIONS="${TX_DIR}/tui-operations"
 DESIRED_MANIFEST="${TX_DIR}/naru-install.json"
 TRANSACTION_RECEIPT="${TX_DIR}/naru-transaction.json"
+SELECTED_PATHS="${TX_DIR}/selected-paths"
+COMPOSITE_ROOT="${TX_DIR}/composites"
+INSTALL_CONTEXT="${TX_DIR}/install-context"
 LIFECYCLE_OPERATIONS="${TX_DIR}/lifecycle-operations"
 LIFECYCLE_TOKEN_FILE="${TX_DIR}/lifecycle-token"
 BACKUP_TS="$(date +%Y%m%d%H%M%S)-$$"
@@ -355,6 +384,11 @@ trap 'exit 130' 1 2 15
 : > "$BACKUPS"
 : > "$MIGRATIONS"
 : > "$TUI_OPERATIONS"
+if [ "$ONLY_REQUESTED" = true ]; then
+  printf '%s\n' "$ONLY_PATHS" > "$SELECTED_PATHS"
+else
+  SELECTED_PATHS="-"
+fi
 
 persist_transaction_receipt() {
   [ -s "$TRANSACTION_RECEIPT" ] || return 0
@@ -598,7 +632,12 @@ TUI_REGISTER_REL=""
   --dashboard "$WITH_DASHBOARD" \
   --configure-subagent-depth false \
   --migrate-orchestrator "$MIGRATE_ORCHESTRATOR" \
-  --replace-conflicts "$REPLACE_CONFLICTS"
+  --replace-conflicts "$REPLACE_CONFLICTS" \
+  --selected "$SELECTED_PATHS" \
+  --composite-root "$COMPOSITE_ROOT" \
+  --context-output "$INSTALL_CONTEXT"
+
+IFS="$(printf '\t')" read -r LOCATION_MODE MODE BEFORE_MANIFEST_FINGERPRINT < "$INSTALL_CONTEXT"
 
 MANIFEST_ACTION=create
 if [ -f "${TARGET}/.naru-install.json" ]; then
@@ -616,23 +655,25 @@ record_migration() {
   fi
 }
 
-record_migration "commands/naru"
-record_migration "agents/naru"
-for f in "$TARGET"/commands/naru.bak.*; do
-  [ -e "$f" ] || continue
-  record_migration "commands/$(basename "$f")"
-done
-for f in "$TARGET"/agents/naru.bak.*; do
-  [ -e "$f" ] || continue
-  record_migration "agents/$(basename "$f")"
-done
-if [ "$MIGRATE_ORCHESTRATOR" = true ]; then
-  record_migration "agents/orchestrator.md"
-  record_migration "agents/minion"
-  record_migration "plugins/orchestrator-dashboard.js"
-fi
-if [ "$WITH_DASHBOARD" = true ]; then
-  record_migration "plugins/naru-minions-dashboard.js"
+if [ "$ONLY_REQUESTED" = false ]; then
+  record_migration "commands/naru"
+  record_migration "agents/naru"
+  for f in "$TARGET"/commands/naru.bak.*; do
+    [ -e "$f" ] || continue
+    record_migration "commands/$(basename "$f")"
+  done
+  for f in "$TARGET"/agents/naru.bak.*; do
+    [ -e "$f" ] || continue
+    record_migration "agents/$(basename "$f")"
+  done
+  if [ "$MIGRATE_ORCHESTRATOR" = true ]; then
+    record_migration "agents/orchestrator.md"
+    record_migration "agents/minion"
+    record_migration "plugins/orchestrator-dashboard.js"
+  fi
+  if [ "$WITH_DASHBOARD" = true ]; then
+    record_migration "plugins/naru-minions-dashboard.js"
+  fi
 fi
 
 ASSET_CREATE=0
@@ -644,7 +685,11 @@ ASSET_ORPHANED=0
 ASSET_RETIRED=0
 ASSET_RETIRED_MISSING=0
 ASSET_RETIRED_PRESERVED=0
-while IFS="$(printf '\t')" read -r action method source_rel rel reason; do
+ASSET_PRESERVE_UNSELECTED=0
+ASSET_UNSELECTED_HEALTHY=0
+ASSET_UNSELECTED_MODIFIED=0
+ASSET_UNSELECTED_MISSING=0
+while IFS="$(printf '\t')" read -r action method source_rel rel reason stage_source; do
   [ -n "$action" ] || continue
   case "$action" in
     create) ASSET_CREATE=$((ASSET_CREATE + 1)) ;;
@@ -656,6 +701,14 @@ while IFS="$(printf '\t')" read -r action method source_rel rel reason; do
     retire) ASSET_RETIRED=$((ASSET_RETIRED + 1)) ;;
     retire-missing) ASSET_RETIRED_MISSING=$((ASSET_RETIRED_MISSING + 1)) ;;
     preserve-retired-modified) ASSET_RETIRED_PRESERVED=$((ASSET_RETIRED_PRESERVED + 1)) ;;
+    preserve-unselected)
+      ASSET_PRESERVE_UNSELECTED=$((ASSET_PRESERVE_UNSELECTED + 1))
+      case "$reason" in
+        unselected-healthy-preserved) ASSET_UNSELECTED_HEALTHY=$((ASSET_UNSELECTED_HEALTHY + 1)) ;;
+        unselected-modified-preserved) ASSET_UNSELECTED_MODIFIED=$((ASSET_UNSELECTED_MODIFIED + 1)) ;;
+        unselected-missing-preserved) ASSET_UNSELECTED_MISSING=$((ASSET_UNSELECTED_MISSING + 1)) ;;
+      esac
+      ;;
     *) echo "install.sh: unsupported preview action: $action" >&2; exit 1 ;;
   esac
 done < "$OPERATIONS"
@@ -680,6 +733,9 @@ echo "Naru install preview"
 echo "  target: ${TARGET}"
 echo "  location/mode: ${LOCATION_MODE}/${MODE}"
 echo "  managed assets: ${ASSET_CREATE} create, ${ASSET_UPDATE} update, ${ASSET_UNCHANGED} unchanged"
+if [ "$ONLY_REQUESTED" = true ]; then
+  echo "  unselected prior-owned assets: ${ASSET_PRESERVE_UNSELECTED} preserved with ownership unchanged (${ASSET_UNSELECTED_HEALTHY} healthy, ${ASSET_UNSELECTED_MODIFIED} modified, ${ASSET_UNSELECTED_MISSING} missing)"
+fi
 echo "  conflicts preserved by default: ${ASSET_CONFLICT_UNOWNED} unowned, ${ASSET_CONFLICT_MODIFIED} modified"
 echo "  previously owned but no longer selected: ${ASSET_ORPHANED} preserved"
 echo "  retired legacy assets: ${ASSET_RETIRED} remove, ${ASSET_RETIRED_MISSING} already missing, ${ASSET_RETIRED_PRESERVED} modified preserved"
@@ -691,7 +747,7 @@ echo "  ownership manifest: ${MANIFEST_ACTION}"
 if [ "$CONFLICT_COUNT" -gt 0 ]; then
   echo "  conflicting paths (up to 10):"
   shown=0
-  while IFS="$(printf '\t')" read -r action method source_rel rel reason; do
+  while IFS="$(printf '\t')" read -r action method source_rel rel reason stage_source; do
     case "$action" in
       conflict-unowned|conflict-modified)
         if [ "$shown" -lt 10 ]; then
@@ -706,7 +762,7 @@ fi
 if [ "$ASSET_RETIRED" -gt 0 ] || [ "$ASSET_RETIRED_MISSING" -gt 0 ] || [ "$ASSET_RETIRED_PRESERVED" -gt 0 ]; then
   echo "  retirement paths (up to 10):"
   shown=0
-  while IFS="$(printf '\t')" read -r action method source_rel rel reason; do
+  while IFS="$(printf '\t')" read -r action method source_rel rel reason stage_source; do
     case "$action" in
       retire|retire-missing|preserve-retired-modified)
         if [ "$shown" -lt 10 ]; then
@@ -740,11 +796,15 @@ mkdir -p "$TARGET"
 if [ "$CHANGE_COUNT" -gt 0 ]; then
   create_stage_dir
 fi
-while IFS="$(printf '\t')" read -r action method source_rel rel reason; do
+while IFS="$(printf '\t')" read -r action method source_rel rel reason stage_source; do
   case "$action" in
     create|update|conflict-unowned|conflict-modified)
       staged="${STAGE_DIR}/${rel}"
-      src="${SRC_DIR}/${source_rel}"
+      if [ "$stage_source" = - ]; then
+        src="${SRC_DIR}/${source_rel}"
+      else
+        src="$stage_source"
+      fi
       mkdir -p "$(dirname "$staged")"
       if [ "$method" = copy ]; then
         cp -R "$src" "$staged"
@@ -766,6 +826,16 @@ if [ "$MANIFEST_ACTION" != unchanged ]; then
   cp -p "$DESIRED_MANIFEST" "${STAGE_DIR}/.naru-install.json"
 fi
 
+"$manifest_runtime" "$MANIFEST_HELPER" verify-prepared \
+  --source "$SRC_DIR" \
+  --target "$TARGET" \
+  --stage "$STAGE_DIR" \
+  --manifest "$DESIRED_MANIFEST" \
+  --operations "$OPERATIONS" \
+  --receipt "$TRANSACTION_RECEIPT" \
+  --selected "$SELECTED_PATHS" \
+  --before-manifest-fingerprint "$BEFORE_MANIFEST_FINGERPRINT"
+
 TRANSACTION_STARTED=true
 
 while IFS= read -r rel; do
@@ -773,7 +843,7 @@ while IFS= read -r rel; do
   migrate_path "$rel"
 done < "$MIGRATIONS"
 
-while IFS="$(printf '\t')" read -r action method source_rel rel reason; do
+while IFS="$(printf '\t')" read -r action method source_rel rel reason stage_source; do
   case "$action" in
     create|update|conflict-unowned|conflict-modified)
       dst="${TARGET}/${rel}"

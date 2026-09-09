@@ -4,6 +4,9 @@
     "maxConcurrentWriters": 50,
     "workspaceMode": "auto"
   },
+  "mcp": {
+    "configuredTools": "off"
+  },
   "models": {
     "deep": {
       "chain": ["openai/gpt-5.6-sol@high"],
