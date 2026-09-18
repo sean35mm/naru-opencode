@@ -1,6 +1,6 @@
 // Naru runtime configuration.
-// Small on purpose: the orchestrator decides fan-out at reasoning time, so the
-// only durable settings are the workspace mode and a runaway-concurrency brake.
+// Small on purpose: durable settings cover workspace behavior, review defaults,
+// model dispatch, and explicitly opted-in configured MCP policy.
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { basename } from 'node:path';
@@ -9,6 +9,7 @@ const WORKSPACE_MODES = Object.freeze(['auto', 'shared', 'worktree'] as const);
 const REVIEW_PROFILES = Object.freeze(['standard', 'release-critical'] as const);
 const REVIEW_DECISIONS = Object.freeze(['automatic', 'comment-only'] as const);
 const REVIEW_OUTPUTS = Object.freeze(['concise', 'detailed'] as const);
+const CONFIGURED_MCP_TOOL_MODES = Object.freeze(['off', 'ask', 'allow'] as const);
 const MAX_CONCURRENT_WRITERS = 50;
 type UnknownRecord = Record<string, unknown>;
 
@@ -23,10 +24,14 @@ export interface RuntimeReviewConfig {
     defaultDecision: typeof REVIEW_DECISIONS[number];
     defaultOutput: typeof REVIEW_OUTPUTS[number];
 }
+export interface RuntimeMcpConfig {
+    configuredTools: typeof CONFIGURED_MCP_TOOL_MODES[number];
+}
 
 export interface RuntimeConfig {
     schemaVersion: 1;
     implementation: RuntimeImplementationConfig;
+    mcp: RuntimeMcpConfig;
     review: RuntimeReviewConfig;
     models?: UnknownRecord;
 }
@@ -37,6 +42,9 @@ export const DEFAULT_RUNTIME_CONFIG = Object.freeze({
         workspaceMode: 'auto',
         maxConcurrentWriters: MAX_CONCURRENT_WRITERS,
         cleanWorkspaceRequired: true,
+    }),
+    mcp: Object.freeze({
+        configuredTools: 'off',
     }),
     review: Object.freeze({
         defaultProfile: 'standard',
@@ -76,10 +84,10 @@ function enumOption<T extends string>(value: unknown, fallback: T, allowed: read
 }
 export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
     if (value === undefined || value === null) {
-        return { schemaVersion: 1, implementation: { ...DEFAULT_RUNTIME_CONFIG.implementation }, review: { ...DEFAULT_RUNTIME_CONFIG.review } };
+        return { schemaVersion: 1, implementation: { ...DEFAULT_RUNTIME_CONFIG.implementation }, mcp: { ...DEFAULT_RUNTIME_CONFIG.mcp }, review: { ...DEFAULT_RUNTIME_CONFIG.review } };
     }
     assertObject(value, 'naru runtime config');
-    assertAllowedKeys(value, ['implementation', 'models', 'review', 'schemaVersion'], 'naru runtime config');
+    assertAllowedKeys(value, ['implementation', 'mcp', 'models', 'review', 'schemaVersion'], 'naru runtime config');
     if (value.schemaVersion !== undefined && value.schemaVersion !== 1) {
         throw new Error('naru runtime config schemaVersion must be 1');
     }
@@ -95,6 +103,9 @@ export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
     if (value.models !== undefined && !isPlainObject(value.models)) {
         throw new Error('models must be a plain object of model classes');
     }
+    const mcp = value.mcp ?? {};
+    assertObject(mcp, 'mcp config');
+    assertAllowedKeys(mcp, Object.keys(DEFAULT_RUNTIME_CONFIG.mcp), 'mcp config');
     const review = value.review ?? {};
     assertObject(review, 'review config');
     assertAllowedKeys(review, Object.keys(DEFAULT_RUNTIME_CONFIG.review), 'review config');
@@ -105,6 +116,9 @@ export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
             workspaceMode: enumOption(implementation.workspaceMode, DEFAULT_RUNTIME_CONFIG.implementation.workspaceMode, WORKSPACE_MODES, 'implementation.workspaceMode'),
             maxConcurrentWriters: integerOption(implementation.maxConcurrentWriters, DEFAULT_RUNTIME_CONFIG.implementation.maxConcurrentWriters, 'implementation.maxConcurrentWriters', { minimum: 1, maximum: MAX_CONCURRENT_WRITERS }),
             cleanWorkspaceRequired: true,
+        },
+        mcp: {
+            configuredTools: enumOption(mcp.configuredTools, DEFAULT_RUNTIME_CONFIG.mcp.configuredTools, CONFIGURED_MCP_TOOL_MODES, 'mcp.configuredTools'),
         },
         review: {
             defaultProfile: enumOption(review.defaultProfile, DEFAULT_RUNTIME_CONFIG.review.defaultProfile, REVIEW_PROFILES, 'review.defaultProfile'),

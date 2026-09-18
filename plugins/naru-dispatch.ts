@@ -1,13 +1,13 @@
-// Naru dispatch plugin: generates model-class agent variants.
+// Naru dispatch plugin: generates model-class variants and configured MCP policy.
 //
 // Reads the optional `models` block from naru-runtime.json and, in the
 // config hook, clones the base subagents into hidden variants with the
 // class's model and effort baked in (naru-reader-<class>, ...). The
 // orchestrator dispatches them through OpenCode's native task tool, so the
 // TUI's subagent rendering and click-through behave exactly as they do for
-// the base agents. The plugin hooks config only — no tools, no events, no
-// session access — and fails open: any error leaves the config untouched
-// and Naru running on the base agents.
+// the base agents. Its opt-in MCP pass reads only server names and enabled
+// states. The plugin hooks config only — no tools, no events, no session access
+// — and every config mutation is atomic.
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +25,7 @@ interface OpenCodeAgentConfig {
 
 interface OpenCodeConfig {
     agent?: Record<string, OpenCodeAgentConfig>;
+    mcp?: unknown;
     [key: string]: unknown;
 }
 
@@ -70,11 +71,15 @@ export const NaruDispatchPlugin = async (): Promise<OpenCodePluginHooks> => {
         // defaults from loading.
     }
     const authProviders = readAuthProviders();
+    return createNaruDispatchHooks(runtime, classes, authProviders);
+};
+
+export function createNaruDispatchHooks(runtime: RuntimeConfig | null, classes: ModelsConfig, authProviders: ReadonlySet<string> | null): OpenCodePluginHooks {
     return {
         config: async (config: OpenCodeConfig) => {
             if (!runtime) return;
             try {
-                applyRuntimeToConfigAtomically(config, classes, authProviders, runtime.review);
+                applyRuntimeToConfigAtomically(config, classes, authProviders, runtime.review, runtime.mcp.configuredTools, config.mcp);
             }
             catch {
                 // Fail open: a config this hook cannot safely extend is left
@@ -82,4 +87,4 @@ export const NaruDispatchPlugin = async (): Promise<OpenCodePluginHooks> => {
             }
         },
     };
-};
+}

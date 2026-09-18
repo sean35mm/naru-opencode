@@ -105,6 +105,12 @@ ordinary local builds — needs no further approval. Before running a package sc
 or Make target, read the manifest or target first; they execute repository code.
 One command per call, no shell chaining.
 
+When the runtime sets `mcp.configuredTools` to `allow`, enabled MCP tools do not
+need a permission prompt. They may mutate external data; this permission does not
+widen the assigned scope or relax secret, delivery, irreversible-action, or
+current-user-authorization rules. Native shell, edit, task, and read restrictions
+remain unchanged.
+
 ## Report
 
 State what you changed and why, list every path you actually modified, and give

@@ -1,9 +1,9 @@
 ---
 title: Runtime configuration
-description: The optional naru-runtime.json file — three implementation fields and the models block for per-dispatch model classes.
+description: The optional naru-runtime.json file — workspace, MCP permission, review, and per-dispatch model settings.
 ---
 
-Naru runs on defaults with no configuration file. `naru-runtime.json` is optional and covers two things: how implementation writers use the workspace, and the model classes the `naru-dispatch` plugin turns into per-class agent variants. The installer copies `naru-runtime.example.json` into the install root; it never creates or enables `naru-runtime.json`.
+Naru runs on defaults with no configuration file. `naru-runtime.json` is optional and covers writer workspace behavior, configured MCP tool policy, review defaults, and the model classes the `naru-dispatch` plugin turns into per-class agent variants. The installer copies `naru-runtime.example.json` into the install root; it never creates or enables `naru-runtime.json`.
 
 ```sh
 cp .opencode/naru-runtime.example.json .opencode/naru-runtime.json
@@ -21,10 +21,18 @@ This is the entire configuration surface:
     "maxConcurrentWriters": 50,
     "workspaceMode": "auto"
   },
+  "mcp": {
+    "configuredTools": "allow"
+  },
   "models": {
     "light":    { "use": "wide fan-out, mechanical lookups, simple reads", "chain": ["opencode/glm-5-free", "opencode/minimax-m3-free"] },
     "standard": { "use": "ordinary investigation, edits, checks", "chain": ["openai/gpt-5.6-terra@medium"] },
     "deep":     { "use": "architecture, security, data models, final review, tricky edits", "chain": ["openai/gpt-5.6-sol@high"] }
+  },
+  "review": {
+    "defaultDecision": "automatic",
+    "defaultOutput": "concise",
+    "defaultProfile": "release-critical"
   }
 }
 ```
@@ -36,12 +44,37 @@ This is the entire configuration surface:
 | `implementation.workspaceMode` | `auto` | `auto`, `shared`, `worktree` |
 | `implementation.maxConcurrentWriters` | 50 | integer 1–50 |
 | `implementation.cleanWorkspaceRequired` | `true` | `true` only |
+| `mcp.configuredTools` | `off` | `off`, `ask`, `allow` |
 
 `workspaceMode` selects where writers work. `auto` and `worktree` both leave isolated writer worktrees available; `shared` turns them off, and `naru-worktree` then refuses every operation.
 
 `maxConcurrentWriters` is a runaway brake, not a target. The orchestrator decides fan-out from the work in front of it, so a run holding far fewer writers than the ceiling is the normal case. Lower it only to cap the ceiling itself.
 
 `cleanWorkspaceRequired` must be `true`. It documents a requirement rather than exposing a switch: isolated writer mode refuses to start against a dirty workspace.
+
+## Configured MCP tools
+
+`mcp.configuredTools` controls tools belonging to enabled servers in OpenCode's effective `mcp` configuration:
+
+- **`off`** adds no permission rules. Static agent permissions and other OpenCode policy are inherited unchanged. This is the backward-safe default.
+- **`ask`** adds a server-scoped `ask` rule for every eligible configured MCP namespace.
+- **`allow`** adds server-scoped `allow` rules to the orchestrator, all three base subagents, and every generated model variant. It also replaces MCP-specific `ask` rules with `allow` while active, so inherited or exact MCP asks do not prompt. Explicit MCP `deny` rules remain effective.
+
+The plugin reads only server IDs and `enabled` flags. It never copies commands, URLs, environment values, headers, or credentials into agent policy. Server IDs that contain glob syntax, normalize to a colliding namespace, overlap another configured server namespace, or could cover a native tool are skipped rather than granted. OpenCode's global `'*': deny` remains first, and generated rules are limited to normalized `<server>_*` namespaces; Naru never emits a global allow.
+
+Generated rules and ask overrides carry ownership metadata on each Naru agent. Repeated config hooks replace them idempotently, disabled or removed servers are cleaned up, and switching to `off` restores the prior asks. If a user changes a generated value, cleanup preserves that edit.
+
+This setting is a trust decision, not task authorization. MCP servers can expose tools that mutate local or remote data, and the reader/runner native read-only boundary does not mechanically constrain those tools. Every role must still obey the current request, scope, secret, delivery, database, and irreversible-action rules; it should not ask merely because an authorized operation uses a configured MCP tool.
+
+To enable the requested no-prompt behavior without replacing existing settings, merge this block into the active `naru-runtime.json`, preserve its `models`, `review`, and `implementation` blocks, then restart OpenCode:
+
+```json
+"mcp": {
+  "configuredTools": "allow"
+}
+```
+
+Do not copy the complete example over an existing runtime file blindly. For a project install, edit `.opencode/naru-runtime.json`; for a global install, edit `~/.config/opencode/naru-runtime.json` only when that global security-posture change is intended.
 
 ## The models block
 
@@ -94,10 +127,10 @@ Isolated worktrees are a containment convenience, not a sandbox. They do not pro
 
 ## How the file is read
 
-- A missing file means built-in defaults, which match the example exactly.
+- A missing file means the built-in defaults listed above. The shipped example deliberately opts into `mcp.configuredTools: "allow"` and preferred review defaults.
 - It must be a regular file, not a symlink, and no larger than 64 KiB.
 - It must be valid JSON with `schemaVersion` set to `1`.
 - Unknown fields at either level are rejected rather than ignored.
 - An invalid file is an error, not a silent fallback to defaults. From a source checkout, `npm run doctor -- --json` reports it as `invalid-runtime-config` and shows the effective workspace mode; installed `naru-doctor.js` retains that runtime filename.
 - The file is read when `naru-worktree` runs, not cached once at startup.
-- The `models` block is the one exception to both points: the `naru-dispatch` plugin reads it once at plugin load and fails open — a missing or malformed file leaves OpenCode's config untouched, so no variants are generated and the base agents keep working on the session model until the file is fixed and OpenCode restarts.
+- The `models` and `mcp` blocks are applied by the `naru-dispatch` plugin at startup. A malformed runtime file never synthesizes MCP permissions; fix it and restart OpenCode.

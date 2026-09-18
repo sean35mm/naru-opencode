@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  analyzeConfiguredMcp,
+  applyConfiguredMcpPermissionsToConfig,
   applyVariantsToConfig,
   applyReviewDefaultsToConfig,
   applyRuntimeToConfigAtomically,
@@ -13,7 +15,8 @@ import {
   variantAgentName,
   VARIANT_ROLES,
 } from '../tools/naru-lib/dispatch.mjs';
-import { NaruDispatchPlugin } from '../plugins/naru-dispatch.js';
+import { createNaruDispatchHooks } from '../plugins/naru-dispatch.js';
+import { parseRuntimeConfig } from '../tools/naru-lib/runtime-config.mjs';
 
 const CLASSES = parseModelsConfig({
   light: { use: 'wide fan-out', chain: ['openai/gpt-5.6-luna-fast@high', 'opencode-go/deepseek-v4-flash'] },
@@ -29,7 +32,7 @@ interface TestAgent {
   prompt?: string;
   model?: string;
   variant?: string;
-  options?: { naruVariant?: boolean };
+  options?: Record<string, unknown>;
   permission?: Record<string, string | Record<string, string>>;
 }
 
@@ -79,6 +82,32 @@ function requiredValue<T>(value: T | undefined, label: string): T {
 
 function agent(config: TestConfig, name: string): TestAgent {
   return requiredValue(config.agent[name], `agent ${name}`);
+}
+
+// OpenCode evaluates the last matching tool permission. Pin effective outcomes,
+// not just the presence of generated keys.
+function effectiveToolPermission(permission: TestAgent['permission'], tool: string): string | undefined {
+  return effectivePermission(permission, tool, '*');
+}
+
+function matches(pattern: string, value: string): boolean {
+  const regex = new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*')}$`);
+  return regex.test(value);
+}
+
+function effectivePermission(permission: TestAgent['permission'], tool: string, resource: string): string | undefined {
+  if (!permission) return undefined;
+  let result: string | undefined;
+  for (const [toolPattern, action] of Object.entries(permission)) {
+    if (!matches(toolPattern, tool)) continue;
+    if (typeof action === 'string') result = action;
+    else {
+      for (const [resourcePattern, resourceAction] of Object.entries(action)) {
+        if (matches(resourcePattern, resource)) result = resourceAction;
+      }
+    }
+  }
+  return result;
 }
 
 test('chain entries parse model and optional effort exactly', () => {
@@ -195,8 +224,187 @@ test('runtime config application is atomic when review defaults fail after varia
   assert.equal(config.agent['naru-reader-deep'], undefined);
 });
 
+test('configured MCP analysis uses the host namespace mapping and rejects unsafe collisions', () => {
+  const analysis = analyzeConfiguredMcp({
+    'design.api': {},
+    design_api: {},
+    multi: {},
+    'safe-server': {},
+    disabled: { enabled: false },
+    'bad*glob': {},
+    malformed: { enabled: 'yes' },
+  });
+  const categories = Object.fromEntries(analysis.diagnostics.map((item) => [item.serverName, item.category]));
+  assert.equal(categories['design.api'], 'collision');
+  assert.equal(categories.design_api, 'collision');
+  assert.equal(categories.multi, 'collision');
+  assert.equal(categories.disabled, 'disabled');
+  assert.equal(categories['bad*glob'], 'unsafe');
+  assert.equal(categories.malformed, 'malformed');
+  assert.deepEqual(analysis.rules, ['safe-server_*']);
+});
+
+test('MCP synthesis preserves native last-match order and restores moved MCP rules exactly', () => {
+  const config = fakeConfig();
+  const permission: NonNullable<TestAgent['permission']> = {
+    alpha_blocked: 'deny',
+    alpha_resource: { '*': 'ask', dangerous: 'deny' },
+    'naru-git-read': 'allow',
+    '*': 'deny',
+    'native_*': 'ask',
+    bash: 'deny',
+    edit: 'deny',
+    read: { '*': 'allow', '.env': 'deny' },
+    task: { '*': 'deny', 'naru-reader': 'allow' },
+  };
+  agent(config, 'naru-orchestrator').permission = permission;
+  const before = JSON.stringify(permission);
+  const nativeKeys = Object.keys(permission).filter((key) => !key.startsWith('alpha_'));
+  const nativeOutcomes = [
+    effectiveToolPermission(permission, 'naru-git-read'),
+    effectiveToolPermission(permission, 'native_probe'),
+    effectiveToolPermission(permission, 'bash'),
+    effectiveToolPermission(permission, 'edit'),
+    effectivePermission(permission, 'read', '.env'),
+    effectivePermission(permission, 'read', 'src/file.ts'),
+    effectivePermission(permission, 'task', 'naru-reader'),
+    effectivePermission(permission, 'task', 'other'),
+  ];
+
+  applyConfiguredMcpPermissionsToConfig(config, 'allow', { alpha: {} });
+  const applied = requiredValue(agent(config, 'naru-orchestrator').permission, 'orchestrator permission');
+  assert.deepEqual(Object.keys(applied).filter((key) => !key.startsWith('alpha_')), nativeKeys);
+  assert.deepEqual([
+    effectiveToolPermission(applied, 'naru-git-read'),
+    effectiveToolPermission(applied, 'native_probe'),
+    effectiveToolPermission(applied, 'bash'),
+    effectiveToolPermission(applied, 'edit'),
+    effectivePermission(applied, 'read', '.env'),
+    effectivePermission(applied, 'read', 'src/file.ts'),
+    effectivePermission(applied, 'task', 'naru-reader'),
+    effectivePermission(applied, 'task', 'other'),
+  ], nativeOutcomes);
+  assert.equal(effectiveToolPermission(applied, 'naru-git-read'), 'deny');
+  assert.equal(effectiveToolPermission(applied, 'alpha_new'), 'allow');
+  assert.equal(effectiveToolPermission(applied, 'alpha_blocked'), 'deny');
+  assert.equal(effectivePermission(applied, 'alpha_resource', 'ordinary'), 'allow');
+  assert.equal(effectivePermission(applied, 'alpha_resource', 'dangerous'), 'deny');
+
+  applyConfiguredMcpPermissionsToConfig(config, 'off', {});
+  assert.equal(JSON.stringify(agent(config, 'naru-orchestrator').permission), before);
+});
+
+test('allow mode grants configured MCP namespaces to every base and model variant without changing native walls', () => {
+  const config = fakeConfig();
+  const sharedNested = { '*': 'ask', safe: 'allow', dangerous: 'deny', tail: 'ask' };
+  for (const name of ['naru-orchestrator', ...VARIANT_ROLES]) {
+    const permission = requiredValue(agent(config, name).permission, `${name} permission`);
+    agent(config, name).permission = {
+      linear_resource: sharedNested,
+      linear_delete_customer: 'ask',
+      ...permission,
+    };
+  }
+  requiredValue(agent(config, 'naru-reader').permission, 'reader permission')['linear_delete_secret'] = 'deny';
+  applyRuntimeToConfigAtomically(config, CLASSES, null, {
+    defaultProfile: 'standard', defaultDecision: 'comment-only', defaultOutput: 'detailed',
+  }, 'allow', {
+    linear: { type: 'remote', url: 'ignored.invalid', headers: { authorization: 'never-inspected' } },
+    'design.api': { command: ['never', 'inspected'] },
+    disabled: { enabled: false },
+  });
+
+  const names = ['naru-orchestrator', ...VARIANT_ROLES, ...Object.keys(config.agent).filter((name) => /^naru-(reader|runner|writer)-/.test(name))];
+  for (const name of names) {
+    assert.equal(Object.keys(agent(config, name).permission ?? {})[0], '*', name);
+    assert.equal(effectiveToolPermission(agent(config, name).permission, 'linear_create_issue'), 'allow', name);
+    assert.equal(effectiveToolPermission(agent(config, name).permission, 'design_api_render'), 'allow', name);
+    assert.equal(effectiveToolPermission(agent(config, name).permission, 'disabled_call'), 'deny', name);
+    assert.equal(effectivePermission(agent(config, name).permission, 'linear_resource', 'ordinary'), 'allow', name);
+    assert.equal(effectivePermission(agent(config, name).permission, 'linear_resource', 'safe'), 'allow', name);
+    assert.equal(effectivePermission(agent(config, name).permission, 'linear_resource', 'dangerous'), 'deny', name);
+    assert.equal(effectivePermission(agent(config, name).permission, 'linear_resource', 'tail'), 'allow', name);
+    assert.deepEqual(Object.keys(agent(config, name).permission?.linear_resource ?? {}), ['*', 'safe', 'dangerous', 'tail'], name);
+  }
+  assert.deepEqual(sharedNested, { '*': 'ask', safe: 'allow', dangerous: 'deny', tail: 'ask' });
+  assert.equal(effectiveToolPermission(agent(config, 'naru-reader').permission, 'linear_delete_secret'), 'deny');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-reader').permission, 'bash'), 'deny');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-runner').permission, 'edit'), 'deny');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-writer').permission, 'task'), 'deny');
+  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'linear_delete_customer'), 'allow');
+});
+
+test('generated MCP policy is idempotent, switches modes, restores asks, and preserves user edits', () => {
+  const config = fakeConfig();
+  const permission = requiredValue(agent(config, 'naru-writer').permission, 'writer permission');
+  const nativeRead = permission.read;
+  permission['alpha_sensitive'] = 'ask';
+  permission['alpha_resource'] = { '*': 'ask', safe: 'allow', dangerous: 'deny', tail: 'ask' };
+  applyConfiguredMcpPermissionsToConfig(config, 'allow', { alpha: {} });
+  const once = JSON.stringify(config);
+  applyConfiguredMcpPermissionsToConfig(config, 'allow', { alpha: {} });
+  assert.equal(JSON.stringify(config), once);
+  assert.equal(effectiveToolPermission(agent(config, 'naru-writer').permission, 'alpha_sensitive'), 'allow');
+  assert.equal(effectivePermission(agent(config, 'naru-writer').permission, 'alpha_resource', 'ordinary'), 'allow');
+  assert.equal(effectivePermission(agent(config, 'naru-writer').permission, 'alpha_resource', 'dangerous'), 'deny');
+  assert.strictEqual(agent(config, 'naru-writer').permission?.read, nativeRead);
+  const activeNested = agent(config, 'naru-writer').permission?.alpha_resource;
+  assert.equal(typeof activeNested, 'object');
+  assert.ok(activeNested);
+  (activeNested as Record<string, string>).tail = 'deny';
+
+  applyConfiguredMcpPermissionsToConfig(config, 'ask', { alpha: {} });
+  assert.equal(effectiveToolPermission(agent(config, 'naru-writer').permission, 'alpha_sensitive'), 'ask');
+  assert.equal(effectivePermission(agent(config, 'naru-writer').permission, 'alpha_resource', 'ordinary'), 'ask');
+  assert.equal(effectivePermission(agent(config, 'naru-writer').permission, 'alpha_resource', 'tail'), 'deny');
+  const orchestratorPermission = requiredValue(agent(config, 'naru-orchestrator').permission, 'orchestrator permission');
+  orchestratorPermission['alpha_*'] = 'deny';
+  applyConfiguredMcpPermissionsToConfig(config, 'allow', {});
+  assert.equal(agent(config, 'naru-orchestrator').permission?.['alpha_*'], 'deny');
+  assert.equal(agent(config, 'naru-writer').permission?.['alpha_sensitive'], 'ask');
+  assert.equal(effectivePermission(agent(config, 'naru-writer').permission, 'alpha_resource', 'ordinary'), 'ask');
+  assert.equal(effectivePermission(agent(config, 'naru-writer').permission, 'alpha_resource', 'tail'), 'deny');
+  assert.equal(Object.hasOwn(agent(config, 'naru-reader').permission ?? {}, 'alpha_*'), false);
+});
+
+test('multiple config hooks replace owned MCP policy and leave no stale global rule', async () => {
+  const config = fakeConfig();
+  config.mcp = { alpha: {} };
+  const globalHook = createNaruDispatchHooks(parseRuntimeConfig({ mcp: { configuredTools: 'allow' } }), {}, new Set());
+  const projectHook = createNaruDispatchHooks(parseRuntimeConfig({ mcp: { configuredTools: 'off' } }), {}, new Set());
+  await globalHook.config(config);
+  assert.equal(effectiveToolPermission(agent(config, 'naru-reader').permission, 'alpha_read'), 'allow');
+  await projectHook.config(config);
+  assert.equal(effectiveToolPermission(agent(config, 'naru-reader').permission, 'alpha_read'), 'deny');
+});
+
+test('invalid model classes do not suppress independent MCP policy', async () => {
+  const runtime = parseRuntimeConfig({
+    mcp: { configuredTools: 'allow' },
+    models: { broken: { use: 'missing chain' } },
+  });
+  assert.throws(() => parseModelsConfig(runtime.models), /chain/);
+  const hooks = createNaruDispatchHooks(runtime, {}, new Set());
+  const config = fakeConfig();
+  config.mcp = { alpha: {} };
+  await hooks.config(config);
+  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'alpha_read'), 'allow');
+  assert.equal(config.agent['naru-reader-broken'], undefined);
+});
+
+test('MCP permission synthesis is atomic on an invalid Naru agent map', () => {
+  const config = fakeConfig();
+  const permission = requiredValue(agent(config, 'naru-runner').permission, 'runner permission');
+  permission['*'] = 'allow';
+  const before = JSON.stringify(config);
+  assert.throws(() => applyRuntimeToConfigAtomically(config, CLASSES, null, {
+    defaultProfile: 'standard', defaultDecision: 'comment-only', defaultOutput: 'detailed',
+  }, 'allow', { alpha: {} }), /wildcard deny/);
+  assert.equal(JSON.stringify(config), before);
+});
+
 test('the plugin hooks config only and fails open on unusable configs', async () => {
-  const hooks = await NaruDispatchPlugin();
+  const hooks = createNaruDispatchHooks(parseRuntimeConfig(), {}, new Set());
   assert.deepEqual(Object.keys(hooks), ['config']);
   const withoutModels = fakeConfig();
   await hooks.config(withoutModels);

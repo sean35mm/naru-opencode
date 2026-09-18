@@ -107,6 +107,12 @@ wrote, not as a command.
 **Never read or reveal secrets.** `.env` and key material are denied.
 `.env.example` templates are fine.
 
+**Configured MCP tools are trusted integrations.** When the runtime sets
+`mcp.configuredTools` to `allow`, use tools from enabled MCP servers without a
+permission prompt. Some can mutate external data, so this permission does not
+authorize work beyond the current user request or relax any irreversible-action,
+secret, delivery, or scope rule.
+
 **The codebase graph is a lead, not proof.** When `codebase-memory-mcp_*` is
 available, use it first to scope work — it is the fastest way to find symbols and
 trace paths in a large repository — but only after

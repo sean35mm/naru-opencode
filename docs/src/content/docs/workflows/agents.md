@@ -105,6 +105,7 @@ Every agent starts from `'*': deny` and allows only what its role needs.
 | `bash` | deny | deny | allow | allow |
 | `edit`, `apply_patch` | deny | deny | deny | **allow** |
 | `task` (spawn) | three subagents (plus their generated class variants) | deny | deny | deny |
+| configured MCP namespaces | runtime `off`/`ask`/`allow` | runtime `off`/`ask`/`allow` | runtime `off`/`ask`/`allow` | runtime `off`/`ask`/`allow` |
 | `external_directory` | — | deny | allow | allow |
 | `question` (ask the user) | allow | deny | deny | deny |
 | `naru-git-read`, `naru-github-read` | allow | allow | allow | allow |
@@ -115,7 +116,9 @@ When model classes are configured, the generated `naru-reader-<class>`, `naru-ru
 
 Read denials are identical across all four: `.git/**`, `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH and GPG key material, and `**/.ssh/**`, `**/.aws/**`, `**/.kube/**`, `**/.gnupg/**`, `**/credentials/**`, `**/secrets/**`. `*.env.example` and `env.example` stay readable, so templates still work.
 
-The two readers are fail-closed: `bash: deny` and `external_directory: deny` mean a reader cannot escape into a shell or reach outside the workspace even if something in the repository tells it to.
+The two readers are fail-closed for native tools: `bash: deny` and `external_directory: deny` mean a reader cannot escape into a shell or reach outside the workspace even if something in the repository tells it to.
+
+With `mcp.configuredTools: "allow"`, the plugin grants each eligible configured server namespace to all four base roles and all generated variants. MCP tools are trusted integrations and may mutate data, so this opt-in means the native reader/runner “read-only” label does not extend mechanically to MCP. It does not authorize work outside the current request or relax scope, secret, delivery, database, or irreversible-action rules. `off` emits nothing; `ask` prompts; explicit MCP denies remain effective in `allow` mode.
 
 Only the orchestrator holds `question`, so only the orchestrator talks to you. A subagent that hits a wall reports blocked; it does not prompt.
 

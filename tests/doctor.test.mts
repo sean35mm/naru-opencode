@@ -24,7 +24,7 @@ interface DoctorScope {
   installMode: string;
   issuePaths: string[];
   assets: { total: number; installed: { healthy: number }; source: { matched: number } };
-  runtime: { status: string; workspaceMode: string; reviewProfile: string; reviewDecision: string; reviewOutput: string };
+  runtime: { status: string; workspaceMode: string; configuredMcpTools: string; reviewProfile: string; reviewDecision: string; reviewOutput: string };
 }
 
 interface DoctorReport {
@@ -54,6 +54,12 @@ test('runtime review defaults are backward-safe and strictly validated', () => {
   });
   assert.throws(() => parseRuntimeConfig({ review: { defaultProfile: 'critical' } }), /defaultProfile/);
   assert.throws(() => parseRuntimeConfig({ review: { ticket: true } }), /unknown fields/);
+  assert.equal(parseRuntimeConfig({}).mcp.configuredTools, 'off');
+  assert.equal(parseRuntimeConfig({ mcp: { configuredTools: 'ask' } }).mcp.configuredTools, 'ask');
+  assert.equal(parseRuntimeConfig({ mcp: { configuredTools: 'allow' } }).mcp.configuredTools, 'allow');
+  assert.throws(() => parseRuntimeConfig({ mcp: [] }), /plain object/);
+  assert.throws(() => parseRuntimeConfig({ mcp: { configuredTools: 'always' } }), /configuredTools/);
+  assert.throws(() => parseRuntimeConfig({ mcp: { enabled: true } }), /unknown fields/);
 });
 
 async function copyInstallSource(destination: string): Promise<void> {
@@ -122,6 +128,7 @@ test('doctor is read-only and diagnoses scope, default depth, and source generat
     const doctor = path.join(target, 'tools', 'naru-doctor.js');
     const manifestPath = path.join(target, '.naru-install.json');
     const manifestBefore = await readFile(manifestPath, 'utf8');
+    await assert.rejects(readFile(path.join(target, 'naru-runtime.json')), (error) => error instanceof Error && 'code' in error && error.code === 'ENOENT');
 
     let report = runDoctor(doctor, { home, project, source });
     assert.equal(report.schemaVersion, 1);
@@ -139,12 +146,17 @@ test('doctor is read-only and diagnoses scope, default depth, and source generat
     assert.equal(globalScope.assets.source.matched, globalScope.assets.total);
     assert.equal(globalScope.runtime.status, 'default');
     assert.equal(globalScope.runtime.workspaceMode, 'auto');
+    assert.equal(globalScope.runtime.configuredMcpTools, 'off');
     assert.deepEqual(
       [globalScope.runtime.reviewProfile, globalScope.runtime.reviewDecision, globalScope.runtime.reviewOutput],
       ['standard', 'comment-only', 'detailed'],
     );
     assert.equal(JSON.stringify(report).includes(temporary), false);
     assert.equal(await readFile(manifestPath, 'utf8'), manifestBefore);
+
+    await writeFile(path.join(target, 'naru-runtime.json'), JSON.stringify({ mcp: { configuredTools: 'allow' } }));
+    report = runDoctor(doctor, { home, project, source });
+    assert.equal(report.scopes.find(scope => scope.id === 'global')?.runtime.configuredMcpTools, 'allow');
 
     await writeFile(path.join(project, 'opencode.jsonc'), '{\n  // project wins\n  "subagent_depth": 4,\n}\n');
     report = runDoctor(doctor, { home, project, source });
