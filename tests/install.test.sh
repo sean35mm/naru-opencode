@@ -48,6 +48,7 @@ touch "$FIXTURE/tools/naru-lib/runtime-config.mjs"
 cp "$ROOT/tools/naru-lib/install-manifest.mjs" "$FIXTURE/tools/naru-lib/install-manifest.mjs"
 cp "$ROOT/plugins/naru-dispatch.js" "$FIXTURE/plugins/naru-dispatch.js"
 cp "$ROOT/naru-runtime.example.json" "$FIXTURE/naru-runtime.example.json"
+cp "$ROOT/THIRD_PARTY_NOTICES" "$FIXTURE/THIRD_PARTY_NOTICES"
 
 LEGACY_MANIFEST_BUILDER="$TMP/legacy-manifest-builder.mjs"
 cat > "$LEGACY_MANIFEST_BUILDER" <<'EOF'
@@ -158,6 +159,7 @@ if grep -q -- '--dry-run' "$T1/commands/naru.md" && grep -q -- '--comment-only' 
 if has_native_inventory "$T1"; then pass "native skills, agents, and command installed"; else fail "native skills, agents, and command installed"; fi
 if is_file "$T1/tools/naru-git-read.js" && is_file "$T1/tools/naru-doctor.js" && is_file "$T1/tools/package.json"; then pass "tools and doctor copy-pinned with ESM marker"; else fail "tools and doctor copy-pinned with ESM marker"; fi
 if is_dir "$T1/tools/naru-lib"; then pass "tool helper dir copy-pinned"; else fail "tool helper dir copy-pinned"; fi
+if is_file "$T1/THIRD_PARTY_NOTICES" && grep -q '@clack/prompts 1.8.0' "$T1/THIRD_PARTY_NOTICES"; then pass "bundled prompt notices installed"; else fail "bundled prompt notices installed"; fi
 if is_file "$T1/tools/naru-worktree.js"; then pass "worktree runtime copy-pinned"; else fail "worktree runtime copy-pinned"; fi
 if is_file "$T1/naru-runtime.example.json"; then pass "runtime example copy-pinned"; else fail "runtime example copy-pinned"; fi
 if [ "$(grep -c '^  naru-worktree: allow$' "$T1/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$T1/agents/naru-writer.md"; then pass "global root and delegated runtime permissions"; else fail "global root and delegated runtime permissions"; fi

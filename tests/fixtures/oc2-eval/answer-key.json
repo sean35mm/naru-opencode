@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 2,
+  "scoringVersion": 2,
+  "numericPolicy": "strict-json-types",
+  "tasks": [
+    {
+      "taskID": "humanize-webhook-boundaries",
+      "facts": {
+        "seconds0": "0 seconds ago",
+        "seconds59": "59 seconds ago",
+        "seconds60": "1 minute ago",
+        "seconds3599": "59 minutes ago",
+        "seconds3600": "1 hour ago",
+        "seconds86399": "23 hours ago",
+        "seconds86400": "1 day ago",
+        "panelZeroBehavior": "hidden"
+      },
+      "evidence": {
+        "seconds0": [{ "path": "apps/admin/src/components/webhooks/humanizeSeconds.ts", "start": 10, "end": 11 }],
+        "seconds59": [{ "path": "apps/admin/src/components/webhooks/humanizeSeconds.ts", "start": 10, "end": 11 }],
+        "seconds60": [{ "path": "apps/admin/src/components/webhooks/humanizeSeconds.ts", "start": 14, "end": 16 }],
+        "seconds3599": [{ "path": "apps/admin/src/components/webhooks/humanizeSeconds.ts", "start": 14, "end": 16 }],
+        "seconds3600": [{ "path": "apps/admin/src/components/webhooks/humanizeSeconds.ts", "start": 19, "end": 21 }],
+        "seconds86399": [{ "path": "apps/admin/src/components/webhooks/humanizeSeconds.ts", "start": 19, "end": 21 }],
+        "seconds86400": [{ "path": "apps/admin/src/components/webhooks/humanizeSeconds.ts", "start": 24, "end": 25 }],
+        "panelZeroBehavior": [{ "path": "apps/admin/src/components/webhooks/WebhookHealthPanel.vue", "start": 68, "end": 71 }]
+      }
+    },
+    {
+      "taskID": "composite-score-arithmetic",
+      "facts": {
+        "completeValue": 89.06,
+        "completeBand": "great",
+        "completeCoverage": 0.8,
+        "formulaVersion": "monarch-v1",
+        "insufficientCoverage": null
+      },
+      "evidence": {
+        "completeValue": [{ "path": "apps/backend/app/Services/ConnectionHealth/CompositeScoreCalculator.php", "start": 57, "end": 76 }],
+        "completeBand": [{ "path": "apps/backend/app/Services/ConnectionHealth/CompositeScoreCalculator.php", "start": 31, "end": 38 }],
+        "completeCoverage": [{ "path": "apps/backend/app/Services/ConnectionHealth/CompositeScoreCalculator.php", "start": 57, "end": 76 }],
+        "formulaVersion": [{ "path": "apps/backend/app/Services/ConnectionHealth/CompositeScoreCalculator.php", "start": 21, "end": 21 }],
+        "insufficientCoverage": [{ "path": "apps/backend/app/Services/ConnectionHealth/CompositeScoreCalculator.php", "start": 66, "end": 68 }]
+      }
+    }
+  ]
+}

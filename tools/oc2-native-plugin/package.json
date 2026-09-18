@@ -1,0 +1,6 @@
+{
+  "name": "@naru/oc2-native-plugin",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": "./index.mjs"
+}

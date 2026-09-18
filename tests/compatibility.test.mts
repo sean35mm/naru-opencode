@@ -41,7 +41,7 @@ test('compatibility policy fixes approved targets without inventing Git or gh fl
     floor: '1.18.4', current: '1.18.28', testedBuilds: ['1.18.4', '1.18.28'], recognizedBuilds: ['1.18.4', '1.18.28'],
   });
   assert.deepEqual(COMPATIBILITY_POLICY.profiles.stable.recognizedBuilds, ['1.18.4', '1.18.28']);
-  assert.deepEqual(COMPATIBILITY_POLICY.profiles['v2-beta-exploratory'].recognizedBuilds, ['0.0.0-beta-19086']);
+  assert.deepEqual(COMPATIBILITY_POLICY.profiles['v2-beta-exploratory'].recognizedBuilds, ['0.0.0-beta-19425']);
   assert.deepEqual(COMPATIBILITY_POLICY.targets.platforms.map(target => target.id), ['macos-arm64', 'ubuntu-x64']);
   assert.equal(COMPATIBILITY_POLICY.targets.runtimes.node.major, 24);
   assert.equal(COMPATIBILITY_POLICY.targets.runtimes.bun.exact, '1.3.9');
@@ -88,8 +88,8 @@ test('semantic versions distinguish tested history from stable probe candidates'
   assert.equal(evaluateObservedVersion('opencode', '2.0.0').status, 'candidate');
   assert.equal(evaluateObservedVersion('opencode', '2.0.0-beta.1').status, 'unsupported');
   assert.equal(evaluateObservedVersion('opencode', 'not-a-version').status, 'unrecognized');
-  assert.equal(evaluateOpenCodeVersion('v2-beta-exploratory', ' \nopencode2 v0.0.0-beta-19086\t').status, 'supported');
-  assert.equal(evaluateOpenCodeVersion('v2-beta-exploratory', '0.0.0-beta-19087').status, 'unsupported');
+  assert.equal(evaluateOpenCodeVersion('v2-beta-exploratory', ' \nopencode2 v0.0.0-beta-19425\t').status, 'supported');
+  assert.equal(evaluateOpenCodeVersion('v2-beta-exploratory', '0.0.0-beta-19086').status, 'unsupported');
   assert.throws(() => evaluateOpenCodeVersion('unknown-profile', '1.18.28'), /unknown compatibility profile/);
   assert.equal(evaluateObservedVersion('node', 'v24.4.0').status, 'targeted');
   assert.equal(evaluateObservedVersion('bun', '1.3.8').status, 'non-target');
@@ -115,7 +115,7 @@ test('exploratory evidence is visibly distinct and never release-qualified', () 
   const evidence = createCompatibilityEvidence({
     profile: 'v2-beta-exploratory',
     platform: evaluatePlatformTarget({ platform: 'darwin', arch: 'arm64' }),
-    versions: { node: '24.0.0', opencode: '0.0.0-beta-19086' },
+    versions: { node: '24.0.0', opencode: '0.0.0-beta-19425' },
     checks: REQUIRED_COMPATIBILITY_CHECKS['v2-beta-exploratory'].map(id => ({ id, status: 'passed', durationMs: 0, diagnostic: null })),
   });
   assert.equal(evidence.status, 'passed-exploratory-smoke');
@@ -128,7 +128,7 @@ test('exploratory evidence is visibly distinct and never release-qualified', () 
 test('missing, omitted, failed, and duplicate required checks cannot produce passing evidence', () => {
   for (const profile of ['stable', 'v2-beta-exploratory'] as const) {
     const required = REQUIRED_COMPATIBILITY_CHECKS[profile].map(id => ({ id, status: 'passed', durationMs: 0, diagnostic: null }));
-    const base = { profile, platform: evaluatePlatformTarget({ platform: 'darwin', arch: 'arm64' }), versions: { node: '24.0.0', opencode: profile === 'stable' ? '1.18.28' : '0.0.0-beta-19086' } };
+    const base = { profile, platform: evaluatePlatformTarget({ platform: 'darwin', arch: 'arm64' }), versions: { node: '24.0.0', opencode: profile === 'stable' ? '1.18.28' : '0.0.0-beta-19425' } };
     for (const checks of [[], required.slice(1), required.map(check => ({ ...check, status: 'omitted' })), required.map(check => ({ ...check, status: 'failed' }))]) {
       assert.match(createCompatibilityEvidence({ ...base, checks }).status, /^failed-/);
     }
@@ -360,7 +360,7 @@ test('successful host commands cannot hide a disabled dispatch plugin', async ()
 test('v2 beta smoke is exact-build exploratory and runs only confirmed commands', async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-compat-v2-'));
   try {
-    const fake = await fakeOpenCode(temporary, { version: '0.0.0-beta-19086' });
+    const fake = await fakeOpenCode(temporary, { version: '0.0.0-beta-19425' });
     const report = await runCompatibilitySmoke({
       opencodePath: fake,
       profile: 'v2-beta-exploratory',
@@ -370,7 +370,7 @@ test('v2 beta smoke is exact-build exploratory and runs only confirmed commands'
     assert.equal(report.status, 'passed-exploratory-smoke');
     assert.deepEqual(report.checks.map(check => check.id), ['target-platform', 'opencode-version', 'opencode-help', 'cleanup']);
 
-    const drift = await fakeOpenCode(temporary, { version: '0.0.0-beta-19087' });
+    const drift = await fakeOpenCode(temporary, { version: '0.0.0-beta-19271' });
     const failed = await runCompatibilitySmoke({
       opencodePath: drift,
       profile: 'v2-beta-exploratory',

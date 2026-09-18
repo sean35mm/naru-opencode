@@ -10,47 +10,209 @@ Built by [Naru Labs](https://github.com/sean35mm).
 
 ## Local v2 preview (`oc2`)
 
-The overhaul has a separate, plugin-free beta preview pinned to OpenCode
-`0.0.0-beta-19086`. With Node 24 and the isolated beta already installed, build
-and create a fresh preview root plus launcher:
+OC2 is a separate native profile pinned to OpenCode `0.0.0-beta-19425`, with an
+OC2-only package plugin for Naru's bounded tools and skills.
+It does not read or change stable OpenCode agents, plugins, configuration, or data.
+The native profile lives under `~/.local/share/naru-preview-oc2/profile`, reuses
+that preview's existing `host-data/opencode.db`, and keeps the caller's normal
+HOME, PATH, and working directory.
+
+For a fresh macOS arm64 installation, install the exact native package without
+lifecycle scripts, retain the isolated wrapper as a legacy recovery target, then
+install the OC2 snapshot:
 
 ```sh
+npm install --prefix "$HOME/.local/share/naru-opencode-v2" --ignore-scripts \
+  --no-save --package-lock=false \
+  @opencode/cli-darwin-arm64@0.0.0-beta-19425
+node --input-type=module <<'NODE'
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+const root = join(process.env.HOME, '.local', 'share', 'naru-opencode-v2');
+const wrapper = join(process.env.HOME, '.local', 'bin', 'opencode2-naru');
+await mkdir(join(process.env.HOME, '.local', 'bin'), { recursive: true, mode: 0o700 });
+const script = `#!/bin/sh\nset -eu\numask 077\nroot=${JSON.stringify(root)}\nexport HOME="$root/home"\nexport XDG_CONFIG_HOME="$root/config"\nexport XDG_DATA_HOME="$root/data"\nexport XDG_CACHE_HOME="$root/cache"\nexport XDG_STATE_HOME="$root/state"\nexport OPENCODE_DB="$root/state/opencode.db"\nexport OPENCODE_DISABLE_AUTOUPDATE=true\nmkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME"\nexec "$root/node_modules/@opencode/cli-darwin-arm64/bin/opencode2" "$@"\n`;
+await writeFile(wrapper, script, { flag: 'wx', mode: 0o755 });
+NODE
 npm run build
 node .naru-build/tools/install-oc2.mjs \
   --preview-cli "$PWD/.naru-build/tools/naru-preview.mjs" \
-  --opencode "$HOME/.local/share/naru-opencode-v2/node_modules/@opencode-ai/cli/bin/opencode2.exe" \
+  --opencode "$HOME/.local/share/naru-opencode-v2/node_modules/@opencode/cli-darwin-arm64/bin/opencode2" \
   --v2-wrapper "$HOME/.local/bin/opencode2-naru" \
   --root "$HOME/.local/share/naru-preview-oc2" \
   --bin "$HOME/.local/bin/oc2"
 ```
 
-Bare `oc2` is vanilla OpenCode v2 through the existing isolated wrapper; it is not
-Naru by default. `oc2 naru ...` selects the guarded Naru preview:
+The fresh flow refuses existing destinations. Do not run it over an authenticated
+preview. The installer keeps the binary pin and legacy broker snapshot for explicit
+recovery, but the generated `oc2` launcher derives the native executable from
+nonsecret `host.json` and does not start enrollment or the broker.
+
+Bare `oc2` starts native OpenCode with Naru available in the agent picker. `oc2 naru`
+creates a native session with `agent: naru`, then opens that session in the same
+background service. This still works when bare `oc2` started the service first and
+does not set a parent model. `oc2 naru run ...` uses the supported native `run --agent naru`
+form. Other native arguments, including `auth`, `debug`, and service commands, keep
+their argument boundaries and use the same OC2-only config, data, cache, state, and
+database paths.
+
+Configure one global pool of 1–32 exact `provider/model#variant` references. Each
+reference creates one native reader, runner, and writer definition. A definition can
+back any number of OpenCode child sessions; there is no broker worker limit. All roles
+end in wildcard allow permissions, so current and future native or MCP tools remain
+available after a restart. Role boundaries and safety rules are prompt guidance, not
+permission tiers or MCP allowlists.
+The isolated native package registers `naru-git-read`, `naru-github-read`,
+`naru-github-post-review`, and `naru-worktree`, and exposes seven Naru skills.
+OpenCode supplies the trusted session identity and working directory to each tool;
+model arguments cannot impersonate either value.
+
+The native `naru` agent is a model-independent top-level coordinator: OpenCode keeps
+the user's chosen root model, while Naru plans, dispatches independent work in parallel,
+selects from exact configured worker references, evaluates results, and synthesizes the
+outcome. Writers own all workspace-file edits and follow-up repairs; runners own substantive
+checks. The optional `naru-coordinate`, `naru-select-workers`, and `naru-evaluate` skills
+make that workflow explicit without adding a router, provider ranking, or permission tier.
 
 ```sh
 oc2 naru auth login
-oc2 naru models
-oc2 naru enroll /path/to/clean/repository --model provider/model --write 'src/**'
-oc2 naru open /path/to/clean/repository
-oc2 naru status
-oc2 naru integrate TASK_ID
+oc2 naru configure
+oc2 naru models --list
+oc2 naru models --set openai/gpt-5.4#high,anthropic/claude-sonnet-4-6
+oc2 naru models --refresh
+oc2 naru models --check openai/gpt-5.4#high
+oc2 naru models --search 'GPT 5.4'
+oc2 naru
 ```
 
-The installer refuses to overwrite either path and does not copy stable credentials.
-Naru's native v2 agents deny all host tools except the capability-scoped broker MCP;
-commits, pushes, releases, and other delivery remain unavailable. Isolated checks omit
-dependency directories such as `node_modules`, install nothing, and are therefore
-limited to dependency-free checks or available system runtimes.
+`configure` is models-only and works outside a repository without starting the broker.
+The scripted `--set` form also needs no TTY. If the old preview has a valid global
+pool, first native setup copies only those model references into
+`profile/native-profile.json`; it does not load the broker or mutate historical tasks,
+enrollments, worktrees, state, or the database. Existing OC2 providers, MCP servers,
+plugins, skills, explicit instructions, and unrelated agents are preserved. The OC2
+plugin and skill paths are appended without replacing user entries. An explicitly configured
+legacy global-instructions reference is validated and one shared snapshot is embedded
+in the generated native role prompts. Malformed config, custom
+name collisions, and concurrent edits fail closed. No secrets are copied into native
+state or prompts.
+
+Model updates stage a private recoverable three-file transaction. Each individual
+replacement is atomic, but the three replacements are not crash-atomic. A later setup
+either finalizes a completely installed generation, safely rolls back a recognized
+partial generation, or preserves a newer external edit and requires manual recovery.
+Model updates do not stop or hot-reload
+an active OpenCode service. Restart the service yourself and start a new session. A
+missing pool does not prevent bare `oc2`. Every explicit Naru execution, including
+`oc2 naru run`, requires a nonempty global pool and opens the models-only picker in a
+TTY or prints the scripted setup command. `oc2 naru run` fixes `--agent naru` and
+rejects an additional agent override.
+
+For the first migration from the old broker dispatcher, close its interactive sessions
+and use the command that dispatcher recognizes: `oc2 naru stop`. It does not recognize
+`oc2 naru legacy stop` yet. If `oc2 service --help` lists `stop`, also stop the old
+ordinary native service. Then run the pinned updater and prepare the native profile:
+
+```sh
+oc2 naru stop
+oc2 service stop  # only when listed by the currently installed beta
+npm run build
+node .naru-build/tools/install-oc2.mjs --update \
+  --preview-cli "$PWD/.naru-build/tools/naru-preview.mjs" \
+  --v2-wrapper "$HOME/.local/bin/opencode2-naru" \
+  --root "$HOME/.local/share/naru-preview-oc2" \
+  --native-root "$HOME/.local/share/naru-opencode-v2"
+node .naru-build/tools/install-oc2.mjs --setup-native \
+  --root "$HOME/.local/share/naru-preview-oc2"
+```
+
+The updater still verifies exact SRI, package, archive, native magic, and version
+contracts. Its only supported binary transition is beta-19271 to beta-19425. It
+retains beta-19271 recovery files and refuses live preview processes, locks, or broker
+sockets. It does not choose models.
+
+The pin maps beta-19271 to upstream source `013ded3743eb9c198d8f544afdfd60fdad1e68a4`
+(run `34161100416`) and beta-19425 to source
+`20aff6d9f643afe9abf8a048e68f019d049f5329` (run `34425206646`), as returned by
+the official beta update endpoint. Between those builds, root export/import moved
+to session export/import, console login was removed, `session.messageUpdate` was
+removed, frontend basic authentication became stricter, and the ChatGPT GPT-5.4/
+mini allowlist changed. Naru does not use the removed routes or add an authentication
+flow. Saved model references are retained and shown as unavailable when absent rather
+than being silently removed. The checks below use synthetic loopback providers; no
+real account or provider backend was tested.
+
+For a first same-pin migration from the old dispatcher, close its interactive sessions,
+run `oc2 naru stop`, and run `oc2 service stop` if that command exists. After native
+activation, subsequent refreshes use `oc2 service stop`. Run `oc2 naru legacy stop`
+only when you explicitly started the recovery broker after activation; it does not stop
+the native service. Then use the guarded same-pin refresh and explicitly prepare the
+native profile. A first bare TUI or Naru launch
+can initialize an absent profile, but existing profiles are not rewritten by ordinary
+commands:
+
+```sh
+npm run build
+node .naru-build/tools/install-oc2.mjs --refresh-code \
+  --preview-cli "$PWD/.naru-build/tools/naru-preview.mjs" \
+  --root "$HOME/.local/share/naru-preview-oc2"
+node .naru-build/tools/install-oc2.mjs --setup-native \
+  --root "$HOME/.local/share/naru-preview-oc2"
+```
+
+The refresh swaps only compiled tools and preserves native files, profile data,
+login data, conversations, legacy state, and recovery artifacts. `--setup-native`
+does not restart a service. The old broker remains available only through
+`oc2 naru legacy ...`; normal commands never start it.
+
+The required development acceptance runs the exact beta-19425 native binary with a
+local fake provider under a macOS loopback-only sandbox:
+
+```sh
+npm run build
+npm run test:native-catalogue:built -- /absolute/path/to/opencode2-beta-19425
+npm run test:native-readers:built -- /absolute/path/to/opencode2-beta-19425
+node .naru-build/scripts/naru-native-agent-smoke.mjs /absolute/path/to/opencode2-beta-19425
+node .naru-build/scripts/naru-native-capabilities-smoke.mjs /absolute/path/to/opencode2-beta-19425
+node .naru-build/scripts/naru-native-launch-smoke.mjs /absolute/path/to/opencode2-beta-19425
+```
+
+The catalogue gate starts separate clean baseline and candidate hosts under the
+loopback-only macOS sandbox. It verifies that the baseline has only the fixture base
+models and that the candidate adds the feed-defined mode aliases with their expected
+upstream model ID, request body, reasoning variants, and normalized pricing. This is
+a bounded compatibility check against the pinned host, not a cryptographic attestation
+of the upstream catalogue or proof of account access. Feed normalization accepts only
+the request shapes currently consumed by the host: OpenAI priority and pro bodies, and
+the observed Anthropic fast body/header pair. OpenAI `fast` and `pro` modes are rejected
+when those required fields are missing or mismatched. Other providers may still define
+a cost-only mode; Naru does not add request semantics or aliases absent from the feed.
+
+The reader gate verifies a separately user-selected parent model, exact reader models and variant
+request bodies and parent control status. The high-variant reader executes a file
+read, hash check, secret denial, and forbidden-tool rejection without effects. The
+low-variant reader executes file listing before a bounded background interruption;
+new parent and child records identify it as cancelled, and a terminal event confirms
+it is no longer running.
+The gate also checks same-session continuation and native family navigation. A missing configured reader
+model must fail without any provider fallback. CI repeats this gate on the supported
+GitHub `macos-15` arm64 image after SRI-verifying the pinned native artifact. Safe
+namespaced catalogue model IDs such as `provider/team/alpha#high` are preserved;
+upstream backend model IDs are never substituted into enrollment.
+
 See the [preview guide](docs/src/content/docs/reference/opencode-v2-migration.md).
-This does not complete the overhaul or qualify a release. Semantic routing, full DAG
-and recovery behavior, Claude Code, and delivery are unfinished. The mock-provider
-workflow has passed, but no real provider was authenticated or tested for this preview.
+This local native migration does not qualify a release. Native roles have broad host
+permissions by design, so prompt instructions—not mechanical permission tiers—carry
+the role boundaries. The synthetic native capability gate proves package-directory
+loading, all four specialized tools, trusted per-session Git cwd, parent and worker
+skill loading, and worker review denial. No real provider was authenticated or tested
+by this implementation.
 
 ## Install
 
 Requirements: a recognized stable OpenCode build (**1.18.4** or **1.18.28**) and Node 24. Other builds fail closed until they are added to the tested stable profile. Naru needs `subagent_depth` of at least 1, which OpenCode's default already satisfies. An authenticated `gh` is needed only for GitHub reads and review posting.
 
-The `overhaul/host-agnostic` branch also installs and exercises OpenCode **0.0.0-beta-19086** under a separate exploratory profile. That beta is not stable upstream, is never release-qualified by Naru, and does not yet have full Naru parity.
+The `overhaul/host-agnostic` branch targets OpenCode **0.0.0-beta-19425** under a separate exploratory profile. That beta is not stable upstream, is never release-qualified by Naru, and does not yet have full Naru parity.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstrap.sh | sh

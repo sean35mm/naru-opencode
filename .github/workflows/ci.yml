@@ -9,6 +9,53 @@ permissions:
   contents: read
 
 jobs:
+  native-reader-acceptance:
+    runs-on: macos-15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install root dependencies
+        run: npm ci
+      - name: Build runtime and native acceptance artifacts
+        run: npm run build
+      - name: Run sandboxed native reader acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "arm64"
+          disposable="$(mktemp -d "$RUNNER_TEMP/opencode-v2-native-readers.XXXXXX")"
+          trap 'rm -rf "$disposable"' EXIT
+          tarball="$disposable/cli-darwin-arm64-0.0.0-beta-19425.tgz"
+          curl --fail --location --silent --show-error --max-filesize 268435456 --max-time 300 --output "$tarball" "https://registry.npmjs.org/@opencode/cli-darwin-arm64/-/cli-darwin-arm64-0.0.0-beta-19425.tgz"
+          node -e 'const { createHash } = require("node:crypto"); const { readFileSync } = require("node:fs"); const actual = "sha512-" + createHash("sha512").update(readFileSync(process.argv[1])).digest("base64"); if (actual !== "sha512-HevgkocfjHbMVGODmgtTS+ftw50bTYVHlEs/X4mWZEJG3smMaB1LpCEbYF58S+BO3YeR3INo/obnKXRc7+2RLw==") process.exit(1)' "$tarball"
+          archive_entries="$(tar -tzf "$tarball")"
+          test "$archive_entries" = $'package/package.json\npackage/bin/opencode2'
+          mkdir "$disposable/extract"
+          tar -xzf "$tarball" --directory "$disposable/extract" --no-same-owner --no-same-permissions
+          package_root="$(realpath "$disposable/extract/package")"
+          test ! -L "$disposable/extract/package"
+          package_json="$package_root/package.json"
+          test -f "$package_json"
+          test ! -L "$package_json"
+          node -e 'const value = require(process.argv[1]); if (value.name !== "@opencode/cli-darwin-arm64" || value.version !== "0.0.0-beta-19425") process.exit(1)' "$package_json"
+          opencode_path="$(realpath "$package_root/bin/opencode2")"
+          case "$opencode_path" in
+            "$package_root"/*) ;;
+            *) exit 1 ;;
+          esac
+          test -f "$opencode_path"
+          test ! -L "$package_root/bin/opencode2"
+          test -x "$opencode_path"
+          npm run test:native-catalogue:built -- "$opencode_path"
+          npm run test:native-readers:built -- "$opencode_path"
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -59,7 +106,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          disposable="$(mktemp -d "$RUNNER_TEMP/opencode-v2-beta-19086.XXXXXX")"
+          disposable="$(mktemp -d "$RUNNER_TEMP/opencode-v2-beta-19425.XXXXXX")"
           trap 'rm -rf "$disposable"' EXIT
           export HOME="$disposable/home"
           export XDG_CONFIG_HOME="$disposable/config"
@@ -73,12 +120,12 @@ jobs:
           export TEMP="$TMPDIR"
           mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME" "$npm_config_cache" "$TMPDIR"
 
-          tarball="$TMPDIR/cli-linux-x64-0.0.0-beta-19086.tgz"
+          tarball="$TMPDIR/cli-linux-x64-0.0.0-beta-19425.tgz"
           extract_root="$disposable/extract"
           mkdir -p "$extract_root"
           extract_root="$(realpath "$extract_root")"
-          curl --fail --location --silent --show-error --output "$tarball" "https://registry.npmjs.org/@opencode-ai/cli-linux-x64/-/cli-linux-x64-0.0.0-beta-19086.tgz"
-          node -e 'const { createHash } = require("node:crypto"); const { readFileSync } = require("node:fs"); const actual = "sha512-" + createHash("sha512").update(readFileSync(process.argv[1])).digest("base64"); if (actual !== "sha512-fN0YUC5Ztb76tW1yNMAIo3urC63CFUwS2gsp5NqnZMgPoZym9xdEBehpKmLsbefWnbnBfMSG4JKXHQCBOnbfLQ==") process.exit(1)' "$tarball"
+          curl --fail --location --silent --show-error --max-filesize 268435456 --max-time 300 --output "$tarball" "https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-0.0.0-beta-19425.tgz"
+          node -e 'const { createHash } = require("node:crypto"); const { readFileSync } = require("node:fs"); const actual = "sha512-" + createHash("sha512").update(readFileSync(process.argv[1])).digest("base64"); if (actual !== "sha512-62w+MgyOiInAxuGo9VCjWOrenOkCvmyaKFEUBNRaUqq+BDbizBGsTjn/pqKj9wrst+GtqREWjH8bVn302h3g7w==") process.exit(1)' "$tarball"
           archive_entries="$(tar -tzf "$tarball")"
           test "$archive_entries" = $'package/package.json\npackage/bin/opencode2'
           tar -xzf "$tarball" --directory "$extract_root" --no-same-owner --no-same-permissions
@@ -92,7 +139,7 @@ jobs:
           package_json="$package_root/package.json"
           test -f "$package_json"
           test ! -L "$package_json"
-          node -e 'const value = require(process.argv[1]); if (value.name !== "@opencode-ai/cli-linux-x64" || value.version !== "0.0.0-beta-19086") process.exit(1)' "$package_json"
+          node -e 'const value = require(process.argv[1]); if (value.name !== "@opencode/cli-linux-x64" || value.version !== "0.0.0-beta-19425") process.exit(1)' "$package_json"
           opencode_path="$(realpath "$package_root/bin/opencode2")"
           case "$opencode_path" in
             "$package_root"/*) ;;

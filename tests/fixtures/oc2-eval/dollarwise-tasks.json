@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 2,
+  "scoringVersion": 2,
+  "sourceListingFormat": "numbered-lines-v1",
+  "numericPolicy": "strict-json-types",
+  "repository": {
+    "path": "/Users/seangil/Desktop/Hammer/DollarWise-Prototype",
+    "commit": "14ab6b1467bfb238c9c417dac5a1fccd8793c236",
+    "requireCleanHead": true
+  },
+  "approvedSources": [
+    {
+      "path": "apps/admin/src/components/webhooks/humanizeSeconds.ts",
+      "sha256": "4e6fc6e148ed44aa045544ab7effeeb0565532224f7e1a2768a280fd52e383be"
+    },
+    {
+      "path": "apps/admin/src/components/webhooks/WebhookHealthPanel.vue",
+      "sha256": "6117516c98142cac8f76636e6db91b897e00bdccd7221e202e07b0da93ea9939"
+    },
+    {
+      "path": "apps/backend/app/Services/ConnectionHealth/CompositeScoreCalculator.php",
+      "sha256": "16e15cd04d8353bd4c618c10ce4da5aa05645708cb515a2fee5979d5ac7fede4"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "humanize-webhook-boundaries",
+      "instruction": "Read the two supplied files. Assume Intl.RelativeTimeFormat uses English output. Derive the exact outputs for the listed non-negative second values and state whether an oldest unhealthy age of zero is shown by the panel. Give one to three evidence spans per fact, with no span longer than 20 lines. Do not propose changes.",
+      "sources": [
+        {
+          "path": "apps/admin/src/components/webhooks/humanizeSeconds.ts",
+          "sha256": "4e6fc6e148ed44aa045544ab7effeeb0565532224f7e1a2768a280fd52e383be"
+        },
+        {
+          "path": "apps/admin/src/components/webhooks/WebhookHealthPanel.vue",
+          "sha256": "6117516c98142cac8f76636e6db91b897e00bdccd7221e202e07b0da93ea9939"
+        }
+      ],
+      "requestedFormat": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["taskID", "facts", "evidence"],
+        "properties": {
+          "taskID": { "const": "humanize-webhook-boundaries" },
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["seconds0", "seconds59", "seconds60", "seconds3599", "seconds3600", "seconds86399", "seconds86400", "panelZeroBehavior"],
+            "properties": {
+              "seconds0": { "type": "string" },
+              "seconds59": { "type": "string" },
+              "seconds60": { "type": "string" },
+              "seconds3599": { "type": "string" },
+              "seconds3600": { "type": "string" },
+              "seconds86399": { "type": "string" },
+              "seconds86400": { "type": "string" },
+              "panelZeroBehavior": { "type": "string", "enum": ["shown", "hidden"] }
+            }
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["seconds0", "seconds59", "seconds60", "seconds3599", "seconds3600", "seconds86399", "seconds86400", "panelZeroBehavior"],
+            "properties": {
+              "seconds0": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/evidenceSpan" } },
+              "seconds59": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/evidenceSpan" } },
+              "seconds60": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/evidenceSpan" } },
+              "seconds3599": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/evidenceSpan" } },
+              "seconds3600": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/evidenceSpan" } },
+              "seconds86399": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/evidenceSpan" } },
+              "seconds86400": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/evidenceSpan" } },
+              "panelZeroBehavior": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/evidenceSpan" } }
+            }
+          },
+          "briefExplanation": { "type": "string", "maxLength": 1000 }
+        },
+        "$defs": {
+          "evidenceSpan": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "startLine", "endLine"],
+            "properties": {
+              "path": { "type": "string" },
+              "startLine": { "type": "integer", "minimum": 1 },
+              "endLine": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "composite-score-arithmetic",
+      "instruction": "Read the supplied calculator. Evaluate calculate(4, 3, null) and calculate(4, null, null), including value, band, coverage, formula version, and null behavior. Give one to three evidence spans per fact, with no span longer than 20 lines. Do not propose changes.",
+      "sources": [
+        {
+          "path": "apps/backend/app/Services/ConnectionHealth/CompositeScoreCalculator.php",
+          "sha256": "16e15cd04d8353bd4c618c10ce4da5aa05645708cb515a2fee5979d5ac7fede4"
+        }
+      ],
+      "requestedFormat": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["taskID", "facts", "evidence"],
+        "properties": {
+          "taskID": { "const": "composite-score-arithmetic" },
+          "facts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["completeValue", "completeBand", "completeCoverage", "formulaVersion", "insufficientCoverage"],
+            "properties": {
+              "completeValue": { "type": "number" },
+              "completeBand": { "type": "string" },
+              "completeCoverage": { "type": "number" },
+              "formulaVersion": { "type": "string" },
+              "insufficientCoverage": { "type": "null" }
+            }
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["completeValue", "completeBand", "completeCoverage", "formulaVersion", "insufficientCoverage"],
+            "properties": {
+              "completeValue": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/evidenceSpan" } },
+              "completeBand": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/evidenceSpan" } },
+              "completeCoverage": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/evidenceSpan" } },
+              "formulaVersion": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/evidenceSpan" } },
+              "insufficientCoverage": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/evidenceSpan" } }
+            }
+          },
+          "briefExplanation": { "type": "string", "maxLength": 1000 }
+        },
+        "$defs": {
+          "evidenceSpan": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "startLine", "endLine"],
+            "properties": {
+              "path": { "type": "string" },
+              "startLine": { "type": "integer", "minimum": 1 },
+              "endLine": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -141,7 +141,7 @@ export const COMPATIBILITY_POLICY = deepFreeze({
         },
         'v2-beta-exploratory': {
             qualification: 'exploratory',
-            recognizedBuilds: ['0.0.0-beta-19086'],
+            recognizedBuilds: ['0.0.0-beta-19425'],
         },
     },
     targets: {

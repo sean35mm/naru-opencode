@@ -61,11 +61,12 @@ Naru does **not** own provider credentials, model inference, top-level or child 
 ## OpenCode v1 and v2 facts and policy
 
 - The recognized stable OpenCode builds are `1.18.4` and `1.18.28`. Other stable versions, including `1.18.29`, fail the recognized-build gate and are not tested support.
-- The isolated beta command is `~/.local/bin/opencode2-naru`, pinned to `@opencode-ai/cli@0.0.0-beta-19086` under `~/.local/share/naru-opencode-v2`.
+- The repository's isolated beta target for `~/.local/bin/opencode2-naru` is `@opencode/cli@0.0.0-beta-19425` under a versioned path in `~/.local/share/naru-opencode-v2`.
 - The wrapper isolates `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, and `XDG_STATE_HOME` beneath that root. Its database is `~/.local/share/naru-opencode-v2/state/opencode.db`. These paths must remain separate from stable OpenCode and stable Naru.
-- Manual beta installation must name the exact package version, `@opencode-ai/cli@0.0.0-beta-19086`, and the isolated prefix. Do not use `latest`, a range, or an unpinned beta tag. The wrapper must continue to execute the binary from that exact isolated installation.
+- Manual beta installation must name the exact package version, `@opencode/cli@0.0.0-beta-19425`, and the isolated prefix. Do not use `latest`, a range, or an unpinned beta tag. The wrapper must continue to execute the binary from that exact isolated installation.
 - OpenCode v2 is beta. Naru does not yet claim full v2 parity or production support.
 - The `v2-beta-exploratory` CI profile is bounded, exploratory evidence and is never release-qualifying. CI downloads the exact Linux x64 artifact and verifies its integrity and contents before running the smoke profile.
+- Missing-model discovery now has an explicit Naru-owned refresh path for the pinned beta. It stages a bounded, normalized allowlist snapshot from the fixed official public feed, requires clean credential-free native baseline/candidate processes to produce candidate-bound differential metadata, then atomically publishes a SHA-256 pointer. Parent opens freeze that source for native readers and later managed workers; refresh never changes the worker pool or an existing session. Before first refresh the source is labeled `host-managed-unverified`, including that freshness/generation are unverified and sessions are not switched automatically. Public metadata and host observation do not establish account entitlement or perfect upstream freshness. Exact `models --check` parsing is separate from bounded fuzzy `models --search`.
 
 The observed v2 contract changes that drivers and projections must account for include:
 
@@ -162,10 +163,223 @@ milestone edits are preserved):
 | `docs/src/content/docs/reference/opencode-v2-migration.md` | Replace the obsolete migration strategy with the local preview and explicit limitations. |
 | `OVERHAUL_PLAN.md` | Record follow-up scope, verification, file inventory, and remaining acceptance work. |
 
-The current `oc2` snapshot is installed at `~/.local/share/naru-preview-oc2`, with
+The historical beta-19271 `oc2` snapshot was installed at `~/.local/share/naru-preview-oc2`, with
 the launcher at `~/.local/bin/oc2`. Bare `oc2` uses the existing isolated
 `opencode2-naru` wrapper; `oc2 naru` uses the new preview. The older preview, stable
 installation, and beta wrapper were not replaced. The new preview starts unauthenticated.
+
+### Beta-19271 update follow-up (2026-09-08)
+
+Beta-19086 verification above remains a historical record. The current exploratory
+pin is beta-19271; beta-19086 now fails the exact-build gate. The explicit updater
+downloads the exact wrapper and native artifacts, verifies SRI and archive/package/
+native/version identity without npm lifecycle scripts, and installs the executable
+under `versions/0.0.0-beta-19271` instead of replacing the old hardlinked binary.
+It keeps old compiled tools, launcher, strict nonsecret host metadata, and wrapper
+copies, and restores them together when it catches an update error. This is
+rollback-on-error, not a crash-safe transaction. A shared `start.lock` excludes
+the updater and new-generation daemon or direct host launches. Beta-19086 does not
+honor that new guard, so the updater records validated recovery paths, marks the
+durable phase `switching`, disables both deployed entry targets, and rechecks for
+processes before changing code or metadata. An interruption retains phase metadata
+and recovery files. `preparing` and `pre-switch` identify an unchanged old
+generation, `switching` requires all-file recovery, and `complete` requires
+validation of the installed new generation before stale-guard removal. Authentication, admin,
+durable state, host profiles/data, enrollment and selected models, worker allowlists,
+worktrees, and credentials are outside its write set. It refuses to continue while
+preview processes, a live daemon, a start lock, or a broker socket exists and never
+stops user sessions. Stable OpenCode and stable Naru paths remain outside this flow.
+
+Public models.dev metadata included Astra at verification time, while two settled
+provider-free listings from the beta-19271 bundled catalogue did not. A synthetic
+provider remains the credential-free conformance mechanism. Astra is therefore an
+upstream/provider option when returned by the authenticated host catalogue, never a
+Naru-defined model or default; the host continues to select the top-level model and
+worker policy is unchanged.
+
+### Beta-19425 upgrade and local deployment (2026-09-11)
+
+The current exploratory source pin is beta-19425. Official publication records map
+the predecessor beta-19271 to source `013ded3743eb9c198d8f544afdfd60fdad1e68a4`
+(run `34161100416`) and beta-19425 to source
+`20aff6d9f643afe9abf8a048e68f019d049f5329` (run `34425206646`). The npm package
+scope moved from `@opencode-ai` to `@opencode`; the updater pins the exact wrapper,
+darwin-arm64, and linux-x64 package identities, URLs, and SRI values and runs no npm
+lifecycle scripts.
+
+The updater is a one-way beta-19271 to beta-19425 transition. It accepts only the
+owned, regular, native, hash-matching predecessor at the canonical
+`nativeRoot/versions/0.0.0-beta-19271/opencode2` path and an exact single-quoted
+absolute wrapper target. It installs beta-19425 in a new version directory, retains
+the predecessor binary, and preserves validated all-file recovery when rollback is
+indeterminate. Authentication, schema-v5 state, global worker models and instructions,
+repository policy, host data/database, user model preferences, and worktrees remain
+outside the transition write set.
+
+Confirmed upstream changes are root export/import moving to session export/import,
+removal of console login and `session.messageUpdate`, stricter frontend basic
+authentication, and changes to the ChatGPT GPT-5.4/mini allowlist. Naru does not use
+the removed APIs, add a new auth flow, change role permissions or worker pools, weaken
+MCP/native fallback guards, choose the top-level model, or delete persisted model
+references when catalogue availability changes.
+
+Code and candidate verification used the exact public beta-19425 darwin artifact in
+disposable state. Compatibility, managed-writer, and native-reader smokes passed with
+loopback-only synthetic providers, and a synthetic updater E2E copied the real
+beta-19271 predecessor before proving state/database/preferences/worktree byte
+preservation. After those checks, the idle local Naru broker was stopped and the
+guarded updater upgraded the isolated user installation. `oc2 --version` reported
+`opencode2 v0.0.0-beta-19425`, `oc2 naru --help` succeeded, and the installed tools
+matched the compiled tools tree. The prior binary and
+`update-recovery-0.0.0-beta-19271` were retained. No startup/update lock remained.
+The updater did not write account data, model preferences, or repository policy;
+no real account authentication or provider backend was tested. Stable OpenCode was
+not upgraded. The beta-19271 sections above remain historical evidence.
+
+### Native-reader capability milestone (2026-09-09)
+
+The first native-first slice projects one collision-safe hidden OpenCode reader per
+enrolled exact catalogue model and variant. The primary model remains selected by the
+host with no generated default, model, or variant override. Reader children use the
+native `subagent` lifecycle and OpenCode session UI rather than broker task records,
+process spawning, polling, cancellation, or the two-managed-worker limit.
+
+The MCP surface is split into typed repository-reader, orchestrator-control, and
+managed-worker interfaces. Primary and reader agents share only read-only repository
+capability; control can start only managed runners/writers; the worker-only third
+connection is absent from primary and reader configuration. Broker authorization is
+derived from capability kind plus current persisted task role/access, never caller
+role claims, session IDs, or metadata. Status distinguishes host-native readers from
+managed worker history, while schema-v2 history (including old reader records) remains
+loadable through the schema-v3 migration. Host startup waits for activation, all required MCP
+connections, the beta debounce interval, and successful tool listing.
+
+This slice does not add account connections, credentials, live web access, native
+runners/writers, delivery, or an enrolled-repository orchestrator cwd. Model-pool
+changes require reopening the host. Those boundaries remain explicit later gates.
+
+Acceptance for this milestone is now concrete rather than inferred from tool lists.
+The exact beta-19271 native smoke runs every model process in a loopback-only macOS
+sandbox after first proving external egress returns `EPERM`. A separately selected
+orchestrator fixture model calls typed control status. The high reader variant calls
+repository read, verifies content and hash, encounters secret denial, and receives
+native unknown-tool failures for control, write, and nested delegation without any
+managed task or file effect. The low reader variant separately proves its exact model,
+reasoning setting, shared read-only permission class, and a real `repo_files` call.
+The same high child is continued by `sessionID`. The low child then holds a pending
+background response; interruption must produce new parent and child cancellation
+records for that child, a terminal event, and provider stream closure. The real PTY
+Down-key Subagents panel shows only the related family, and Enter changes from the
+parent to the interrupted child. Missing configured reader models fail without a
+fixture request or public fallback. Safe nested catalogue IDs remain canonical, for
+example `provider/team/alpha#high`, and are distinct from backend `modelID` values.
+
+This smoke is required locally and in a dedicated `macos-15` arm64 GitHub Actions
+job. The CI job verifies the pinned darwin-arm64 tarball SRI and package identity
+before execution. It does not use account credentials or paid providers. Native
+runners/writers, live web access, delivery, and repository-root orchestrator cwd are
+still outside this milestone.
+
+### Interactive repository wizard follow-up (2026-09-08)
+
+Bare `oc2 naru` now enters a TTY wizard in the caller's directory; bare `oc2`
+remains vanilla. The wizard canonicalizes a containing Git repository, validates
+the isolated beta-19271 host, and fast-paths an enrolled ready repository without
+repeating setup or refreshing the catalogue. `oc2 naru configure` revisits policy.
+Outside Git it accepts another path or cancels. It never initializes Git, stashes,
+resets, installs, updates, repairs, authenticates on an agent's behalf, or mutates
+repository files during setup. Non-TTY invocation fails with explicit commands for
+the existing scripting surface.
+
+First setup reads `/api/model` and `/api/provider` from a wizard-owned,
+password-protected loopback host. The projection is byte-bounded, timed out, and
+schema checked. It exposes only sanitized IDs, names, text/tool capabilities, and
+variant IDs, and constructs worker references from `providerID/id` rather than
+upstream `modelID`. Activation means only that a snapshot was observed: metadata
+freshness and account access remain unknown. Empty or invalid catalogues offer
+retry, user-triggered native login, or cancellation. Login can persist even when
+later setup is cancelled and is disclosed before launch. The top-level orchestrator
+has no Naru model field, pin, fallback, or preselection; the user chooses it in the
+host UI. Global pool models are worker-only.
+
+Broker state schema v5 stores one nullable global worker pool, an independent global
+instructions reference, plus per-repository
+identity, access, scopes, and revision. Validated v1/v2/v3 records discard repository
+model lists and source fields while preserving authority (`writeScopes: []` becomes
+`check`, nonempty scopes become `write`), revisions, and tasks. Existing v3 global
+models and their revision remain exact; old repository models are never unioned into
+them. Malformed records fail closed. Global and repository setup writes use
+compare-and-swap revisions, repository writes bind both revisions, and stale
+confirmation requires a new review and confirmation. `inspect` permits readers, `check` adds contained
+runners, and `write` adds scoped worktree writers. Enforcement occurs at admission
+and worker file/check operations. Dirty repositories cannot enable new writers.
+Linux containment remains uncertified, so new Linux setup exposes inspect only and
+runner/writer work fails before provider execution; legacy policy remains recorded.
+
+The beta-19086 updater remains a one-way native update to beta-19271. A separate
+explicit `--refresh-code` path deploys same-pin compiled changes only after the
+daemon and all preview processes stop. It validates updater ownership, host hash,
+and exact beta-19271, uses the shared update guard and rollback, and leaves native
+files, login data, conversations, policy, host metadata, launchers, and worktrees
+unchanged. The wizard never invokes this refresh automatically.
+
+This remains an MVP: no semantic routing, automatic catalogue freshness, dashboard,
+in-session approval or MCP elicitation, automatic recovery/reset, delivery, commits,
+or Linux runner/writer certification is claimed.
+
+### Global worker-model profile follow-up (2026-09-09)
+
+The private preview state now owns a single global worker-model pool. It is not stored
+in stable OpenCode configuration or the legacy `naru-runtime.json` model classes, and
+it never selects the top-level model. Every repository uses this pool and only asks for
+explicit repository access. Migrated v1/v2/v3 repository model selections are removed,
+not promoted or combined. Scripted enrollment uses the configured global pool
+automatically; legacy `--model` is rejected.
+
+`oc2 naru configure` separates global model editing from repository access editing and
+permits the global flow outside Git. Missing saved catalogue references are
+shown as unavailable choices rather than dropped. Empty pools and newly invented
+unavailable references fail closed. Both global changes and inherited repository
+confirmation use compare-and-swap revisions, with reload and explicit reconfirmation on
+conflict. If login or the global pool was saved before later cancellation, the wizard
+reports that fact and does not roll it back.
+
+Every `open` resolves and copies an immutable effective model pool into the orchestrator
+capability. Native readers, managed task admission, and control status use that same
+snapshot until the user reopens Naru. Access and write-scope gates remain live. Launches
+receive unique config/HOME/cache/temp paths so concurrent sessions cannot overwrite
+their model projections, while repository-specific state and workspace paths remain
+stable and the shared preview-only host data/database is unchanged. This preserves host
+top-model preference/history without introducing a Naru primary-model field.
+
+### Global personal-instructions reference (2026-09-10)
+
+The configure menu now has an outside-Git **Global instructions** flow. It suggests the
+current user's `~/.config/opencode/AGENTS.md`, but installation and code refresh leave
+the setting disabled until the user confirms a reference. Naru stores only the chosen
+path, its approved canonical target, and an independent monotonic revision. It does not
+copy or modify the authored file, import OpenCode tool/provider/model configuration, or
+enable project configuration and discovery.
+
+Configuration validates a nonempty, regular, bounded UTF-8 Markdown file under the
+trusted CLI/daemon user's canonical home, denying secret and key-material paths before
+content is opened. Confirmation displays escaped source/canonical paths, byte length,
+and SHA-256 metadata. A canonical-target or settings CAS race requires another preview
+and confirmation. Later symlink retargets do not change the pinned approved target;
+edits to that target are intentionally read by the next session. Missing, unreadable,
+special, oversized, invalid-UTF-8, or NUL-containing configured files fail clearly
+instead of being omitted or truncated.
+
+Each `open` reads one snapshot before creating the parent capability. The parent,
+host-native readers, and managed runners/writers created from that capability receive
+the same text/hash snapshot in their generated role `system`; source edits and setting
+changes affect only a later parent. Fixed Naru role, safety, authorization, permissions,
+model choice, delegation, and no-delivery constraints explicitly take precedence over
+the advisory text. Permission objects are unchanged, managed workers gain no global
+filesystem tools, and broker/task/status persistence never stores the full text.
+Generated prompt configurations and host conversation history necessarily contain the
+snapshot for the intended models. Repository-level `AGENTS.md` discovery remains the
+next milestone.
 
 ### Current verification status (2026-09-06)
 
@@ -179,8 +393,9 @@ installation, and beta wrapper were not replaced. The new preview starts unauthe
 - The installed stable OpenCode is `1.18.29`; it fails the recognized-build gate as
   intended and is not tested support. The version policy remains limited to 1.18.4
   and 1.18.28.
-- The preview deployment's `lib/tools` matches the current `.naru-build/tools`.
-  Stable/global Naru was deliberately not updated.
+- The installed beta-19271 preview predates this wizard snapshot. This work did not
+  deploy it; the explicit same-pin code refresh above is required. Stable/global
+  Naru remains unchanged.
 - No real provider authentication or inference was run.
 - This evidence covers the verification window only; it does not assert that the
   stable binary was unchanged for the entire conversation. Main refs remain

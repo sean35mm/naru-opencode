@@ -91,6 +91,7 @@ async function copyInstallSource(destination: string): Promise<void> {
   }
   await cp(path.join(root, 'install.sh'), path.join(destination, 'install.sh'));
   await cp(path.join(root, 'naru-runtime.example.json'), path.join(destination, 'naru-runtime.example.json'));
+  await cp(path.join(root, 'THIRD_PARTY_NOTICES'), path.join(destination, 'THIRD_PARTY_NOTICES'));
 }
 
 function runDoctor(doctor: string, { home, project, source }: DoctorPaths, options: { hostContractRoot?: string; path?: string } = {}): DoctorReport {

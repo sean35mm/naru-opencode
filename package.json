@@ -2,7 +2,7 @@
   "name": "naru-opencode",
   "private": true,
   "scripts": {
-    "build": "npm run clean && tsc --project tsconfig.json && node scripts/copy-build-assets.mjs",
+    "build": "npm run clean && tsc --project tsconfig.json && node scripts/bundle-preview-prompts.mjs && node scripts/copy-build-assets.mjs",
     "clean": "node --eval \"require('node:fs').rmSync('.naru-build', { force: true, recursive: true })\"",
     "doctor": "npm run build && node .naru-build/tools/naru-doctor.js",
     "test": "npm run build && npm run test:node",
@@ -11,13 +11,17 @@
     "test:compat": "npm run build && node .naru-build/scripts/naru-compat-smoke.mjs --profile stable --source .naru-build",
     "test:installer": "npm run build && npm run test:installer:built",
     "test:installer:built": "sh .naru-build/tests/install.test.sh",
+    "test:native-catalogue:built": "node .naru-build/scripts/naru-native-catalogue-smoke.mjs",
     "test:node": "node --test --test-concurrency=1 .naru-build/tests/*.test.mjs",
+    "test:native-readers:built": "node .naru-build/scripts/naru-native-reader-smoke.mjs",
     "test:preview:built": "node .naru-build/scripts/naru-preview-smoke.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "type": "module",
   "devDependencies": {
+    "@clack/prompts": "1.8.0",
     "@types/node": "24.13.3",
+    "esbuild": "0.28.2",
     "typescript": "7.0.2"
   }
 }
