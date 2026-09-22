@@ -73,7 +73,7 @@ has_mode_600() { [ "$(LC_ALL=C ls -ld "$1" | cut -c 2-10)" = "rw-------" ]; }
 has_native_inventory() {
   install_root="$1"
   [ "$(find "$install_root/skills" \( -type f -o -type l \) -name SKILL.md | wc -l | tr -d ' ')" -eq 4 ] || return 1
-  [ "$(find "$install_root/agents" \( -type f -o -type l \) -name 'naru-*.md' | wc -l | tr -d ' ')" -eq 4 ] || return 1
+  [ "$(find "$install_root/agents" \( -type f -o -type l \) \( -name 'naru.md' -o -name 'naru-*.md' \) | wc -l | tr -d ' ')" -eq 4 ] || return 1
   [ -f "$install_root/commands/naru.md" ] || return 1
   [ ! -e "$install_root/commands/naru-plan.md" ]
 }
