@@ -52,7 +52,7 @@ flowchart LR
   D["Transactional install"]:::write
   I["Write ownership manifest"]:::write
   J["Restart OpenCode"]:::gate
-  K["Select naru-orchestrator and ask"]:::entry
+  K["Select naru and ask"]:::entry
 
   subgraph targets["INSTALL TARGET"]
     direction TB
@@ -81,7 +81,7 @@ flowchart LR
 
 Everything left of `--apply` is read-only. `--apply` is the single mutation boundary: nothing is written to disk until you pass it.
 
-**Walkthrough:** `install.sh` previews by default and does not create the target. After reviewing the bounded change summary, repeat the command with `--apply` and the same options. The installer stages changed assets, preserves conflicts unless you explicitly replace them, writes `.naru-install.json`, and skips unchanged paths. Restart OpenCode after an applied change, select `naru-orchestrator`, and ask for something in plain language.
+**Walkthrough:** `install.sh` previews by default and does not create the target. After reviewing the bounded change summary, repeat the command with `--apply` and the same options. The installer stages changed assets, preserves conflicts unless you explicitly replace them, writes `.naru-install.json`, and skips unchanged paths. Restart OpenCode after an applied change, select `naru`, and ask for something in plain language.
 
 Clone, preview, explicit apply — the same transactional flow the curl path drives through the naru CLI.
 

@@ -552,7 +552,7 @@ add_md "${SRC_DIR}/skills/naru-triage/SKILL.md"   "skills/naru-triage/SKILL.md"
 add_md "${SRC_DIR}/skills/naru-review/SKILL.md"   "skills/naru-review/SKILL.md"
 
 # Provider-neutral orchestrator and minions.
-add_md "${SRC_DIR}/agents/naru-orchestrator.md" "agents/naru-orchestrator.md"
+add_md "${SRC_DIR}/agents/naru.md" "agents/naru.md"
 add_md "${SRC_DIR}/agents/naru-reader.md"       "agents/naru-reader.md"
 add_md "${SRC_DIR}/agents/naru-runner.md"       "agents/naru-runner.md"
 add_md "${SRC_DIR}/agents/naru-writer.md"       "agents/naru-writer.md"

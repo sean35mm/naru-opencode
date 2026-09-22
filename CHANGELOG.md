@@ -105,7 +105,7 @@ All notable user-visible changes are recorded here. The canonical semantic produ
 
 ### Security
 
-- Dispatched children are bound to their agent by name, so OpenCode applies the agent's own permission frontmatter; the dispatch prompt body never carries a `tools` map, session permissions passed at create are deny-only, only `naru-orchestrator` may call the tool, and children are denied `naru-dispatch` and `task`, keeping delegation at depth 1.
+- Dispatched children are bound to their agent by name, so OpenCode applies the agent's own permission frontmatter; the dispatch prompt body never carries a `tools` map, session permissions passed at create are deny-only, only `naru` may call the tool, and children are denied `naru-dispatch` and `task`, keeping delegation at depth 1.
 
 ## [0.2.1] - 2026-08-06
 
@@ -126,7 +126,7 @@ judgment.
 
 ### Changed
 
-- Simplified the agent surface to `naru-orchestrator` plus three subagents: `naru-reader`, `naru-runner`, and `naru-writer`. Only `naru-writer` can edit files; readers are fail-closed read-only with no shell. Delegation remains depth-1.
+- Simplified the agent surface to `naru` plus three subagents: `naru-reader`, `naru-runner`, and `naru-writer`. Only `naru-writer` can edit files; readers are fail-closed read-only with no shell. Delegation remains depth-1.
 - Agents no longer declare a `model:`; each inherits the user's configured OpenCode default, so Naru runs on any provider without configuration. Per-agent models are set through OpenCode's native `agent` block in `opencode.json`.
 - Replaced fixed analysis modes and child-count ceilings with orchestrator judgment. The only concurrency setting is the `implementation.maxConcurrentWriters` brake.
 - Migrated from the five retired Core slash commands and workflow-agent tree to four native on-demand skills: `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`.
@@ -151,7 +151,7 @@ judgment.
 ### Added
 
 - Read-only `/naru-plan`, `/naru-impact`, `/naru-triage`, and `/naru-review` workflows, plus the explicit comment-only `/naru-review-post` boundary.
-- The visible `naru-orchestrator` and Naru Minions workflow for scoped implementation, debugging, verification, and judgment, with fail-closed role permissions.
+- The visible `naru` and Naru Minions workflow for scoped implementation, debugging, verification, and judgment, with fail-closed role permissions.
 - Naru Delegate routing across Luna, Terra, and Sol profiles while preserving OpenCode's native Task and child-session behavior.
 - Optional Protocol 2/3 scheduling, bounded shared or isolated worktree execution, transactional recovery metadata, and the opt-in full-TUI Naru Activity dashboard.
 - Transactional installation with preview/apply boundaries, ownership manifests, conflict handling, backups, rollback, uninstall, and the provider-free read-only local doctor.

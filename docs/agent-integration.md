@@ -13,19 +13,19 @@ Naru requires OpenCode 1.18.4 or newer and Node 24. Its topology is one root orc
 
 | Agent | Mode | Visible | Edits files | Runs bash |
 | --- | --- | --- | --- | --- |
-| `naru-orchestrator` | primary | yes | no | no |
+| `naru` | primary | yes | no | no |
 | `naru-reader` | subagent | no | no | no |
 | `naru-runner` | subagent | no | no | yes |
 | `naru-writer` | subagent | no | yes | yes |
 
-- `naru-orchestrator` is selected, not delegated. Users pick it in OpenCode's agent picker, set `"default_agent": "naru-orchestrator"`, or launch `opencode --agent naru-orchestrator`. It plans and coordinates; it cannot edit files or run bash itself.
+- `naru` is selected, not delegated. Users pick it in OpenCode's agent picker, set `"default_agent": "naru"`, or launch `opencode --agent naru`. It plans and coordinates; it cannot edit files or run bash itself.
 - `naru-runner` adds bash for tests, typecheck, lint, build, and reproduction. It still cannot edit.
 - `naru-writer` is the only role with `edit` and `apply_patch` permission. That is enforced by OpenCode permission frontmatter, not by prose.
-- All three subagents are `hidden: true` and carry `task: deny`, so they cannot spawn children and are not offered as delegation targets to anyone but `naru-orchestrator`.
+- All three subagents are `hidden: true` and carry `task: deny`, so they cannot spawn children and are not offered as delegation targets to anyone but `naru`.
 - Read-only roles set `bash: deny` and `external_directory: deny` so they fail closed.
 - Every role denies `.env`, `.env.*`, key material, `.ssh`, `.aws`, `.kube`, and `.gnupg`. `*.env.example` stays readable.
 
-These names are identifiers, not an integration API. A custom agent must not delegate to `naru-orchestrator` or to any of the three subagents.
+These names are identifiers, not an integration API. A custom agent must not delegate to `naru` or to any of the three subagents.
 
 ## Skills are the only supported integration names
 
@@ -42,7 +42,7 @@ They are loaded on demand when a natural request is relevant or when an agent ex
 flowchart LR
   CA["Your custom agent"]:::entry
   OK["ALLOWED — the entire supported surface<br/>naru-plan · naru-impact<br/>naru-triage · naru-review"]:::read
-  NO["DENIED — fail-closed, never Task targets<br/>naru-orchestrator · naru-reader<br/>naru-runner · naru-writer · Naru custom tools"]:::danger
+  NO["DENIED — fail-closed, never Task targets<br/>naru · naru-reader<br/>naru-runner · naru-writer · Naru custom tools"]:::danger
   G["Advisory guidance only<br/>no tools, no read-only enforcement"]:::artifact
 
   CA --> OK --> G
@@ -115,17 +115,17 @@ Naru installs four custom OpenCode tools. Each returns the same JSON envelope:
 | --- | --- | --- |
 | `naru-git-read` | orchestrator and all three subagents | `repository`, `status`, `diff`, `log`, `file`, `grep`, `merge-base` |
 | `naru-github-read` | orchestrator and all three subagents | `resolve`, `issue`, `pull`, `pull-manifest`, `pull-files`, `pull-feedback`, `source` |
-| `naru-github-post-review` | `naru-orchestrator` only | one policy- and evidence-gated review post |
-| `naru-worktree` | `naru-orchestrator` only | `prepare_run`, `recover_run`, `prepare_item`, `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run` |
+| `naru-github-post-review` | `naru` only | one policy- and evidence-gated review post |
+| `naru-worktree` | `naru` only | `prepare_run`, `recover_run`, `prepare_item`, `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run` |
 
 - **`naru-git-read`** runs bounded read-only git in the current workspace. Pathspecs must be relative — absolute paths and `..` are rejected — and log output is capped (50 entries by default, 1000 maximum). It cannot mutate the repository.
 - **`naru-github-read`** performs read-only GitHub inspection. `resolve` normalizes a full URL, `owner/repo#number`, `owner/repo number`, or a bare number. `pull` captures the legacy coherent snapshot. The scalable v5 path starts with `pull-manifest`, whose identity separates base-ref freshness (`baseSha`) from GitHub compare merge-base (`diffBaseSha`). `pull-files` accepts 1–100 distinct manifest paths, requires the full identity, and returns `batchDigest` plus `recoveryBatchDigest`; for `missing-patch` only it can return bounded status-aware exact content pairs at `diffBaseSha`/`headSha`. `pull-feedback` returns one advertised page plus `pageDigest`. Every result is point-in-time and can go stale.
-- **`naru-github-post-review`** rejects any caller whose `context.agent` is not exactly `naru-orchestrator` and accepts no caller-supplied event. Schema v5 is required for new mutations; v2/v3/v4 remain parseable only for historical marker and idempotency compatibility and cannot create a review. V5 coverage includes one ledger entry per final path, matching `fileBatches` and `recoveryBatches` with their digests, and every advertised feedback page with its digest. The tool reacquires recovery during both freshness passes, derives posture itself, and refuses incomplete provenance or integrity. Valid recovered text and valid patches without retained line maps support path-level completeness, but inline findings require a validated map.
+- **`naru-github-post-review`** rejects any caller whose `context.agent` is not exactly `naru` and accepts no caller-supplied event. Schema v5 is required for new mutations; v2/v3/v4 remain parseable only for historical marker and idempotency compatibility and cannot create a review. V5 coverage includes one ledger entry per final path, matching `fileBatches` and `recoveryBatches` with their digests, and every advertised feedback page with its digest. The tool reacquires recovery during both freshness passes, derives posture itself, and refuses incomplete provenance or integrity. Valid recovered text and valid patches without retained line maps support path-level completeness, but inline findings require a validated map.
 
   Each changed file carries `patchEvidence` with `complete`, `limited`, or `unavailable` status and a reason. Only `missing-patch` enters exact-content recovery; binary, invalid UTF-8, unexpected absence, oversize, and unsupported status remain unavailable. A limited post requires `submissionMode: limited`, an orchestrator assertion derived only from explicit limited-review posting language in the current user message; generic posting does not authorize it, and it always derives `COMMENT`. The tool aggregates mechanical limitations into one concise bounded section.
 
   Final posting reacquires declared bounded file batches, exact-content recovery, and feedback pages during both freshness passes. Exact findings already posted inline on the current head are suppressed from emitted comments but retained for formal-decision gates; semantic duplicate reconciliation remains agent-owned. A complete v5 review may supersede exactly one same-head limited v4 or v5 `COMMENT` only with its review ID and digest and fresh explicit posting authorization. Supersession is a new submission, never a retry. The hidden marker still provides whole-review idempotency. The tool makes one POST attempt and never retries; an ambiguous outcome is terminal. It cannot merge.
-- **`naru-worktree`** prepares isolated writer worktrees and serializes integration. It is restricted to `naru-orchestrator`, requires a clean repository, and downgrades silently to shared mode when the repository is dirty or worktrees are unavailable. It never pushes and never creates delivery commits.
+- **`naru-worktree`** prepares isolated writer worktrees and serializes integration. It is restricted to `naru`, requires a clean repository, and downgrades silently to shared mode when the repository is dirty or worktrees are unavailable. It never pushes and never creates delivery commits.
 
 The installed `tools/naru-doctor.js` is a local CLI, not an agent-callable tool. From a source checkout, `npm run doctor -- --json` builds first and runs the emitted CLI; an installed copy can be invoked directly with Node. It prints a schemaVersion 1 report on installation and configuration health and reads local state only: no providers, credentials, or network calls.
 
@@ -201,14 +201,14 @@ OpenCode also controls skill discovery, origin, precedence, and duplicate-name b
 If a custom agent cannot load skills, fall back to instructions only:
 
 - For planning, impact analysis, triage, or review, recommend that the user ask naturally or select the matching Naru skill, then wait. Do not claim the skill ran and do not fabricate a Naru report.
-- For implementation, ask the user to select `naru-orchestrator` in the agent picker, set it as `default_agent`, or launch it through the CLI.
+- For implementation, ask the user to select `naru` in the agent picker, set it as `default_agent`, or launch it through the CLI.
 
 ```text
 Please ask: “Use the `naru-impact` skill to describe the proposed API change.”
 ```
 
 ```text
-For implementation, select the `naru-orchestrator` primary agent and repeat the approved objective there.
+For implementation, select the `naru` primary agent and repeat the approved objective there.
 ```
 
 ## Trust and approval boundaries
@@ -219,6 +219,6 @@ For implementation, select the `naru-orchestrator` primary agent and repeat the 
 - Local changes are the default stop. Commit, push, PR, and posting happen only on an explicit current request.
 - One checkpoint, naming the exact action, precedes destructive or irreversible operations, migrations, persistent database writes, production deploys, secret access, billing or security posture changes, unrequested dependency changes, and material scope expansion.
 - One writer per logical scope; overlapping scopes serialize. A scope conflict is a scheduling signal, never a prompt to the user.
-- Pull-request review is dry-run by default. Posting requires a directly selected `naru-orchestrator` handling an explicit current request. A custom agent cannot post through Naru, and a prior dry-run report, pasted payload, or remembered user phrase is not authorization.
+- Pull-request review is dry-run by default. Posting requires a directly selected `naru` handling an explicit current request. A custom agent cannot post through Naru, and a prior dry-run report, pasted payload, or remembered user phrase is not authorization.
 - Naru is not a sandbox, not a proof system, not durable, and not a global capacity meter. Permission frontmatter and OpenCode's own boundaries are what actually enforce anything.
 - Do not imply that loading a skill granted permission or executed a command. Report the guidance you actually used and its limits.

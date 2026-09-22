@@ -21,7 +21,7 @@ const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 
 const githubPostReviewTool: GitHubPostReviewTool = {
     description: 'Post a single PR review from a validated schema v5 manifest-bound naru_review_result payload. ' +
-        'Requires context.agent to be exactly "naru-orchestrator". The tool derives the GitHub event within the asserted submission authorization policy. ' +
+        'Requires context.agent to be exactly "naru". The tool derives the GitHub event within the asserted submission authorization policy. ' +
         'Legacy v2/v3/v4 markers remain recognizable but cannot create a new review. V5 derives coverage and formal-decision eligibility from final evidence. ' +
         'Deduplicates via a hidden marker digest and never retries a POST.',
     args: {

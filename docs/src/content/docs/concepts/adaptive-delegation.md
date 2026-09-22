@@ -3,13 +3,13 @@ title: Delegation
 description: How the Naru orchestrator fans work out to its three subagents, and the few limits that bound it.
 ---
 
-`naru-orchestrator` is the agent you select. It plans and coordinates; it cannot edit files and cannot run bash. Everything it does to a repository happens through three subagents, and how much it fans out is its own judgment call — there is nothing to configure or select.
+`naru` is the agent you select. It plans and coordinates; it cannot edit files and cannot run bash. Everything it does to a repository happens through three subagents, and how much it fans out is its own judgment call — there is nothing to configure or select.
 
 ## three subagents, one writer
 
 ```mermaid
 flowchart TB
-  ORC{{"naru-orchestrator — coordinates, never edits"}}:::coord
+  ORC{{"naru — coordinates, never edits"}}:::coord
   RD["naru-reader"]:::read
   RN["naru-runner"]:::read
   WR["naru-writer"]:::write
@@ -41,7 +41,7 @@ The orchestrator sizes its own effort. A one-line fix needs no fan-out at all. A
 
 ```mermaid
 flowchart LR
-  O{{"naru-orchestrator"}}:::coord
+  O{{"naru"}}:::coord
   R1["reader — module A"]:::read
   R2["reader — module B"]:::read
   W1["writer — scope A"]:::write

@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import type { RuntimeMcpConfig, RuntimeReviewConfig } from './runtime-config.mjs';
 
 export const VARIANT_ROLES = Object.freeze(['naru-reader', 'naru-runner', 'naru-writer'] as const);
-export const ORCHESTRATOR = 'naru-orchestrator';
+export const ORCHESTRATOR = 'naru';
 
 type UnknownRecord = Record<string, unknown>;
 export type VariantRole = typeof VARIANT_ROLES[number];

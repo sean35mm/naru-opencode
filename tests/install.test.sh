@@ -23,7 +23,7 @@ for skill in naru-plan naru-impact naru-triage naru-review; do
   mkdir -p "$FIXTURE/skills/$skill"
   cp "$ROOT/skills/$skill/SKILL.md" "$FIXTURE/skills/$skill/SKILL.md"
 done
-cp "$ROOT/agents/naru-orchestrator.md" "$FIXTURE/agents/naru-orchestrator.md"
+cp "$ROOT/agents/naru.md" "$FIXTURE/agents/naru.md"
 cp "$ROOT/agents/naru-reader.md" "$FIXTURE/agents/naru-reader.md"
 cp "$ROOT/agents/naru-runner.md" "$FIXTURE/agents/naru-runner.md"
 cp "$ROOT/agents/naru-writer.md" "$FIXTURE/agents/naru-writer.md"
@@ -130,15 +130,15 @@ T1="$TMP/t1"
 mkdir -p "$T1"
 apply_install --dir "$T1"
 if is_link "$T1/skills/naru-plan/SKILL.md"; then pass "symlinked skill"; else fail "symlinked skill"; fi
-if is_link "$T1/agents/naru-orchestrator.md"; then pass "symlinked orchestrator"; else fail "symlinked orchestrator"; fi
-if is_link "$T1/commands/naru.md" && grep -q 'agent: naru-orchestrator' "$T1/commands/naru.md" && grep -q 'subtask: false' "$T1/commands/naru.md" && grep -q '\$ARGUMENTS' "$T1/commands/naru.md"; then pass "native command forwards arguments to the orchestrator"; else fail "native command forwards arguments to the orchestrator"; fi
+if is_link "$T1/agents/naru.md"; then pass "symlinked orchestrator"; else fail "symlinked orchestrator"; fi
+if is_link "$T1/commands/naru.md" && grep -q 'agent: naru' "$T1/commands/naru.md" && grep -q 'subtask: false' "$T1/commands/naru.md" && grep -q '\$ARGUMENTS' "$T1/commands/naru.md"; then pass "native command forwards arguments to the orchestrator"; else fail "native command forwards arguments to the orchestrator"; fi
 if grep -q -- '--dry-run' "$T1/commands/naru.md" && grep -q -- '--comment-only' "$T1/commands/naru.md" && grep -q -- '--standard' "$T1/commands/naru.md" && grep -q 'independently' "$T1/commands/naru.md"; then pass "ship-review command documents batch and override semantics"; else fail "ship-review command documents batch and override semantics"; fi
 if has_native_inventory "$T1"; then pass "native skills, agents, and command installed"; else fail "native skills, agents, and command installed"; fi
 if is_file "$T1/tools/naru-git-read.js" && is_file "$T1/tools/naru-doctor.js" && is_file "$T1/tools/package.json"; then pass "tools and doctor copy-pinned with ESM marker"; else fail "tools and doctor copy-pinned with ESM marker"; fi
 if is_dir "$T1/tools/naru-lib"; then pass "tool helper dir copy-pinned"; else fail "tool helper dir copy-pinned"; fi
 if is_file "$T1/tools/naru-worktree.js"; then pass "worktree runtime copy-pinned"; else fail "worktree runtime copy-pinned"; fi
 if is_file "$T1/naru-runtime.example.json"; then pass "runtime example copy-pinned"; else fail "runtime example copy-pinned"; fi
-if [ "$(grep -c '^  naru-worktree: allow$' "$T1/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$T1/agents/naru-writer.md"; then pass "global root and delegated runtime permissions"; else fail "global root and delegated runtime permissions"; fi
+if [ "$(grep -c '^  naru-worktree: allow$' "$T1/agents/naru.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$T1/agents/naru-writer.md"; then pass "global root and delegated runtime permissions"; else fail "global root and delegated runtime permissions"; fi
 if is_file "$T1/plugins/naru-dispatch.js" && [ "$(ls "$T1/plugins" | wc -l | tr -d " ")" = "1" ]; then pass "dispatch is the only plugin installed"; else fail "dispatch is the only plugin installed"; fi
 if [ -f "$T1/commands/naru.md" ] && [ ! -e "$T1/commands/naru-review.md" ] && [ ! -e "$T1/agents/naru" ] && [ ! -e "$T1/commands/naru-plan.md" ]; then pass "single convenience command installed and retired commands absent"; else fail "single convenience command installed and retired commands absent"; fi
 
@@ -147,7 +147,7 @@ T2="$TMP/t2"
 mkdir -p "$T2"
 apply_install --dir "$T2" --copy
 if is_file "$T2/skills/naru-plan/SKILL.md"; then pass "copied skill"; else fail "copied skill"; fi
-if is_file "$T2/agents/naru-orchestrator.md"; then pass "copied orchestrator"; else fail "copied orchestrator"; fi
+if is_file "$T2/agents/naru.md"; then pass "copied orchestrator"; else fail "copied orchestrator"; fi
 if has_native_inventory "$T2"; then pass "four copied skills and four agents installed"; else fail "four copied skills and four agents installed"; fi
 if is_file "$T2/tools/naru-git-read.js"; then pass "copied tool"; else fail "copied tool"; fi
 
@@ -157,7 +157,7 @@ mkdir -p "$PROJECT"
 (cd "$PROJECT" && apply_install --project >/dev/null)
 if is_link "$PROJECT/.opencode/skills/naru-plan/SKILL.md"; then pass "project install"; else fail "project install"; fi
 if has_native_inventory "$PROJECT/.opencode"; then pass "four skills and four project agents installed"; else fail "four skills and four project agents installed"; fi
-if [ "$(grep -c '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru-writer.md"; then pass "project root and delegated runtime permissions"; else fail "project root and delegated runtime permissions"; fi
+if [ "$(grep -c '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru-writer.md"; then pass "project root and delegated runtime permissions"; else fail "project root and delegated runtime permissions"; fi
 
 # 3. Paths with spaces.
 T3="$TMP/path with spaces/target"

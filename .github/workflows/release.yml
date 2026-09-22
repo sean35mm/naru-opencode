@@ -96,7 +96,7 @@ jobs:
           fi
           # Install through the CLI, which is the path real users take.
           HOME="${work}/home" "${root}/bin/naru" install --apply
-          test -f "${work}/home/.config/opencode/agents/naru-orchestrator.md"
+          test -f "${work}/home/.config/opencode/agents/naru.md"
           test -f "${work}/home/.config/opencode/commands/naru.md"
           test -f "${work}/home/.config/opencode/tools/naru-doctor.js"
           # Release installs must be pinned copies, never symlinks into

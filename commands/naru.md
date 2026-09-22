@@ -1,6 +1,6 @@
 ---
 description: Naru convenience commands
-agent: naru-orchestrator
+agent: naru
 subtask: false
 ---
 

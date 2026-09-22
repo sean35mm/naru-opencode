@@ -44,7 +44,7 @@ interface TestConfig {
 function fakeConfig(): TestConfig {
   return {
     agent: {
-      'naru-orchestrator': {
+      'naru': {
         mode: 'primary',
         prompt: 'You coordinate work.',
         permission: {
@@ -168,27 +168,27 @@ test('variants are exact permission clones with only model, effort, and descript
 test('the orchestrator allowlist and prompt appendix are regenerated idempotently', () => {
   const config = fakeConfig();
   applyVariantsToConfig(config, CLASSES, null);
-  const taskValue = agent(config, 'naru-orchestrator').permission?.task;
+  const taskValue = agent(config, 'naru').permission?.task;
   assert.equal(typeof taskValue, 'object');
   assert.ok(taskValue);
   const task = taskValue as Record<string, string>;
   assert.equal(task['naru-reader-light'], 'allow');
   assert.equal(task['naru-writer-crosscheck'], 'allow');
   assert.equal(task['*'], 'deny');
-  assert.match(agent(config, 'naru-orchestrator').prompt ?? '', /Model classes \(generated from naru-runtime\.json\)/);
-  assert.match(agent(config, 'naru-orchestrator').prompt ?? '', /"deep" -> openai\/gpt-5\.6-sol-fast@high: high consequence/);
+  assert.match(agent(config, 'naru').prompt ?? '', /Model classes \(generated from naru-runtime\.json\)/);
+  assert.match(agent(config, 'naru').prompt ?? '', /"deep" -> openai\/gpt-5\.6-sol-fast@high: high consequence/);
 
   // Second application with fewer classes removes stale variants and keys.
   applyVariantsToConfig(config, parseModelsConfig({ light: { use: 'wide', chain: ['openai/gpt-5.6-luna-fast@high'] } }), null);
   assert.equal(config.agent['naru-reader-deep'], undefined);
   assert.equal(task['naru-reader-deep'], undefined);
   assert.equal(task['naru-reader-light'], 'allow');
-  assert.equal((agent(config, 'naru-orchestrator').prompt?.match(/Model classes/g) || []).length, 1);
+  assert.equal((agent(config, 'naru').prompt?.match(/Model classes/g) || []).length, 1);
 
   // Empty classes strips everything, restoring the base config shape.
   applyVariantsToConfig(config, {}, null);
   assert.equal(Object.keys(config.agent).filter((k) => /^naru-(reader|runner|writer)-/.test(k)).length, 0);
-  assert.equal(agent(config, 'naru-orchestrator').prompt, 'You coordinate work.');
+  assert.equal(agent(config, 'naru').prompt, 'You coordinate work.');
 });
 
 test('classes whose providers are all unauthenticated are skipped, not broken', () => {
@@ -206,7 +206,7 @@ test('validation happens before mutation: a broken config is left untouched', ()
   assert.equal(JSON.stringify(config), before);
 
   const noTask = fakeConfig();
-  const noTaskPermission = agent(noTask, 'naru-orchestrator').permission?.task;
+  const noTaskPermission = agent(noTask, 'naru').permission?.task;
   assert.equal(typeof noTaskPermission, 'object');
   assert.ok(noTaskPermission);
   (noTaskPermission as Record<string, string>)['*'] = 'allow';
@@ -215,7 +215,7 @@ test('validation happens before mutation: a broken config is left untouched', ()
 
 test('runtime config application is atomic when review defaults fail after variant setup', () => {
   const config = fakeConfig();
-  delete agent(config, 'naru-orchestrator').prompt;
+  delete agent(config, 'naru').prompt;
   const before = JSON.stringify(config);
   assert.throws(() => applyRuntimeToConfigAtomically(config, CLASSES, null, {
     defaultProfile: 'standard', defaultDecision: 'comment-only', defaultOutput: 'detailed',
@@ -257,7 +257,7 @@ test('MCP synthesis preserves native last-match order and restores moved MCP rul
     read: { '*': 'allow', '.env': 'deny' },
     task: { '*': 'deny', 'naru-reader': 'allow' },
   };
-  agent(config, 'naru-orchestrator').permission = permission;
+  agent(config, 'naru').permission = permission;
   const before = JSON.stringify(permission);
   const nativeKeys = Object.keys(permission).filter((key) => !key.startsWith('alpha_'));
   const nativeOutcomes = [
@@ -272,7 +272,7 @@ test('MCP synthesis preserves native last-match order and restores moved MCP rul
   ];
 
   applyConfiguredMcpPermissionsToConfig(config, 'allow', { alpha: {} });
-  const applied = requiredValue(agent(config, 'naru-orchestrator').permission, 'orchestrator permission');
+  const applied = requiredValue(agent(config, 'naru').permission, 'orchestrator permission');
   assert.deepEqual(Object.keys(applied).filter((key) => !key.startsWith('alpha_')), nativeKeys);
   assert.deepEqual([
     effectiveToolPermission(applied, 'naru-git-read'),
@@ -291,13 +291,13 @@ test('MCP synthesis preserves native last-match order and restores moved MCP rul
   assert.equal(effectivePermission(applied, 'alpha_resource', 'dangerous'), 'deny');
 
   applyConfiguredMcpPermissionsToConfig(config, 'off', {});
-  assert.equal(JSON.stringify(agent(config, 'naru-orchestrator').permission), before);
+  assert.equal(JSON.stringify(agent(config, 'naru').permission), before);
 });
 
 test('allow mode grants configured MCP namespaces to every base and model variant without changing native walls', () => {
   const config = fakeConfig();
   const sharedNested = { '*': 'ask', safe: 'allow', dangerous: 'deny', tail: 'ask' };
-  for (const name of ['naru-orchestrator', ...VARIANT_ROLES]) {
+  for (const name of ['naru', ...VARIANT_ROLES]) {
     const permission = requiredValue(agent(config, name).permission, `${name} permission`);
     agent(config, name).permission = {
       linear_resource: sharedNested,
@@ -314,7 +314,7 @@ test('allow mode grants configured MCP namespaces to every base and model varian
     disabled: { enabled: false },
   });
 
-  const names = ['naru-orchestrator', ...VARIANT_ROLES, ...Object.keys(config.agent).filter((name) => /^naru-(reader|runner|writer)-/.test(name))];
+  const names = ['naru', ...VARIANT_ROLES, ...Object.keys(config.agent).filter((name) => /^naru-(reader|runner|writer)-/.test(name))];
   for (const name of names) {
     assert.equal(Object.keys(agent(config, name).permission ?? {})[0], '*', name);
     assert.equal(effectiveToolPermission(agent(config, name).permission, 'linear_create_issue'), 'allow', name);
@@ -331,7 +331,7 @@ test('allow mode grants configured MCP namespaces to every base and model varian
   assert.equal(effectiveToolPermission(agent(config, 'naru-reader').permission, 'bash'), 'deny');
   assert.equal(effectiveToolPermission(agent(config, 'naru-runner').permission, 'edit'), 'deny');
   assert.equal(effectiveToolPermission(agent(config, 'naru-writer').permission, 'task'), 'deny');
-  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'linear_delete_customer'), 'allow');
+  assert.equal(effectiveToolPermission(agent(config, 'naru').permission, 'linear_delete_customer'), 'allow');
 });
 
 test('generated MCP policy is idempotent, switches modes, restores asks, and preserves user edits', () => {
@@ -357,10 +357,10 @@ test('generated MCP policy is idempotent, switches modes, restores asks, and pre
   assert.equal(effectiveToolPermission(agent(config, 'naru-writer').permission, 'alpha_sensitive'), 'ask');
   assert.equal(effectivePermission(agent(config, 'naru-writer').permission, 'alpha_resource', 'ordinary'), 'ask');
   assert.equal(effectivePermission(agent(config, 'naru-writer').permission, 'alpha_resource', 'tail'), 'deny');
-  const orchestratorPermission = requiredValue(agent(config, 'naru-orchestrator').permission, 'orchestrator permission');
+  const orchestratorPermission = requiredValue(agent(config, 'naru').permission, 'orchestrator permission');
   orchestratorPermission['alpha_*'] = 'deny';
   applyConfiguredMcpPermissionsToConfig(config, 'allow', {});
-  assert.equal(agent(config, 'naru-orchestrator').permission?.['alpha_*'], 'deny');
+  assert.equal(agent(config, 'naru').permission?.['alpha_*'], 'deny');
   assert.equal(agent(config, 'naru-writer').permission?.['alpha_sensitive'], 'ask');
   assert.equal(effectivePermission(agent(config, 'naru-writer').permission, 'alpha_resource', 'ordinary'), 'ask');
   assert.equal(effectivePermission(agent(config, 'naru-writer').permission, 'alpha_resource', 'tail'), 'deny');
@@ -388,7 +388,7 @@ test('invalid model classes do not suppress independent MCP policy', async () =>
   const config = fakeConfig();
   config.mcp = { alpha: {} };
   await hooks.config(config);
-  assert.equal(effectiveToolPermission(agent(config, 'naru-orchestrator').permission, 'alpha_read'), 'allow');
+  assert.equal(effectiveToolPermission(agent(config, 'naru').permission, 'alpha_read'), 'allow');
   assert.equal(config.agent['naru-reader-broken'], undefined);
 });
 
@@ -408,7 +408,7 @@ test('the plugin hooks config only and fails open on unusable configs', async ()
   assert.deepEqual(Object.keys(hooks), ['config']);
   const withoutModels = fakeConfig();
   await hooks.config(withoutModels);
-  assert.match(agent(withoutModels, 'naru-orchestrator').prompt ?? '', /Review defaults \(generated/);
+  assert.match(agent(withoutModels, 'naru').prompt ?? '', /Review defaults \(generated/);
   assert.equal(Object.keys(withoutModels.agent).filter(name => /^naru-(reader|runner|writer)-/.test(name)).length, 0);
   const broken = { agent: {} };
   await hooks.config(broken);
@@ -429,13 +429,13 @@ test('review defaults appendix works without model classes and is idempotent', (
   const review = { defaultProfile: 'release-critical', defaultDecision: 'automatic', defaultOutput: 'concise' } as const;
   applyReviewDefaultsToConfig(config, review);
   applyReviewDefaultsToConfig(config, review);
-  const prompt = agent(config, 'naru-orchestrator').prompt ?? '';
+  const prompt = agent(config, 'naru').prompt ?? '';
   assert.equal((prompt.match(/Review defaults \(generated/g) || []).length, 1);
   assert.match(prompt, /profile=release-critical; decision=automatic; output=concise/);
   assert.match(prompt, /Persistent configuration never authorizes a post/);
   assert.match(buildReviewDefaultsAppendix(review), /ship-review/);
 
-  const broken = { agent: { 'naru-orchestrator': {} } };
+  const broken = { agent: { 'naru': {} } };
   const before = JSON.stringify(broken);
   assert.throws(() => applyReviewDefaultsToConfig(broken, review), /no prompt/);
   assert.equal(JSON.stringify(broken), before);

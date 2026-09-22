@@ -52,13 +52,13 @@ sh install.sh --apply
 
 Installs write a `.naru-install.json` ownership manifest, skip unchanged assets, and back up only the paths they replace. `--uninstall` and `--rollback` also preview by default; applying either requires `--apply` plus the exact confirmation token printed by its own preview. `--with-dashboard` is accepted and ignored.
 
-Restart OpenCode after applying. Then select `naru-orchestrator` in the agent picker, set it as `default_agent`, or launch `opencode --agent naru-orchestrator`.
+Restart OpenCode after applying. Then select `naru` in the agent picker, set it as `default_agent`, or launch `opencode --agent naru`.
 
 ## The four agents
 
 | Agent | Mode | Can | Cannot |
 | --- | --- | --- | --- |
-| `naru-orchestrator` | primary, visible | Plan, read, delegate, call the Naru tools, report | Edit files, run bash |
+| `naru` | primary, visible | Plan, read, delegate, call the Naru tools, report | Edit files, run bash |
 | `naru-reader` | subagent | Read-only investigation: find code, trace behavior, diagnose, review | Run bash, edit files |
 | `naru-runner` | subagent | Everything a reader can, plus a shell: tests, typecheck, lint, build, repro | Edit files |
 | `naru-writer` | subagent | The only role with edit and `apply_patch` | Spawn children |
@@ -76,7 +76,7 @@ To give a role its own model — for example a stronger one for the orchestrator
 ```json
 {
   "agent": {
-    "naru-orchestrator": { "model": "anthropic/claude-opus-5" },
+    "naru": { "model": "anthropic/claude-opus-5" },
     "naru-reader": { "model": "anthropic/claude-haiku-4-5" }
   }
 }
@@ -110,7 +110,7 @@ V5 starts from a compact manifest that binds target, base-ref `baseSha`, compare
 
 At posting time the tool reacquires declared bounded batches, recovery, and pages during both freshness passes instead of rebuilding one monolithic all-patch snapshot. Patch evidence remains bounded at 1 MiB and 1,024 retained line-map entries per file, 16 MiB and 16,384 retained line-map entries per batch, and 32 MiB per transport response. Crossing a line-map ceiling clears only the partial location map: a structurally valid patch remains complete and digest-bound for path-level review, while inline locations are ineligible. For `missing-patch` only, Naru verifies each exact commit, then fetches the base side from the base repository at `diffBaseSha` and the head side from the manifest-bound head repository at `headSha`; path, canonical base64, byte length, fatal UTF-8, expected absence, and per-side/per-batch bounds fail closed. Binary, oversized, unexpectedly absent, and unsupported cases remain unavailable. Recovered text supports complete path-level review but never inline findings without a validated map. Provenance remains exhaustive snapshot-bound attestation—not proof of cognition or semantic quality.
 
-A complete same-head v5 review may supersede exactly one prior limited v4 or v5 `COMMENT` only with a fresh explicit posting authorization and the predecessor's review ID and digest. This is a new submission, never a retry. The tool still makes one POST attempt; an ambiguous outcome is terminal. It cannot merge, and only `naru-orchestrator` can call it.
+A complete same-head v5 review may supersede exactly one prior limited v4 or v5 `COMMENT` only with a fresh explicit posting authorization and the predecessor's review ID and digest. This is a new submission, never a retry. The tool still makes one POST attempt; an ambiguous outcome is terminal. It cannot merge, and only `naru` can call it.
 
 ### Per-dispatch models (naru-dispatch)
 
@@ -215,7 +215,7 @@ Copy the exact permission fragment and the full integration rules from the [agen
 ## Repository layout
 
 ```text
-agents/                     naru-orchestrator and its three subagents
+agents/                     naru and its three subagents
 commands/                   the native /naru convenience command
 skills/                     four skills, loaded on demand
 tools/                      custom OpenCode tools and their shared library

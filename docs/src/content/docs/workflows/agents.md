@@ -9,7 +9,7 @@ The topology is flat. The orchestrator is the only root, the three subagents are
 
 ```mermaid
 flowchart TB
-  ORC{{"naru-orchestrator — plans, never edits, never runs commands"}}:::coord
+  ORC{{"naru — plans, never edits, never runs commands"}}:::coord
   RD["naru-reader"]:::read
   RUN["naru-runner"]:::shell
   WR["naru-writer"]:::write
@@ -33,12 +33,12 @@ flowchart TB
 
 | Agent | Mode | Role |
 | --- | --- | --- |
-| `naru-orchestrator` | primary, visible | Plans, delegates, integrates, reports |
+| `naru` | primary, visible | Plans, delegates, integrates, reports |
 | `naru-reader` | subagent, hidden | Read-only investigation |
 | `naru-runner` | subagent, hidden | Read-only plus a shell |
 | `naru-writer` | subagent, hidden | The only role that can edit |
 
-You select `naru-orchestrator` in the OpenCode agent picker. The three subagents are `hidden: true`; they are dispatch targets for the orchestrator, not things you pick.
+You select `naru` in the OpenCode agent picker. The three subagents are `hidden: true`; they are dispatch targets for the orchestrator, not things you pick.
 
 ## Code intelligence
 
@@ -78,7 +78,7 @@ To give a role its own model — a stronger one for the orchestrator's planning,
 ```json
 {
   "agent": {
-    "naru-orchestrator": { "model": "anthropic/claude-opus-5" },
+    "naru": { "model": "anthropic/claude-opus-5" },
     "naru-reader": { "model": "anthropic/claude-haiku-4-5" }
   }
 }

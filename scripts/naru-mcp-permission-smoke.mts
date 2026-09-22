@@ -184,7 +184,7 @@ async function writeOpenCodeConfig(file: string, providerURL: string, mcpScript:
         provider: { test: providerConfig(providerURL) },
         mcp,
         agent: {
-            'naru-orchestrator': { permission: deny },
+            'naru': { permission: deny },
             'naru-reader': { permission: deny },
             'naru-runner': { permission: deny },
             'naru-writer': { permission: deny },
@@ -247,7 +247,7 @@ async function main(): Promise<void> {
         if (version.code !== 0 || version.output.trim() !== EXPECTED_VERSION) throw new Error(`expected OpenCode ${EXPECTED_VERSION}`);
         const resolved = await run(opencode, ['debug', 'config'], project, env);
         if (resolved.code !== 0 || !resolved.output.includes('"synthetic_*": "allow"')) throw new Error(`stable host did not resolve synthetic MCP allow rules: ${resolved.output}`);
-        const roles = ['naru-orchestrator', 'naru-reader', 'naru-runner', 'naru-writer', 'naru-reader-smoke', 'naru-runner-smoke', 'naru-writer-smoke'];
+        const roles = ['naru', 'naru-reader', 'naru-runner', 'naru-writer', 'naru-reader-smoke', 'naru-runner-smoke', 'naru-writer-smoke'];
         for (const role of roles) {
             const before = (await readFile(callLog, 'utf8')).split('\n').filter((entry) => entry === 'synthetic:ping').length;
             const result = await run(opencode, ['run', '--format', 'json', '--agent', role, '--model', 'test/test-model', 'Call synthetic_ping exactly once.'], project, env);
@@ -262,7 +262,7 @@ async function main(): Promise<void> {
         const future = await run(opencode, ['run', '--format', 'json', '--agent', 'naru-writer-smoke', '--model', 'test/test-model', 'Call future_ping exactly once.'], project, env);
         if (future.code !== 0 || future.timedOut || !future.output.includes('SMOKE_OK')) throw new Error('new configured server was not available after rebuild');
         if (future.output.includes('permission requested')) throw new Error('future configured server produced an MCP permission request');
-        const denied = await run(opencode, ['run', '--format', 'json', '--agent', 'naru-orchestrator', '--model', 'test/test-model', 'Call synthetic_blocked exactly once.'], project, env, 10_000);
+        const denied = await run(opencode, ['run', '--format', 'json', '--agent', 'naru', '--model', 'test/test-model', 'Call synthetic_blocked exactly once.'], project, env, 10_000);
         if (denied.timedOut) throw new Error('explicit deny produced a pending permission request');
         if (denied.output.includes('permission requested')) throw new Error('explicit deny produced a pending permission request');
         const calls = (await readFile(callLog, 'utf8')).trim().split('\n').filter(Boolean);

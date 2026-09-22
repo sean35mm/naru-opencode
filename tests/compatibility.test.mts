@@ -115,7 +115,7 @@ else if (args.join(' ') === 'debug paths') console.log('isolated paths');
 else if (args.join(' ') === 'debug config') {
   ${failDebugConfig ? "console.error('SUPER_SECRET_VALUE'); process.exit(9);" : "if (debugConfigOutputBytes === 0) console.log('{}'); else process.stdout.write(debugConfigOutputMarker.repeat(Math.ceil(debugConfigOutputBytes / debugConfigOutputMarker.length)).slice(0, debugConfigOutputBytes));"}
 } else if (args.join(' ') === 'agent list') {
-  if (agentListOutputBytes === 0) console.log('naru-orchestrator');
+  if (agentListOutputBytes === 0) console.log('naru');
   else process.stdout.write(agentListOutputMarker.repeat(Math.ceil(agentListOutputBytes / agentListOutputMarker.length)).slice(0, agentListOutputBytes));
 }
 else if (args[0] === 'serve' && args[1] === '--hostname' && args[2] === '127.0.0.1' && args[3] === '--port') {

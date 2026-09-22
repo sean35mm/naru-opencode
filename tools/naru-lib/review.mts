@@ -27,7 +27,7 @@ const SUBMISSION_POLICY_EVENTS: Readonly<Record<SubmissionPolicy, ReadonlySet<Re
 });
 const SNAPSHOT_ID = /^naru-snap-[0-9a-f]{64}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
-const POSTING_AGENTS = new Set(['naru-orchestrator']);
+const POSTING_AGENTS = new Set(['naru']);
 const MAX_TRACKED_POST_TARGETS = 128;
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
 export type Severity = 'Critical' | 'High' | 'Medium' | 'Low';
