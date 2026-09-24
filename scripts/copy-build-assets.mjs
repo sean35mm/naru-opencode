@@ -36,5 +36,6 @@ await cp(new URL('../tools/package.json', import.meta.url), new URL('tools/packa
 await cp(new URL('../THIRD_PARTY_NOTICES', import.meta.url), new URL('tools/THIRD_PARTY_NOTICES', outputRoot));
 await mkdir(new URL('tools/oc2-native-plugin/', outputRoot), { recursive: true });
 await cp(new URL('../tools/oc2-native-plugin/package.json', import.meta.url), new URL('tools/oc2-native-plugin/package.json', outputRoot));
+await cp(new URL('../commands/naru.md', import.meta.url), new URL('tools/oc2-native-plugin/command.md', outputRoot));
 await cp(new URL('../tools/oc2-native-plugin/skills/', import.meta.url), new URL('tools/oc2-native-plugin/skills/', outputRoot), { recursive: true });
 await cp(new URL('../tests/install.test.sh', import.meta.url), new URL('tests/install.test.sh', outputRoot));

@@ -8,7 +8,7 @@ import { loadManagedModelSource, readManagedModelFeed, refreshManagedModelSource
 import { inspectOc2NativeDirectories, loadOc2Host, oc2NativeEnvironment, oc2NativePaths, type Oc2HostMetadata } from './oc2-profile.mjs';
 import { diagnoseExactPreviewCatalogue, diagnosePreviewCatalogue, fetchPreviewCatalogue, startPreviewServer, type PreviewCatalogue } from './preview-process.mjs';
 import { parseCatalogueReference } from './native-reader-projection.mjs';
-import { selectValidModels, TerminalWizardPrompt, WizardCancelled, type WizardPrompt } from './preview-wizard.mjs';
+import { renderPromptValue, selectValidModels, TerminalWizardPrompt, WizardCancelled, type WizardPrompt } from './preview-wizard.mjs';
 
 type Management = 'configure' | 'models-list' | 'models-catalogue' | 'setup';
 export interface NativeLaunchPlan { executable: string; argv: string[]; cwd: string; env: NodeJS.ProcessEnv; management?: Management; legacy?: true; selectNaruSession?: true; initializeProfile?: true; requiresNaruPool?: true }
@@ -95,15 +95,15 @@ async function ensureInitialized(root: string): Promise<Awaited<ReturnType<typeo
 }
 async function configureModels(plan: NativeLaunchPlan, root: string, prompt: WizardPrompt = new TerminalWizardPrompt()): Promise<void> {
     if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Interactive global model configuration requires a TTY. For scripts use: oc2 naru models --set provider/model#variant[,provider/model#variant]');
-    const current = await ensureInitialized(root);
+    const current = await loadOc2NativeModelProfile(root);
     let server: Awaited<ReturnType<typeof startPreviewServer>> | undefined;
     try {
         server = await startPreviewServer(plan.executable, plan.cwd, plan.env, 'catalogue');
         const catalogue = await fetchPreviewCatalogue(server.url, plan.cwd, server.headers);
-        const models = await selectValidModels(prompt, catalogue.models, current!.models);
-        prompt.message(`Global native models: ${models.join(', ')}\nOne reader, runner, and writer definition will be projected for each exact reference. Existing OpenCode services and sessions are not restarted or changed.`);
+        const models = await selectValidModels(prompt, catalogue.models, current?.models ?? []);
+        prompt.message(`Global native worker models: ${models.map(renderPromptValue).join(', ')}\nOne worker will be projected for each exact reference. Your top-level OpenCode model choice is unchanged. Existing services and sessions keep their current workers until restarted or reopened.`);
         if (!await prompt.confirm('Save these global worker models?')) throw new WizardCancelled();
-        await updateOc2NativeProfile(root, models);
+        await updateOc2NativeProfile(root, models, { expectedModels: current?.models ?? null });
         prompt.message('Global native models saved. Restart any active OC2 service, then start a new session to load the refreshed projection.');
     } finally { server?.stop(); }
 }

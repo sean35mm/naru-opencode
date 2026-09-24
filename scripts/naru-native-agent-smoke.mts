@@ -2,19 +2,19 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer, type ServerResponse } from 'node:http';
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { updateOc2NativeProfile } from '../tools/naru-lib/oc2-native-config.mjs';
 import { planOc2NativeLaunch } from '../tools/naru-lib/oc2-native-launch.mjs';
-import { projectOc2NativeAgents, type NativeRole } from '../tools/naru-lib/oc2-native-projection.mjs';
+import { projectOc2NativeAgents } from '../tools/naru-lib/oc2-native-projection.mjs';
 import { oc2NativePaths } from '../tools/naru-lib/oc2-profile.mjs';
 import { cleanProcessEnvironment, nodeSpawner, startPreviewServer } from '../tools/naru-lib/preview-process.mjs';
 import { validateSmokeNative } from './naru-smoke-native.mjs';
 
 if (process.platform !== 'darwin') throw new Error('Native agent acceptance requires the certified macOS network sandbox');
 const nativeArgument = process.argv[2];
-if (!nativeArgument) throw new Error('Usage: node scripts/naru-native-agent-smoke.mjs /absolute/path/to/opencode2-beta-19425');
+if (!nativeArgument) throw new Error('Usage: node scripts/naru-native-agent-smoke.mjs /absolute/path/to/opencode-2.0.15');
 const native = await validateSmokeNative(nativeArgument);
 const root = await realpath(await mkdtemp('/tmp/naru-native-agent-smoke-'));
 const installedRoot = join(root, 'installed'), workspace = join(root, 'workspace'), workspaceTwo = join(root, 'workspace-two'), outside = join(root, 'outside'), home = join(root, 'home'), temporary = join(root, 'tmp');
@@ -32,9 +32,10 @@ await writeFile(join(workspace, 'source.txt'), 'workspace-native-fixture\n');
 await writeFile(join(workspaceTwo, 'source.txt'), 'workspace-two-native-fixture\n');
 await writeFile(join(outside, 'outside.txt'), 'outside-native-fixture\n');
 
-const workerReference = 'fixture/worker#high', parentReference = 'fixture/orchestrator#medium';
-const expectedProjection = projectOc2NativeAgents([workerReference]);
-const roleName = (role: NativeRole) => expectedProjection.names[role][0]!;
+const workerReference = 'fixture/worker#high', fastReference = 'fixture/worker-fast#max', parentReference = 'fixture/orchestrator#medium';
+const expectedProjection = projectOc2NativeAgents([workerReference, fastReference]);
+const workerName = expectedProjection.workers[0]!.name;
+const fastWorkerName = expectedProjection.workers[1]!.name;
 
 const mcpProgram = join(root, 'synthetic-mcp.mjs');
 await writeFile(mcpProgram, `let buffer='';const label=process.argv[2],tool=process.argv[3];process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>{buffer+=chunk;for(;;){const end=buffer.indexOf('\\n');if(end<0)break;const line=buffer.slice(0,end).trim();buffer=buffer.slice(end+1);if(!line)continue;let request;try{request=JSON.parse(line)}catch{continue}if(request.id===undefined)continue;const result=request.method==='initialize'?{protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:label,version:'1.0.0'}}:request.method==='tools/list'?{tools:[{name:tool,description:'Synthetic '+label+' proof tool',inputSchema:{type:'object',properties:{}}}]}:request.method==='tools/call'?{content:[{type:'text',text:'MCP_OK:'+label+':'+tool}]}:{};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:request.id,result})+'\\n')}});\n`, { mode: 0o600 });
@@ -56,11 +57,12 @@ async function overlap(name: string): Promise<void> {
 let sequence = 0;
 const advertised = new Map<string, string[]>();
 const observedModels = new Map<string, Set<string>>();
+const observedFastRequests: Array<{ model: string; effort?: string; serviceTier?: string }> = [];
 const mcpCompleted = new Map<string, number>();
 let lifecycleChild = false, lifecycleContinuation = false, lifecycleBackground = false;
 function roleFrom(instructions: string): string {
-    if (instructions.includes('primary native OC2 orchestrator')) return 'naru';
-    return (['reader', 'runner', 'writer'] as const).find(role => instructions.includes(`native Naru ${role}`)) ?? 'unknown';
+    if (instructions.includes('primary native OpenCode coordinator')) return 'naru';
+    return instructions.includes('reusable native Naru worker') ? 'worker' : 'unknown';
 }
 function outputs(input: unknown): string { return JSON.stringify(input).match(/function_call_output/g)?.length ? JSON.stringify(input) : ''; }
 function call(name: string, args: unknown) { const id = `fc_${++sequence}`; return { id, type: 'function_call', call_id: `call_${sequence}`, name, arguments: JSON.stringify(args), status: 'completed' }; }
@@ -103,7 +105,7 @@ const provider = createServer(async (request, response) => {
         response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ object: 'list', data: ['native-parent-upstream', 'native-worker-upstream'].map(id => ({ id, object: 'model' })) })); return;
     }
     let body = ''; for await (const chunk of request) body += chunk;
-    const input = JSON.parse(body) as { model: string; reasoning?: { effort?: string }; instructions: string; input: unknown; tools?: Array<{ name: string }> };
+    const input = JSON.parse(body) as { model: string; reasoning?: { effort?: string }; service_tier?: string; instructions: string; input: unknown; tools?: Array<{ name: string }> };
     const serialized = JSON.stringify(input.input), result = outputs(input.input), role = roleFrom(input.instructions);
     const toolNames = advertisedTools(input);
     advertised.set(`${role}:${serialized.includes('AFTER_RESTART') ? 'after' : 'before'}`, toolNames);
@@ -111,14 +113,20 @@ const provider = createServer(async (request, response) => {
     if (input.instructions.includes('title generator')) { send(response, input.model, [message('Native beta proof')]); return; }
     observedModels.get(role)!.add(`${input.model}#${input.reasoning?.effort ?? ''}`);
     if (role === 'naru') { assert.equal(input.model, 'native-parent-upstream'); assert.equal(input.reasoning?.effort, 'medium'); }
-    else if (role !== 'unknown') { assert.equal(input.model, 'native-worker-upstream', JSON.stringify({ role, serialized, instructions: input.instructions.slice(0, 300) })); assert.equal(input.reasoning?.effort, 'high'); }
+    else if (role !== 'unknown') {
+        assert.equal(input.model, 'native-worker-upstream', JSON.stringify({ role, serialized, instructions: input.instructions.slice(0, 300) }));
+        if (input.instructions.includes(`exact configured model ${fastReference}`)) {
+            assert.equal(input.reasoning?.effort, 'max'); assert.equal(input.service_tier, 'priority');
+            observedFastRequests.push({ model: input.model, effort: input.reasoning.effort, serviceTier: input.service_tier });
+        } else { assert.equal(input.reasoning?.effort, 'high'); assert.equal(input.service_tier, undefined); }
+    }
 
     const concurrent = serialized.match(/(READ|RUN|WRITE)_CONCURRENT_(\d)/);
     if (concurrent) {
         const kind = concurrent[1] === 'READ' ? 'reader' : concurrent[1] === 'RUN' ? 'runner' : 'writer';
         const index = concurrent[2]!;
         if (role === 'naru') {
-            if (!result.includes(`${kind.toUpperCase()}_${index}_DONE`)) send(response, input.model, [call('subagent', { agent: roleName(kind), description: `Concurrent ${kind} ${index}`, prompt: concurrent[0] })]);
+            if (!result.includes(`${kind.toUpperCase()}_${index}_DONE`)) send(response, input.model, [call('subagent', { agent: workerName, description: `Concurrent ${kind} ${index}`, prompt: `${concurrent[0]}: ${kind === 'writer' ? `edit only ${join(workspace, `writer-${index}.txt`)}` : `inspect ${workspace}`}; return evidence` })]);
             else send(response, input.model, [message(`${kind.toUpperCase()}_${index}_PARENT_DONE`)]);
             return;
         }
@@ -138,12 +146,12 @@ const provider = createServer(async (request, response) => {
     }
 
     if (serialized.includes('LIFECYCLE_PARENT')) {
-        if (!result.includes('LIFECYCLE_CHILD_DONE')) { send(response, input.model, [call('subagent', { agent: roleName('reader'), description: 'Native lifecycle child', prompt: 'LIFECYCLE_CHILD' })]); return; }
+        if (!result.includes('LIFECYCLE_CHILD_DONE')) { send(response, input.model, [call('subagent', { agent: workerName, description: 'Native lifecycle child', prompt: 'LIFECYCLE_CHILD' })]); return; }
         if (!result.includes('LIFECYCLE_CONTINUED')) {
             const session = result.match(/sessionID=\\?"([a-zA-Z0-9_-]+)/)?.[1]; assert.ok(session, result);
-            send(response, input.model, [call('subagent', { agent: roleName('reader'), description: 'Native lifecycle continuation', prompt: 'LIFECYCLE_CONTINUE', sessionID: session })]); return;
+            send(response, input.model, [call('subagent', { agent: workerName, description: 'Native lifecycle continuation', prompt: 'LIFECYCLE_CONTINUE', sessionID: session })]); return;
         }
-        if (!serialized.includes('LIFECYCLE_BACKGROUND')) { send(response, input.model, [call('subagent', { agent: roleName('runner'), description: 'Native background child', prompt: 'LIFECYCLE_BACKGROUND', background: true })]); return; }
+        if (!serialized.includes('LIFECYCLE_BACKGROUND')) { send(response, input.model, [call('subagent', { agent: workerName, description: 'Native background child', prompt: 'LIFECYCLE_BACKGROUND', background: true })]); return; }
         for (let attempt = 0; attempt < 100 && !lifecycleBackground; attempt++) await new Promise(resolvePromise => setTimeout(resolvePromise, 50));
         send(response, input.model, [message('LIFECYCLE_PARENT_DONE')]); return;
     }
@@ -151,12 +159,13 @@ const provider = createServer(async (request, response) => {
     if (serialized.includes('LIFECYCLE_CHILD')) { lifecycleChild = true; send(response, input.model, [message('LIFECYCLE_CHILD_DONE')]); return; }
     if (serialized.includes('LIFECYCLE_BACKGROUND')) { lifecycleBackground = true; send(response, input.model, [message('LIFECYCLE_BACKGROUND_DONE')]); return; }
 
-    const delegated = serialized.match(/DELEGATE_(reader|runner|writer):((?:MCP|CUSTOM|SKILL)_[A-Z_]+)/);
+    const delegated = serialized.match(/DELEGATE_(worker|fast-worker):((?:MCP|CUSTOM|SKILL)_[A-Z_]+|FAST_TRANSPORT|DENIED_WRITE)/);
     if (delegated && role === 'naru') {
-        if (!result.match(/_DONE|_FAILED|NOT_ADVERTISED/)) send(response, input.model, [call('subagent', { agent: roleName(delegated[1] as NativeRole), description: `${delegated[1]} capability proof`, prompt: delegated[2] })]);
+        if (!result.match(/_DONE|_FAILED|NOT_ADVERTISED|HOST_DENIAL_ENFORCED/)) send(response, input.model, [call('subagent', { agent: delegated[1] === 'fast-worker' ? fastWorkerName : workerName, description: 'Worker capability proof', prompt: delegated[2] })]);
         else send(response, input.model, [message(`DELEGATE_${delegated[1]}_DONE`)]);
         return;
     }
+    if (serialized.includes('FAST_TRANSPORT')) { send(response, input.model, [message('FAST_TRANSPORT_DONE')]); return; }
 
     const mcp = serialized.match(/MCP_(BASELINE|NOVEL)_(?:BEFORE|AFTER)_RESTART/);
     if (mcp) {
@@ -170,34 +179,54 @@ const provider = createServer(async (request, response) => {
         send(response, input.model, [message(`MCP_${mcp[1]}_DONE`)]); return;
     }
     if (serialized.includes('SECOND_CWD')) { assert.match(input.instructions, new RegExp(workspaceTwo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))); send(response, input.model, [message('SECOND_CWD_DONE')]); return; }
+    if (serialized.includes('PARENT_DIRECT_READ')) {
+        if (!result) send(response, input.model, [invoke(toolNames, 'read', 'tools.read', { path: join(workspace, 'source.txt') })]);
+        else { assert.match(result, /workspace-native-fixture/); send(response, input.model, [message('PARENT_DIRECT_DONE')]); }
+        return;
+    }
+    if (serialized.includes('DENIED_WRITE')) {
+        if (!result && !toolNames.includes('write') && !toolNames.includes('tools.write')) send(response, input.model, [message('HOST_DENIAL_ENFORCED')]);
+        else if (!result) send(response, input.model, [invoke(toolNames, 'write', 'tools.write', { path: join(workspace, 'denied.txt'), content: 'must-not-exist\n' })]);
+        else { assert.match(result, /denied|permission|not allowed|forbidden/i); send(response, input.model, [message('HOST_DENIAL_ENFORCED')]); }
+        return;
+    }
     send(response, input.model, [message('UNEXPECTED_PROMPT')]);
 });
 await new Promise<void>(resolvePromise => provider.listen(0, '127.0.0.1', resolvePromise));
 const providerAddress = provider.address(); assert.ok(providerAddress && typeof providerAddress === 'object');
 
 const model = (modelID: string, variant: string, effort: string) => ({ modelID, capabilities: { tools: true, input: ['text'], output: ['text'] }, limit: { context: 200000, output: 8000 }, variants: [{ id: variant, settings: { reasoningEffort: effort } }] });
+const official = JSON.parse(await readFile(join(builtRoot, '..', 'tests', 'fixtures', 'current-public-models.json'), 'utf8'));
+const officialFast = official.openai.models['gpt-5.6-sol'];
+const supportedEfforts: string[] = officialFast.reasoning_options[0].values;
+assert.ok(supportedEfforts.includes('high') && supportedEfforts.includes('max'));
+const fastBody = officialFast.experimental.modes.fast.provider.body;
+assert.deepEqual(fastBody, { service_tier: 'priority' });
 const configFile = join(configRoot, 'opencode', 'opencode.json');
 const initialConfig: Record<string, any> = {
-    providers: { fixture: { canonical: 'openai', settings: { baseURL: `http://127.0.0.1:${providerAddress.port}/v1`, apiKey: 'local-fixture-only' }, models: { orchestrator: model('native-parent-upstream', 'medium', 'medium'), worker: model('native-worker-upstream', 'high', 'high') } } },
+    providers: { fixture: { canonical: 'openai', settings: { baseURL: `http://127.0.0.1:${providerAddress.port}/v1`, apiKey: 'local-fixture-only' }, models: { orchestrator: model('native-parent-upstream', 'medium', 'medium'), worker: model('native-worker-upstream', 'high', 'high'), 'worker-fast': { ...model('native-worker-upstream', 'high', 'high'), body: fastBody, variants: ['high', 'max'].map(id => ({ id, settings: { reasoningEffort: id } })) } } } },
     mcp: { servers: { baseline: { type: 'local', command: [process.execPath, mcpProgram, 'baseline', 'ping'], codemode: false } } },
+    // The synthetic host fixture allows tools; production projection never changes host permissions.
+    permissions: [{ action: '*', resource: '*', effect: 'allow' }],
 };
 await writeFile(configFile, JSON.stringify(initialConfig, null, 2), { mode: 0o600 });
 await writeFile(join(installedRoot, 'host.json'), JSON.stringify({ root: installedRoot, executable: native, executableHash: createHash('sha256').update(await readFile(native)).digest('hex'), node: process.execPath, cli: join(builtRoot, 'tools', 'oc2.mjs') }), { mode: 0o600 });
-await writeFile(join(installedRoot, 'state.json'), JSON.stringify({ schemaVersion: 4, globalWorkerPool: { models: [workerReference], revision: 7 }, repositories: [{ path: '/legacy-only' }], tasks: [{ id: 'legacy-only' }] }), { mode: 0o600 });
-const legacyStateBefore = await readFile(join(installedRoot, 'state.json'));
 const databaseBefore = Buffer.alloc(0); await writeFile(paths.database, databaseBefore, { mode: 0o600 });
-const migratedProfile = await updateOc2NativeProfile(installedRoot, undefined, { home });
-assert.deepEqual(migratedProfile.models, [workerReference]);
+await assert.rejects(lstat(join(installedRoot, 'state.json')), { code: 'ENOENT' });
+const freshProfile = await updateOc2NativeProfile(installedRoot, [workerReference, fastReference], { home });
+assert.deepEqual(freshProfile.models, [workerReference, fastReference]);
+await assert.rejects(lstat(join(installedRoot, 'state.json')), { code: 'ENOENT' });
 assert.deepEqual(await readFile(paths.database), databaseBefore);
 let config: Record<string, any> = JSON.parse(await readFile(configFile, 'utf8'));
 assert.deepEqual(config.agents, expectedProjection.agents);
+assert.deepEqual(config.permissions, initialConfig.permissions);
 const generatedNaru = config.agents.naru as unknown as Record<string, unknown>;
 assert.equal(generatedNaru.model, undefined); assert.equal(generatedNaru.variant, undefined);
 assert.deepEqual(config.plugins, [join(installedRoot, 'lib', 'tools', 'oc2-native-plugin')]);
 assert.deepEqual(config.skills, [join(installedRoot, 'lib', 'tools', 'oc2-native-plugin', 'skills')]);
 const modelSource = join(root, 'models.json');
 const sourceModel = (id: string) => ({ id, name: `Native ${id} fixture`, release_date: '2026-09-11', attachment: false, reasoning: true, tool_call: true, modalities: { input: ['text'], output: ['text'] }, limit: { context: 200000, output: 8000 }, provider: { npm: '@ai-sdk/openai' } });
-await writeFile(modelSource, JSON.stringify({ fixture: { id: 'fixture', name: 'Fixture', env: [], npm: '@ai-sdk/openai-compatible', models: { orchestrator: sourceModel('orchestrator'), worker: sourceModel('worker') } } }), { mode: 0o600 });
+await writeFile(modelSource, JSON.stringify({ fixture: { id: 'fixture', name: 'Fixture', env: [], npm: '@ai-sdk/openai-compatible', models: { orchestrator: sourceModel('orchestrator'), worker: sourceModel('worker'), 'worker-fast': sourceModel('worker-fast') } } }), { mode: 0o600 });
 
 const sandbox = '(version 1)(allow default)(deny network-outbound)(allow network-outbound (remote ip "localhost:*"))(allow network-outbound (remote unix-socket))';
 const sourceEnvironment: NodeJS.ProcessEnv = {
@@ -268,14 +297,16 @@ try {
     assert.ok(configSourcePaths.includes(configFile), 'Config API did not load the isolated native configuration source');
     assert.equal(configSourcePaths.includes(stableConfig), false, 'Config API loaded the stable configuration source');
     const agentsResponse = await api('/api/agent' + location()); assert.equal(agentsResponse.status, 200); assert.ok(Array.isArray(agentsResponse.value?.data)); const agents = agentsResponse.value.data;
-    for (const [name, role] of [['naru', 'naru'], [roleName('reader'), 'reader'], [roleName('runner'), 'runner'], [roleName('writer'), 'writer']] as const) {
+    for (const [name, role] of [['naru', 'naru'], [workerName, 'worker'], [fastWorkerName, 'fast-worker']] as const) {
         const resolved: any = agents.find((value: any) => value.id === name); assert.ok(resolved, `Agent API missing ${name}`);
-        assert.deepEqual(resolved.permissions.at(-1), { action: '*', resource: '*', effect: 'allow' });
+        assert.equal('permissions' in config.agents[name]!, false);
         if (role === 'naru') assert.equal(resolved.model, undefined);
-        else assert.deepEqual(resolved.model, { providerID: 'fixture', id: 'worker', variant: 'high' });
+        else assert.deepEqual(resolved.model, { providerID: 'fixture', id: role === 'fast-worker' ? 'worker-fast' : 'worker', variant: role === 'fast-worker' ? 'max' : 'high' });
     }
     assert.equal(agents.some((value: any) => value.id === 'stable-sentinel'), false);
     assert.match(await run('naru', 'MCP_BASELINE_BEFORE_RESTART'), /MCP_BASELINE_DONE/);
+    assert.match(await run('naru', 'PARENT_DIRECT_READ'), /PARENT_DIRECT_DONE/);
+    assert.match(await runRole('fast-worker', 'FAST_TRANSPORT'), /DELEGATE_fast-worker_DONE/);
     assert.match(await run('naru', 'SECOND_CWD', workspaceTwo), /SECOND_CWD_DONE/);
     assert.deepEqual(await pendingPermissions(), []);
 
@@ -298,7 +329,7 @@ try {
     assert.equal(JSON.stringify(config.agents), agentsBeforeMcpAddition); assert.deepEqual(config.mcp.servers['future-service'], { type: 'local', command: [process.execPath, mcpProgram, 'future', 'novel'], codemode: false });
     environment.NARU_PREVIEW_REQUIRED_MCP = 'baseline,future-service';
     server = await startPreviewServer(wrapper, workspace, environment, 'mcp', { requiredMcpNames: ['baseline', 'future-service'] });
-    for (const role of ['naru', 'reader', 'runner', 'writer']) {
+    for (const role of ['naru', 'worker']) {
         assert.match(await runRole(role, 'MCP_BASELINE_AFTER_RESTART'), role === 'naru' ? /MCP_BASELINE_DONE/ : new RegExp(`DELEGATE_${role}_DONE`));
         assert.match(await runRole(role, 'MCP_NOVEL_AFTER_RESTART'), role === 'naru' ? /MCP_NOVEL_DONE/ : new RegExp(`DELEGATE_${role}_DONE`));
         const tools = advertised.get(`${role}:after`) ?? [];
@@ -307,19 +338,35 @@ try {
     }
     assert.deepEqual(await pendingPermissions(), []);
 
+    // Host denial takes precedence over fixture baseline allow, with no agent override.
+    server.stop(); server = undefined;
+    config.permissions.push({ action: 'edit', resource: '*', effect: 'deny' });
+    await writeFile(configFile, JSON.stringify(config, null, 2), { mode: 0o600 });
+    await updateOc2NativeProfile(installedRoot, undefined, { home });
+    config = JSON.parse(await readFile(configFile, 'utf8'));
+    assert.deepEqual(config.permissions.at(-1), { action: 'edit', resource: '*', effect: 'deny' });
+    server = await startPreviewServer(wrapper, workspace, environment, 'mcp', { requiredMcpNames: ['baseline', 'future-service'] });
+    assert.match(await runRole('worker', 'DENIED_WRITE'), /DELEGATE_worker_DONE/);
+    await assert.rejects(readFile(join(workspace, 'denied.txt')), { code: 'ENOENT' });
+    assert.deepEqual(await pendingPermissions(), []);
+
     const stableAfter = [await readFile(stableConfig), await readFile(stableAgent)].map(value => createHash('sha256').update(value).digest('hex'));
     assert.deepEqual(stableAfter, stableBefore);
-    assert.ok((await readFile(paths.database)).length > 0); assert.deepEqual(await readFile(join(installedRoot, 'state.json')), legacyStateBefore);
+    assert.ok((await readFile(paths.database)).length > 0);
+    await assert.rejects(lstat(join(installedRoot, 'state.json')), { code: 'ENOENT' });
+    await assert.rejects(lstat(join(installedRoot, 'broker.sock')), { code: 'ENOENT' });
     assert.deepEqual([...observedModels.get('naru')!], ['native-parent-upstream#medium']);
-    for (const role of ['reader', 'runner', 'writer']) assert.deepEqual([...observedModels.get(role)!], ['native-worker-upstream#high']);
+    assert.deepEqual([...observedModels.get('worker')!].sort(), ['native-worker-upstream#high', 'native-worker-upstream#max']);
+    assert.ok(observedFastRequests.length > 0);
     console.log(JSON.stringify({
         status: 'PASS', native, workspaceKind: 'non-git', sandbox: 'loopback-only', production: ['projectOc2NativeAgents', 'updateOc2NativeProfile', 'planOc2NativeLaunch'],
-        roleNames: { naru: 'naru', reader: roleName('reader'), runner: roleName('runner'), writer: roleName('writer') }, permission: { action: '*', resource: '*', effect: 'allow', pending: 0 }, parentModel: `${parentReference} (user-selected)`, workerModel: `${workerReference} (production-pinned)`, upstreamModels: ['native-parent-upstream', 'native-worker-upstream'],
+        agentNames: { naru: 'naru', worker: workerName, fastWorker: fastWorkerName }, permission: { fixtureBaseline: 'allow', hostDenial: true, generatedOverrides: false, pending: 0 }, parentModel: `${parentReference} (user-selected)`, workerModels: [workerReference, fastReference], upstreamModels: ['native-parent-upstream', 'native-worker-upstream'],
         nativeSubagentArgs: ['agent', 'description', 'prompt', 'sessionID', 'background'], lifecycle: { child: lifecycleChild, continuation: lifecycleContinuation, background: lifecycleBackground }, overlapPeak: Object.fromEntries([...gates].map(([name, value]) => [name, value.peak])),
         nativeEffects: { runnerShell: true, writerEditRead: true, cwd: workspace, secondCwd: workspaceTwo, inheritedEnv: 'NARU_SYNTHETIC_ENV', outsideCwdRead: true },
         launch: { naruEntry: parentPlan.argv.slice(0, 5), bareEntry: barePlan.argv, sharedDatabase: paths.database },
-        migration: { legacyModels: migratedProfile.models, databasePreserved: true, legacyStatePreserved: true },
-        mcp: { beforeRestartCalls: 1, afterRestartCalls: 8, afterRestartAllRoles: ['baseline_ping', 'future_service_novel'], updaterPreservedFutureServer: true, roleRegeneration: false, pendingPermissions: 0, permissionApi },
+        setup: { freshModels: freshProfile.models, databasePreserved: true, noBrokerState: true },
+        syntheticTransport: { fast: observedFastRequests[0], scope: 'host request plumbing only; account entitlement untested' },
+        mcp: { beforeRestartCalls: 1, afterRestartCalls: 4, afterRestartAllAgents: ['baseline_ping', 'future_service_novel'], updaterPreservedFutureServer: true, workerRegeneration: false, pendingPermissions: 0, permissionApi },
         stableSentinels: { loaded: false, modified: false, homeEquivalent: home, isolatedXdg: configRoot },
         pluginSkills: 'covered-by-naru-native-capabilities-smoke',
     }));

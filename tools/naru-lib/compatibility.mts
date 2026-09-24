@@ -141,7 +141,7 @@ export const COMPATIBILITY_POLICY = deepFreeze({
         },
         'v2-beta-exploratory': {
             qualification: 'exploratory',
-            recognizedBuilds: ['0.0.0-beta-19425'],
+            recognizedBuilds: ['2.0.15'],
         },
     },
     targets: {
@@ -253,8 +253,8 @@ export function sanitizeObservedVersion(value: unknown): string | null {
     if (bounded.length !== value.length)
         return null;
     const version = '((?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?)';
-    const match = bounded.match(new RegExp(`^[ \\t\\r\\n]*(?:v${version}|${version}|opencode2 v${version})[ \\t\\r\\n]*$`));
-    const parsed = match === null ? null : parseSemver(match[1] ?? match[2] ?? match[3]);
+    const match = bounded.match(new RegExp(`^[ \\t\\r\\n]*(?:v${version}|${version}|opencode2 v${version}|opencode v${version})[ \\t\\r\\n]*$`));
+    const parsed = match === null ? null : parseSemver(match[1] ?? match[2] ?? match[3] ?? match[4]);
     return parsed?.normalized ?? null;
 }
 function profilePolicy(profile: unknown) {

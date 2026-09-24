@@ -6,7 +6,7 @@ import { isPlainObject } from './validate.mjs';
 
 export const OFFICIAL_MODEL_CATALOGUE_URL = 'https://models.opencode.ai/api.json';
 export const MODEL_CATALOGUE_MAX_BYTES = 16 * 1024 * 1024;
-export const MODEL_CATALOGUE_USER_AGENT = 'opencode/beta/0.0.0-beta-19425/naru-preview';
+export const MODEL_CATALOGUE_USER_AGENT = 'opencode/2.0.15/naru-preview';
 
 export interface PreviewModelSource {
     path: string;

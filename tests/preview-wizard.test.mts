@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { renderPromptValue, runPreviewWizard, TerminalWizardPrompt, WizardCancelled, type PreviewSetupStatus, type WizardPrompt } from '../tools/naru-lib/preview-wizard.mjs';
+import { renderPromptValue, runPreviewWizard, selectValidModels, TerminalWizardPrompt, WizardCancelled, type PreviewSetupStatus, type WizardPrompt } from '../tools/naru-lib/preview-wizard.mjs';
 import type { PreviewCatalogue } from '../tools/naru-lib/preview-process.mjs';
 import type { Enrollment, EnrollmentKind, GlobalWorkerPool, PreviewAccess } from '../tools/naru-lib/preview-broker.mjs';
 import type { GlobalInstructionsMetadata } from '../tools/naru-lib/global-instructions.mjs';
@@ -37,6 +37,41 @@ class Prompt implements WizardPrompt {
 }
 
 const catalogueOfSize = (count: number): PreviewCatalogue => ({ ...catalogue, models: Array.from({ length: count }, (_, index) => ({ ...model, id: `worker_${index}`, name: `Worker ${index}`, reference: `fixture/worker_${index}`, variantIDs: [] })) });
+
+test('all advertised variants expand to exact references; Fast is a separate catalogue model, not an inferred variant', async () => {
+    const variants = { ...model, variantIDs: ['none', 'low', 'medium', 'high', 'xhigh', 'max'] };
+    const fast = { ...model, id: 'tool_worker-fast', name: 'Fast Worker', reference: 'fixture/tool_worker-fast', variantIDs: ['none', 'low', 'high'] };
+    const group = '\u0000all-variants:fixture/tool_worker';
+    const prompt = new Prompt({ models: [[group, 'fixture/tool_worker', 'fixture/tool_worker#high', fast.reference, 'fixture/tool_worker-fast#low']] });
+    assert.deepEqual(await selectValidModels(prompt, [variants, fast], []), [
+        ...variants.variantIDs.map(id => `fixture/tool_worker#${id}`), variants.reference, fast.reference, 'fixture/tool_worker-fast#low',
+    ]);
+    assert.deepEqual(prompt.modelInitials, [[]]);
+});
+
+test('variantless models have no group option and fabricated groups cannot be saved', async () => {
+    const variantless = { ...model, variantIDs: [] }, prompt = new Prompt({ models: [['\u0000all-variants:fixture/tool_worker'], [variantless.reference]] });
+    assert.deepEqual(await selectValidModels(prompt, [variantless], []), [variantless.reference]);
+    assert.ok(prompt.messages.some(message => message.includes('not offered by this catalogue')));
+});
+
+test('expansion enforces the 32-reference limit without truncation and keeps the group draft for retry', async () => {
+    const many = { ...model, variantIDs: Array.from({ length: 32 }, (_, index) => `level_${index}`) };
+    const group = '\u0000all-variants:fixture/tool_worker', other = 'fixture/other';
+    const prompt = new Prompt({ models: [[group, other], [group]] });
+    assert.deepEqual(await selectValidModels(prompt, [many, { ...model, id: 'other', reference: other, variantIDs: [] }], []), many.variantIDs.map(id => `${many.reference}#${id}`));
+    assert.deepEqual(prompt.modelInitials, [[], [group, other]]);
+    assert.ok(prompt.messages.some(message => message.includes('selected 33 worker references; the limit is 32')));
+});
+
+test('saved exact individual references survive a partial catalogue, and cancellation never returns a draft', async () => {
+    const retained = ['fixture/tool_worker#fast', 'retired/saved#max'];
+    const prompt = new Prompt({ models: [[...retained, '\u0000all-variants:fixture/tool_worker']] });
+    assert.deepEqual(await selectValidModels(prompt, [model], retained), retained);
+    const cancelled = new Prompt({ models: [new WizardCancelled()] });
+    await assert.rejects(selectValidModels(cancelled, [model], retained), WizardCancelled);
+    assert.deepEqual(cancelled.modelInitials, [retained]);
+});
 
 function adapters(overrides: Partial<{
     statuses: PreviewSetupStatus[]; catalogues: PreviewCatalogue[]; refreshCatalogue: (path: string) => Promise<PreviewCatalogue>; diagnoseCatalogue: (path: string, query: string, current?: PreviewCatalogue) => Promise<{ query: string; observedAt: string; accountAccess: 'unknown'; matches: Array<{ reference: string; name: string; eligibility: string; reason?: string; sourcePresence?: string; variantAvailability?: string }> }>; configureGlobal: (input: { models: string[]; expectedRevision: number | null }) => Promise<GlobalWorkerPool>; prepareGlobalInstructions: (input: { sourcePath: string }) => Promise<{ sourcePath: string; canonicalPath: string; sha256: string; byteLength: number }>; configureGlobalInstructions: (input: { sourcePath: string; canonicalPath: string; sha256: string; byteLength: number; expectedRevision: number }) => Promise<GlobalInstructionsMetadata>; disableGlobalInstructions: (input: { expectedRevision: number }) => Promise<GlobalInstructionsMetadata>; enroll: (input: { path: string; kind: EnrollmentKind; access: PreviewAccess; writeScopes: string[]; expectedRevision: number | null; expectedGlobalRevision: number }) => Promise<Enrollment>; authenticate: () => Promise<void>; open: (path: string) => Promise<void>;
@@ -432,6 +467,18 @@ console.log('NARU_RESULT:' + JSON.stringify({ value, raw: process.stdin.isRaw, l
         assert.equal(result.raw, false); assert.equal(result.listeners, 0);
         assert.match(output, /Type:.*search/s); assert.match(output, /No matches found/); assert.match(output, /unavailable \(saved; retain or remove\)/); assert.match(output, /4 items selected/); assert.ok(output.includes('\u001b[?25h'));
     } finally { await rm(isolated, { recursive: true, force: true }); }
+});
+
+test('native Clack offers all advertised variants only for catalogue models with variants', { skip: !supportsPty }, async () => {
+    const module = pathToFileURL(join(built, 'tools', 'naru-lib', 'preview-wizard.mjs')).href;
+    const source = `import { TerminalWizardPrompt, selectValidModels } from ${JSON.stringify(module)};
+ const models=[{id:'plain',providerID:'fixture',name:'Plain Worker',reference:'fixture/plain',variantIDs:[]},{id:'fast',providerID:'fixture',name:'Fast Worker',reference:'fixture/fast',variantIDs:['none','low','high']}];
+ const value=await selectValidModels(new TerminalWizardPrompt(),models,[]);
+ console.log('NARU_RESULT:'+JSON.stringify({value,raw:process.stdin.isRaw}));`;
+    const { output, result } = await runPtyHarness(source, ['all', '\t', '\r']);
+    assert.deepEqual(result, { value: ['fixture/fast#none', 'fixture/fast#low', 'fixture/fast#high'], raw: false });
+    assert.match(output, /Fast Worker \/ all 3 advertised variants/);
+    assert.doesNotMatch(output, /Plain Worker \/ all/);
 });
 
 test('native Clack refresh is available before selection, warns when a saved draft disappears, and cancel makes no pool mutation', { skip: !supportsPty }, async () => {

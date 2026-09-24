@@ -39,6 +39,7 @@ export type PreviewWizardResult = { outcome: 'cancelled' | 'launched' | 'configu
 
 export class WizardCancelled extends Error { constructor(readonly authenticationMayHaveChanged = false) { super('Naru setup cancelled'); } }
 const maximumWorkerReferences = 32;
+const allVariants = (reference: string): string => `\u0000all-variants:${reference}`;
 const unsafePromptCodePoint = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 export function renderPromptValue(value: string): string {
     return [...value].map(character => unsafePromptCodePoint.test(character) ? `\\u{${character.codePointAt(0)!.toString(16).padStart(4, '0')}}` : character).join('');
@@ -88,11 +89,12 @@ export class TerminalWizardPrompt implements WizardPrompt {
     }
     async selectModels(models: PreviewCatalogueModel[], initial: string[]): Promise<string[]> {
         const options = models.flatMap(model => [{ reference: model.reference, label: `${renderPromptValue(model.name)} · ${renderPromptValue(model.reference)}`, search: `${model.name} ${model.providerID} ${model.id} ${model.reference}` },
+            ...(model.variantIDs.length ? [{ reference: allVariants(model.reference), label: `${renderPromptValue(model.name)} / all ${model.variantIDs.length} advertised variants · ${renderPromptValue(model.reference)}`, search: `${model.name} ${model.providerID} ${model.id} ${model.reference} all variants` }] : []),
             ...model.variantIDs.map(id => ({ reference: `${model.reference}#${id}`, label: `${renderPromptValue(model.name)} / ${renderPromptValue(id)} · ${renderPromptValue(model.reference)}#${renderPromptValue(id)}`, search: `${model.name} ${model.providerID} ${model.id} ${model.reference} ${id}` }))]);
         const available = new Set(options.map(option => option.reference));
         for (const reference of initial) if (!available.has(reference)) options.push({ reference, label: `${renderPromptValue(reference)} · unavailable (saved; retain or remove)`, search: `${reference} unavailable saved retain remove` });
         return this.prompt<string[]>(signal => autocompleteMultiselect({
-            message: 'Worker models — Choose 1–32 worker references; base models and reasoning variants count separately — the top-level model stays user-selected in OpenCode',
+            message: 'Worker models — Choose 1–32 exact references after expansion; base models and variants are separate — the top-level model stays user-selected in OpenCode',
             options: options.map(option => ({ value: option.reference, label: option.label })),
             initialValues: initial, required: true, maxItems: this.visibleRows(),
             placeholder: 'Type a name, provider, model ID, or variant',
@@ -159,13 +161,18 @@ function validateSelection(models: string[], catalogueModels: PreviewCatalogueMo
 
 export async function selectValidModels(prompt: WizardPrompt, catalogueModels: PreviewCatalogueModel[], retained: string[], trustedUnavailable: Iterable<string> = retained): Promise<string[]> {
     const eligible = new Set(catalogueModels.flatMap(model => [model.reference, ...model.variantIDs.map(id => `${model.reference}#${id}`)]));
-    const trusted = new Set(trustedUnavailable), allowed = new Set([...eligible, ...[...trusted].filter(reference => !eligible.has(reference))]);
+    const trusted = new Set(trustedUnavailable), groups = new Map(catalogueModels.filter(model => model.variantIDs.length).map(model => [allVariants(model.reference), model.variantIDs.map(id => `${model.reference}#${id}`)]));
+    const allowed = new Set([...eligible, ...groups.keys(), ...[...trusted].filter(reference => !eligible.has(reference))]);
     let initial = retained.filter((reference, index) => allowed.has(reference) && retained.indexOf(reference) === index);
     while (true) {
         const models = await prompt.selectModels(catalogueModels, initial);
         try {
-            validateSelection(models, catalogueModels, trusted);
-            return models;
+            const seen = new Set<string>();
+            const duplicates = [...new Set(models.filter(model => { if (seen.has(model)) return true; seen.add(model); return false; }))];
+            if (duplicates.length) throw new Error(`Duplicate worker references: ${duplicates.map(model => JSON.stringify(renderPromptValue(model))).join(', ')}. Remove duplicate selections and try again.`);
+            const expanded = [...new Set(models.flatMap(reference => groups.get(reference) ?? [reference]))];
+            validateSelection(expanded, catalogueModels, trusted);
+            return expanded;
         } catch (error) {
             prompt.message(error instanceof Error ? error.message : 'Model selection is invalid.');
             initial = models.filter((reference, index) => allowed.has(reference) && models.indexOf(reference) === index);

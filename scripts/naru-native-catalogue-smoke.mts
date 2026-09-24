@@ -10,7 +10,7 @@ import { cleanProcessEnvironment, differentialCatalogueWitness, fetchPreviewCata
 import { validateSmokeNative } from './naru-smoke-native.mjs';
 
 const nativeArgument = process.argv[2];
-if (!nativeArgument) throw new Error('Usage: node scripts/naru-native-catalogue-smoke.mjs /absolute/path/to/opencode2-beta-19425');
+if (!nativeArgument) throw new Error('Usage: node scripts/naru-native-catalogue-smoke.mjs /absolute/path/to/opencode-2.0.15');
 const native = await validateSmokeNative(nativeArgument);
 const root = await realpath(await mkdtemp('/tmp/naru-native-catalogue-smoke-'));
 const fixturePath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'tests', 'fixtures', 'current-public-models.json');

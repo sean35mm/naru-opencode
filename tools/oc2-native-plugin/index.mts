@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import gitReadTool from '../naru-git-read.js';
 import githubPostReviewTool from '../naru-github-post-review.js';
 import githubReadTool from '../naru-github-read.js';
@@ -27,9 +28,21 @@ interface NativeToolDefinition {
     execute(input: Record<string, unknown>, context: NativeExecutionContext): Promise<{ content: string }>;
 }
 interface NativeToolEditor { add(tool: NativeToolDefinition): void }
+interface NativeCommandInvocation {
+    sessionID: string;
+    prompt: { text: string; agents?: unknown; skills?: unknown; files?: unknown };
+    delivery: 'steer' | 'queue';
+}
 interface NativePluginContext {
-    session?: { get(input: { sessionID: string }): Promise<unknown> };
+    session?: {
+        get(input: { sessionID: string }): Promise<unknown>;
+        prompt?(input: { sessionID: string; text: string; delivery: 'steer' | 'queue' }): Promise<unknown>;
+    };
     tool: { transform(callback: (editor: NativeToolEditor) => void): Promise<unknown> };
+    command?: {
+        list?(): Promise<unknown>;
+        transform(callback: (editor: { add(command: { name: string; description: string; execute(input: NativeCommandInvocation): Promise<unknown> }): void }) => void): Promise<unknown>;
+    };
 }
 export interface NativePluginAdapters {
     spawn?: Spawn;
@@ -44,6 +57,18 @@ const TOOL_INVENTORY = Object.freeze([
 ] as const);
 
 export const OC2_NATIVE_TOOL_NAMES = Object.freeze(TOOL_INVENTORY.map(([name]) => name));
+
+function commandArguments(text: string): string {
+    const args = text.trim().replace(/^\/?naru(?:\s+|$)/, '');
+    const tokens = args.split(/\s+/);
+    const targets = tokens.slice(1).filter(token => !token.startsWith('--'));
+    if (/[\r\n\0]/.test(text) || tokens[0] !== 'ship-review' || targets.length === 0 ||
+        targets.some(token => !/^(?:[\w.-]+\/[\w.-]+#\d+|https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+|#?\d+)$/.test(token)) ||
+        tokens.slice(1).some(token => token.startsWith('--') && !['--dry-run', '--comment-only', '--standard', '--concise', '--detailed'].includes(token))) {
+        throw new Error('Native /naru supports ship-review <pr> [<pr> ...] [--dry-run] [--comment-only] [--standard] [--concise|--detailed]');
+    }
+    return args;
+}
 
 function absoluteDirectory(value: unknown, field: string): string {
     if (typeof value !== 'string' || !isAbsolute(value) || value.includes('\0')) {
@@ -125,6 +150,27 @@ export function createOc2NativePlugin(adapters: NativePluginAdapters = {}) {
                     });
                 }
             });
+            if (!context.command?.transform || !context.session?.prompt) {
+                throw new Error('OC2 native /naru requires command.transform and session.prompt APIs');
+            }
+            const existing = await context.command.list?.();
+            const commands = Array.isArray(existing) ? existing : record(existing)?.data;
+            if (Array.isArray(commands) && commands.some(entry => record(entry)?.name === 'naru')) return;
+            const template = await readFile(new URL(import.meta.url.endsWith('.mjs') ? './command.md' : '../../commands/naru.md', import.meta.url), 'utf8');
+            await context.command.transform(editor => editor.add({
+                name: 'naru',
+                description: 'Naru ship-review command',
+                async execute({ sessionID, prompt, delivery }) {
+                    const session = record(await context.session!.get({ sessionID }));
+                    const info = record(session?.data) ?? session;
+                    if (!info || info.parentID || info.agent !== 'naru') {
+                        throw new Error('Native /naru requires an existing primary naru session; worker sessions cannot invoke it');
+                    }
+                    const args = commandArguments(prompt.text);
+                    const body = template.replace('$ARGUMENTS', args);
+                    return context.session!.prompt!({ sessionID, text: body, delivery });
+                },
+            }));
         },
     };
 }

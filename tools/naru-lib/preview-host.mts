@@ -7,7 +7,7 @@ import { projectNativeReaders } from './native-reader-projection.mjs';
 import type { GlobalInstructionsSnapshot } from './global-instructions.mjs';
 import type { PreviewModelSource } from './preview-model-catalogue.mjs';
 
-export const PREVIEW_VERSION = '0.0.0-beta-19425';
+export const PREVIEW_VERSION = '2.0.15';
 export interface PreviewHost {
     root: string;
     executable: string;

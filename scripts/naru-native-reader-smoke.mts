@@ -15,7 +15,7 @@ import { validateSmokeNative } from './naru-smoke-native.mjs';
 
 if (process.platform !== 'darwin') throw new Error('Native reader acceptance requires the certified macOS network sandbox');
 const nativeArgument = process.argv[2];
-if (!nativeArgument) throw new Error('Usage: node scripts/naru-native-reader-smoke.mjs /absolute/path/to/opencode2-beta-19425');
+if (!nativeArgument) throw new Error('Usage: node scripts/naru-native-reader-smoke.mjs /absolute/path/to/opencode-2.0.15');
 const native = await validateSmokeNative(nativeArgument);
 const cli = resolve(dirname(fileURLToPath(import.meta.url)), '../tools/naru-preview.mjs');
 const root = await realpath(await mkdtemp('/tmp/naru-native-reader-smoke-'));
@@ -119,11 +119,11 @@ const endpoint = createServer(async (request, response) => {
         assert.match(output, /secret workspace path/i); assert.doesNotMatch(output, /SYNTHETIC_DENIED/);
         sendResponse(response, input.model, toolCall(sequence, 'control_task_start', { role: 'writer', model: 'fixture/orchestrator#medium', prompt: 'forbidden', requestId: 'forbidden' }), sequence);
     } else if (alphaPhase === 3) {
-        assert.match(output, /Unknown tool/i); sendResponse(response, input.model, toolCall(sequence, 'workspace_write', { path: 'file.txt', content: 'forbidden' }), sequence);
+        assert.match(output, /Unknown tool|No tool named/i); sendResponse(response, input.model, toolCall(sequence, 'workspace_write', { path: 'file.txt', content: 'forbidden' }), sequence);
     } else if (alphaPhase === 4) {
-        assert.match(output, /Unknown tool/i); sendResponse(response, input.model, toolCall(sequence, 'subagent', { agent: alphaReader, description: 'forbidden', prompt: 'forbidden' }), sequence);
+        assert.match(output, /Unknown tool|No tool named/i); sendResponse(response, input.model, toolCall(sequence, 'subagent', { agent: alphaReader, description: 'forbidden', prompt: 'forbidden' }), sequence);
     } else {
-        assert.match(output, /Unknown tool/i); sendResponse(response, input.model, message(sequence, 'ALPHA_COMPLETE'), sequence);
+        assert.match(output, /Unknown tool|No tool named/i); sendResponse(response, input.model, message(sequence, 'ALPHA_COMPLETE'), sequence);
     }
     alphaPhase++;
 });
@@ -238,7 +238,7 @@ try {
     assert.match(picker!, /Quartz ledger/); assert.match(picker!, /Cobalt archive/); assert.doesNotMatch(picker!, /Unrelated orbit/);
     assert.match(childView!, /Cobalt archive|PENDING_BACKGROUND|interrupted/); assert.notEqual(childView, before);
     assert.ok(withUnrelated.some(session => !session.parentID && session.title === 'Unrelated orbit'));
-    console.log('PASS beta-19425 native-reader acceptance: sandbox verified before inference; inherited global pool with exact parent/leaf models and variant bodies; typed parent status and reader repo calls; secret and forbidden-tool denials without effects; same-session continuation; background interrupt; family-only Down-key picker and child navigation; missing model failed without provider fallback');
+    console.log('PASS 2.0.15 native-reader acceptance: sandbox verified before inference; inherited global pool with exact parent/leaf models and variant bodies; typed parent status and reader repo calls; secret and forbidden-tool denials without effects; same-session continuation; background interrupt; family-only Down-key picker and child navigation; missing model failed without provider fallback');
 } finally {
     betaResponse?.destroy(); privateServer?.stop(); daemon.kill('SIGTERM'); endpoint.closeAllConnections(); await new Promise<void>(resolvePromise => endpoint.close(() => resolvePromise())); await rm(root, { recursive: true, force: true });
 }

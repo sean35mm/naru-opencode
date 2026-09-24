@@ -280,6 +280,17 @@ export async function waitForPreviewReadiness(url: string, cwd: string, headers:
             if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) throw new Error('OpenCode catalogue activation timed out');
             throw new Error('OpenCode catalogue activation failed');
         }
+        if (response.status === 404) {
+            await response.body?.cancel();
+            while (Date.now() < deadline) {
+                const plugins = await fetch(readinessUrl(url, '/api/plugin', cwd), { headers, signal: requestSignal(deadline, requestTimeoutMs) });
+                const value = await responseJson(plugins, 'OpenCode catalogue activation failed') as { data?: unknown };
+                if (!Array.isArray(value?.data)) throw new Error('OpenCode catalogue activation failed: malformed plugin response');
+                if (value.data.length) return;
+                await new Promise(resolve => setTimeout(resolve, Math.min(pollIntervalMs, Math.max(0, deadline - Date.now()))));
+            }
+            throw new Error('OpenCode catalogue activation timed out');
+        }
         await response.body?.cancel();
         if (response.status !== 204) throw new Error(`OpenCode catalogue activation failed (${response.status})`);
     };

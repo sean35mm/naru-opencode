@@ -31,21 +31,20 @@ test('native profile imports only validated global models and preserves config, 
     const { root, home, instructions } = await fixture(), paths = oc2NativePaths(root);
     try {
         await mkdir(paths.configDirectory, { recursive: true, mode: 0o700 });
-        const original = { instructions: ['USER INSTRUCTIONS'], plugins: ['/user/plugin'], skills: ['/user/skills'], agents: { custom: { mode: 'primary', system: 'custom' }, naru: LEGACY_STANDALONE_NARU_AGENT }, providers: { fixture: { settings: { baseURL: 'https://example.invalid' } } }, mcp: { servers: { future: { type: 'remote', url: 'https://example.invalid/mcp' } } } };
+        const original = { instructions: ['USER INSTRUCTIONS'], plugins: ['/user/plugin'], skills: ['/user/skills'], permissions: [{ action: 'write', resource: '*', effect: 'ask' }], agents: { custom: { mode: 'primary', system: 'custom' }, naru: LEGACY_STANDALONE_NARU_AGENT }, providers: { fixture: { settings: { baseURL: 'https://example.invalid' } } }, mcp: { servers: { future: { type: 'remote', url: 'https://example.invalid/mcp' } } } };
         await writeFile(paths.configFile, JSON.stringify(original), { mode: 0o600 });
         const stateBefore = await readFile(join(root, 'state.json')), databaseBefore = await readFile(paths.database);
         const profile = await updateOc2NativeProfile(root, undefined, { home });
         assert.deepEqual(profile, { schemaVersion: 2, models: ['fixture/team/model#high'], preferences: {}, instructions: { sourcePath: instructions, canonicalPath: instructions, sha256: createHash('sha256').update('Explicit native preferences.\n').digest('hex'), byteLength: 29 } });
         assert.deepEqual(await loadOc2NativeModelProfile(root), profile);
         const config = JSON.parse(await readFile(paths.configFile, 'utf8'));
-        assert.deepEqual(config.instructions, original.instructions); assert.deepEqual(config.providers, original.providers); assert.deepEqual(config.mcp, original.mcp);
+        assert.deepEqual(config.instructions, original.instructions); assert.deepEqual(config.providers, original.providers); assert.deepEqual(config.mcp, original.mcp); assert.deepEqual(config.permissions, original.permissions);
         assert.deepEqual(config.plugins, ['/user/plugin', join(root, 'lib', 'tools', 'oc2-native-plugin')]);
         assert.deepEqual(config.skills, ['/user/skills', join(root, 'lib', 'tools', 'oc2-native-plugin', 'skills')]);
         assert.deepEqual(config.agents.custom, original.agents.custom); assert.notDeepEqual(config.agents.naru, LEGACY_STANDALONE_NARU_AGENT);
-        assert.equal(Object.keys(config.agents).filter(name => name.startsWith('naru-reader-')).length, 1);
-        assert.equal(Object.keys(config.agents).filter(name => name.startsWith('naru-runner-')).length, 1);
-        assert.equal(Object.keys(config.agents).filter(name => name.startsWith('naru-writer-')).length, 1);
-        for (const agent of Object.values(config.agents) as Array<{ system?: string }>) if (agent.system?.includes('native Naru') || agent.system?.includes('primary native OC2')) assert.match(agent.system, /Explicit native preferences/);
+        assert.equal(Object.keys(config.agents).filter(name => name.startsWith('naru-worker-')).length, 1);
+        for (const agent of Object.values(config.agents) as Array<{ system?: string }>) if (agent.system?.includes('native Naru') || agent.system?.includes('primary native OpenCode')) assert.match(agent.system, /Explicit native preferences/);
+        assert.equal('permissions' in config.agents.naru, false);
         assert.deepEqual(await readFile(join(root, 'state.json')), stateBefore); assert.deepEqual(await readFile(paths.database), databaseBefore);
         assert.equal(await readFile(join(root, 'worktrees', 'old', 'keep'), 'utf8'), 'history');
 
@@ -55,6 +54,51 @@ test('native profile imports only validated global models and preserves config, 
         const refreshed = JSON.parse(await readFile(paths.configFile, 'utf8'));
         assert.deepEqual(refreshed.mcp.servers.novel, { type: 'local', command: ['/future/tool'] });
         assert.equal(Object.keys(refreshed.agents).some(name => name.includes('team-model-high')), false);
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('native profile migrates exact legacy role sidecars transactionally without changing custom agents or preferences', async () => {
+    const { root, home } = await fixture(), paths = oc2NativePaths(root);
+    const oldWorker = { description: 'Native Naru reader for investigation and source evidence, using exact global model fixture/team/model#high.', mode: 'subagent', hidden: true, model: { providerID: 'fixture', model: 'team/model', variant: 'high' }, system: 'You are a native Naru reader using the exact global model fixture/team/model#high.', permissions: [{ action: '*', resource: '*', effect: 'allow' }] };
+    const oldRunner = { ...oldWorker, description: 'Native Naru runner for substantive project commands and checks, using exact global model fixture/team/model#high.', system: 'You are a native Naru runner using the exact global model fixture/team/model#high.' };
+    const oldWriter = { ...oldWorker, description: 'Native Naru writer for exact-scope workspace edits, using exact global model fixture/team/model#high.', system: 'You are a native Naru writer using the exact global model fixture/team/model#high.' };
+    const oldParent = { description: 'Model-independent native Naru coordinator for parallel planning, worker selection, evaluation, and synthesis.', mode: 'primary', system: 'You are Naru, the primary native OC2 orchestrator.', permissions: [{ action: '*', resource: '*', effect: 'allow' }] };
+    const oldAgents = { naru: oldParent, 'naru-reader-old': oldWorker, 'naru-runner-old': oldRunner, 'naru-writer-old': oldWriter };
+    const preferences = { display: 'compact', effortHint: 'user-choice' };
+    try {
+        await mkdir(paths.configDirectory, { recursive: true, mode: 0o700 });
+        await writeFile(paths.configFile, JSON.stringify({ agents: { ...oldAgents, custom: { mode: 'subagent', system: 'keep' } }, permissions: [{ action: 'bash', resource: '*', effect: 'deny' }], theme: 'user-choice' }), { mode: 0o600 });
+        await writeFile(paths.ownership, JSON.stringify({ schemaVersion: 1, agents: oldAgents }), { mode: 0o600 });
+        await writeFile(paths.profileState, JSON.stringify({ schemaVersion: 2, models: ['fixture/team/model#high'], preferences, instructions: null }), { mode: 0o600 });
+        await updateOc2NativeProfile(root, undefined, { home });
+        const config = JSON.parse(await readFile(paths.configFile, 'utf8'));
+        assert.deepEqual(config.permissions, [{ action: 'bash', resource: '*', effect: 'deny' }]);
+        assert.deepEqual(config.agents.custom, { mode: 'subagent', system: 'keep' });
+        assert.equal(config.theme, 'user-choice');
+        assert.equal(Object.keys(config.agents).filter(name => name.startsWith('naru-worker-')).length, 1);
+        for (const name of Object.keys(oldAgents).filter(name => name !== 'naru')) assert.equal(config.agents[name], undefined);
+        assert.deepEqual((await loadOc2NativeModelProfile(root))?.preferences, preferences);
+        assert.deepEqual(JSON.parse(await readFile(paths.ownership, 'utf8')).agents, { naru: config.agents.naru, ...Object.fromEntries(Object.entries(config.agents).filter(([name]) => name.startsWith('naru-worker-'))) });
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('migration refuses modified owned roles and unrelated identical worker-name collisions', async () => {
+    const { root, home } = await fixture(), paths = oc2NativePaths(root);
+    try {
+        await mkdir(paths.configDirectory, { recursive: true, mode: 0o700 });
+        const owned = { mode: 'subagent', system: 'old managed definition' };
+        await writeFile(paths.ownership, JSON.stringify({ schemaVersion: 1, agents: { 'naru-reader-old': owned } }), { mode: 0o600 });
+        const altered = JSON.stringify({ agents: { 'naru-reader-old': { ...owned, system: 'user edited' } } });
+        await writeFile(paths.configFile, altered, { mode: 0o600 });
+        await assert.rejects(updateOc2NativeProfile(root, undefined, { home }), /changed outside OC2/);
+        assert.equal(await readFile(paths.configFile, 'utf8'), altered);
+        await rm(paths.ownership);
+        const { projectOc2NativeAgents } = await import('../tools/naru-lib/oc2-native-projection.mjs');
+        const projected = projectOc2NativeAgents(['fixture/team/model#high']);
+        const collision = JSON.stringify({ agents: { [projected.workers[0]!.name]: projected.agents[projected.workers[0]!.name] } });
+        await writeFile(paths.configFile, collision, { mode: 0o600 });
+        await assert.rejects(updateOc2NativeProfile(root, undefined, { home }), /collides with an unrelated/);
+        assert.equal(await readFile(paths.configFile, 'utf8'), collision);
     } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -87,6 +131,33 @@ test('native config update is a byte-for-byte no-op and rolls back second-file f
         assert.equal(await readFile(paths.configFile, 'utf8'), concurrent);
         assert.deepEqual((await readdir(dirname(paths.lock))).filter(name => name.includes('.lock') || name.includes('.oc2-') || name.includes('transaction')), []);
     } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('interactive expected pool rejects stale saves, including a missing profile, without modifying current bytes', async () => {
+    const { root, home } = await fixture(), paths = oc2NativePaths(root);
+    try {
+        await updateOc2NativeProfile(root, ['fixture/first'], { home });
+        const reviewed = (await loadOc2NativeModelProfile(root))!.models;
+        await updateOc2NativeProfile(root, ['fixture/newer'], { home });
+        const before = await Promise.all([paths.configFile, paths.ownership, paths.profileState].map(path => readFile(path)));
+        await assert.rejects(updateOc2NativeProfile(root, ['fixture/stale'], { home, expectedModels: reviewed }), /changed while configuring; rerun model selection/);
+        for (const [index, path] of [paths.configFile, paths.ownership, paths.profileState].entries()) assert.deepEqual(await readFile(path), before[index]);
+        await updateOc2NativeProfile(root, ['fixture/explicit'], { home });
+        assert.deepEqual((await loadOc2NativeModelProfile(root))?.models, ['fixture/explicit']);
+        const afterExplicit = await Promise.all([paths.configFile, paths.ownership, paths.profileState].map(path => readFile(path)));
+        await assert.rejects(updateOc2NativeProfile(root, ['fixture/late'], { home, expectedModels: null }), /changed while configuring; rerun model selection/);
+        for (const [index, path] of [paths.configFile, paths.ownership, paths.profileState].entries()) assert.deepEqual(await readFile(path), afterExplicit[index]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+
+    const empty = await fixture();
+    try {
+        const saved = await updateOc2NativeProfile(empty.root, ['fixture/first'], { home: empty.home, expectedModels: null });
+        assert.deepEqual(saved.models, ['fixture/first']);
+        const profilePath = oc2NativePaths(empty.root).profileState;
+        await writeFile(profilePath, JSON.stringify({ ...saved, preferences: { display: 'newer preference' } }), { mode: 0o600 });
+        const updated = await updateOc2NativeProfile(empty.root, ['fixture/second'], { home: empty.home, expectedModels: ['fixture/first'] });
+        assert.deepEqual(updated.preferences, { display: 'newer preference' });
+    } finally { await rm(empty.root, { recursive: true, force: true }); }
 });
 
 test('third-file completion is finalized and rollback never overwrites a newer external edit', async () => {

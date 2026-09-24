@@ -17,6 +17,7 @@ interface Snapshot { exists: boolean; bytes?: Buffer; dev?: bigint; ino?: bigint
 interface TransactionEntry { key: 'config' | 'ownership' | 'profile'; oldExists: boolean }
 interface TransactionManifest { schemaVersion: 1; entries: TransactionEntry[] }
 export interface NativeConfigAdapters {
+    expectedModels?: readonly string[] | null;
     beforeConfigCommit?: () => Promise<void>;
     afterLockStaged?: () => Promise<void>;
     afterLockAcquired?: () => Promise<void>;
@@ -242,7 +243,7 @@ async function mergeProjection(configSnapshot: Snapshot, managedSnapshot: Snapsh
     for (const [name, agent] of Object.entries(projection.agents)) {
         const existing = configuredAgents[name];
         const exactLegacy = name === 'naru' && isDeepStrictEqual(existing, LEGACY_STANDALONE_NARU_AGENT);
-        if (existing !== undefined && !exactLegacy && !isDeepStrictEqual(existing, agent)) throw new Error(`Native agent name ${name} collides with an unrelated profile entry`);
+        if (existing !== undefined && !exactLegacy) throw new Error(`Native agent name ${name} collides with an unrelated profile entry`);
         configuredAgents[name] = agent;
     }
     config.agents = configuredAgents;
@@ -348,6 +349,10 @@ export async function updateOc2NativeProfile(root: string, models?: readonly str
         await cleanupTransactionStaging(paths);
         await recoverTransaction(paths);
         const profileSnapshot = await snapshot(paths.profileState), configSnapshot = await snapshot(paths.configFile), managedSnapshot = await snapshot(paths.ownership);
+        if (adapters.expectedModels !== undefined) {
+            const observed = profileSnapshot.exists ? readProfile(parseJson(profileSnapshot.bytes!, 'OC2 native model profile')).models : null;
+            if (!isDeepStrictEqual(observed, adapters.expectedModels)) throw new Error('Global native worker models changed while configuring; rerun model selection before saving');
+        }
         const home = adapters.home ?? process.env.HOME;
         if (!home) throw new Error('OC2 native setup requires HOME to validate explicit global instructions');
         let current: Oc2NativeModelProfile, instructions: GlobalInstructionsSnapshot | null;

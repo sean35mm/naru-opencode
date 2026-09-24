@@ -2,17 +2,18 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:net';
 import { chmod, cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadOc2NativeModelProfile } from '../tools/naru-lib/oc2-native-config.mjs';
-import { oc2NativeEnvironment, oc2NativePaths } from '../tools/naru-lib/oc2-profile.mjs';
+import { ensureOc2NativeDirectories, oc2NativeEnvironment, oc2NativePaths } from '../tools/naru-lib/oc2-profile.mjs';
 import { cleanProcessEnvironment, nodeSpawner } from '../tools/naru-lib/preview-process.mjs';
 import { validateSmokeNative } from './naru-smoke-native.mjs';
 
 if (process.platform !== 'darwin') throw new Error('Native launcher acceptance requires the certified macOS network sandbox');
 const nativeArgument = process.argv[2];
-if (!nativeArgument) throw new Error('Usage: node scripts/naru-native-launch-smoke.mjs /absolute/path/to/opencode2-beta-19425');
+if (!nativeArgument) throw new Error('Usage: node scripts/naru-native-launch-smoke.mjs /absolute/path/to/opencode-2.0.15');
 const native = await validateSmokeNative(nativeArgument);
 const temporary = await realpath(await mkdtemp('/tmp/naru-native-launch-smoke-'));
 const root = join(temporary, 'installed'), one = join(temporary, 'project-one'), two = join(temporary, 'project-two');
@@ -60,6 +61,13 @@ try {
         OPENCODE_DISABLE_MODELS_FETCH: 'true', OPENCODE_MODELS_PATH: modelSource,
     };
     const routed = oc2NativeEnvironment(paths, environment), run = nodeSpawner(routed);
+    await ensureOc2NativeDirectories(paths);
+    const listener = createServer();
+    await new Promise<void>(resolvePromise => listener.listen(0, '127.0.0.1', resolvePromise));
+    const address = listener.address(); assert.ok(address && typeof address === 'object');
+    await new Promise<void>(resolvePromise => listener.close(() => resolvePromise()));
+    const configured = await run([wrapper, 'service', 'set', 'port', String(address.port)], { cwd: one, timeout: 10_000 });
+    assert.equal(configured.ok, true, configured.stderr || configured.stdout);
 
     const bare = launch([], one, environment);
     await waitFor(async () => {
@@ -67,7 +75,7 @@ try {
             const profile = await loadOc2NativeModelProfile(root);
             if (profile?.models.join(',') !== 'fixture/worker#high') return null;
             const status = await run([wrapper, 'service', 'status'], { cwd: one, timeout: 3_000, maxBytes: 64 * 1024 });
-            return status.ok ? true : null;
+            return status.ok && status.stdout.trim() === `http://127.0.0.1:${address.port}` ? true : null;
         } catch { return null; }
     }, 'bare production oc2 did not initialize the native profile and shared service');
 

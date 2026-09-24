@@ -27,23 +27,23 @@ class RolledBackUpdateError extends Error { constructor(readonly original: unkno
 class IndeterminateUpdateError extends Error { constructor(readonly original: unknown) { super('oc2 update was interrupted during rollback; start.lock and recovery files were retained'); } }
 
 export const OC2_UPDATE_RELEASE = Object.freeze({
-    predecessorVersion: '0.0.0-beta-19271',
-    version: '0.0.0-beta-19425',
+    predecessorVersion: '0.0.0-beta-19425',
+    version: '2.0.15',
     wrapper: {
         package: '@opencode/cli',
-        url: 'https://registry.npmjs.org/@opencode/cli/-/cli-0.0.0-beta-19425.tgz',
-        sri: 'sha512-2cJtOckNpLHs0fpLS1n/JZKoIJ5LWmVvQOhoGJzi7KeVCk0jZ8jiuxIK4WO+9dlYH4tVotwQUNIVKjr/ydD/Ww==',
+        url: 'https://registry.npmjs.org/@opencode/cli/-/cli-2.0.15.tgz',
+        sri: 'sha512-Ynxz9HRJiHQBotBrQeEt3T/3TyEpkwdZkMTE7HPxT2nB1IU3WAqFXBYiIpWTYLKifXga4L5UG0sXEDISe/rJxg==',
     },
     native: {
         'darwin-arm64': {
             package: '@opencode/cli-darwin-arm64',
-            url: 'https://registry.npmjs.org/@opencode/cli-darwin-arm64/-/cli-darwin-arm64-0.0.0-beta-19425.tgz',
-            sri: 'sha512-HevgkocfjHbMVGODmgtTS+ftw50bTYVHlEs/X4mWZEJG3smMaB1LpCEbYF58S+BO3YeR3INo/obnKXRc7+2RLw==',
+            url: 'https://registry.npmjs.org/@opencode/cli-darwin-arm64/-/cli-darwin-arm64-2.0.15.tgz',
+            sri: 'sha512-qIFmkv6f01Deih/DH+OvblNQEZrAUal54PjUHLu61zS5OYCpXnRjkYWHV3RiEZhP5DtfQZsJeitmMW5v6f2NTw==',
         },
         'linux-x64': {
             package: '@opencode/cli-linux-x64',
-            url: 'https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-0.0.0-beta-19425.tgz',
-            sri: 'sha512-62w+MgyOiInAxuGo9VCjWOrenOkCvmyaKFEUBNRaUqq+BDbizBGsTjn/pqKj9wrst+GtqREWjH8bVn302h3g7w==',
+            url: 'https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-2.0.15.tgz',
+            sri: 'sha512-PGVHuIb6uDgCx19zbD3wGwDYBZLeZnZY89c28SCcB87ckAgfOp+L2o7rra1TMbyQVLhZAqccbymWDeqrynfOCA==',
         },
     },
 } as const);
@@ -139,7 +139,7 @@ async function validateInstalledPin(host: PreviewHostMetadata): Promise<void> {
     const probeRoot = await mkdtemp(join(tmpdir(), 'naru-oc2-refresh-probe-'));
     try {
         const result = await run(host.executable, ['--version'], { cwd: probeRoot, env: { HOME: probeRoot, XDG_CONFIG_HOME: probeRoot, XDG_DATA_HOME: probeRoot, XDG_CACHE_HOME: probeRoot, XDG_STATE_HOME: probeRoot, OPENCODE_DB: join(probeRoot, 'opencode.db'), OPENCODE_DISABLE_AUTOUPDATE: 'true', OPENCODE_DISABLE_PROJECT_CONFIG: 'true', PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' } });
-        if (result.code !== 0 || result.stdout.trim() !== `opencode2 v${OC2_UPDATE_RELEASE.version}`) throw new Error(`Code refresh requires exact installed ${OC2_UPDATE_RELEASE.version}`);
+        if (result.code !== 0 || result.stdout.trim() !== `opencode v${OC2_UPDATE_RELEASE.version}`) throw new Error(`Code refresh requires exact installed ${OC2_UPDATE_RELEASE.version}`);
     } finally { await rm(probeRoot, { recursive: true, force: true }); }
 }
 async function loadUpdateHost(root: string): Promise<PreviewHostMetadata> {
@@ -220,24 +220,26 @@ async function prepareNativeUpdate(nativeRoot: string): Promise<{ executable: st
         ]);
         const wrapperArchive = join(temporary, 'wrapper.tgz'), nativeArchive = join(temporary, 'native.tgz');
         await writeFile(wrapperArchive, wrapperBytes, { mode: 0o600 }); await writeFile(nativeArchive, nativeBytes, { mode: 0o600 });
-        if ((await archiveEntries(wrapperArchive)).join('\n') !== ['package/package.json', 'package/bin/opencode2.exe', 'package/postinstall.mjs'].join('\n')) throw new Error('Unexpected OpenCode wrapper archive paths');
-        if ((await archiveEntries(nativeArchive)).join('\n') !== ['package/package.json', 'package/bin/opencode2'].join('\n')) throw new Error('Unexpected OpenCode native archive paths');
+        if ((await archiveEntries(wrapperArchive)).join('\n') !== ['package/package.json', 'package/bin/opencode.exe', 'package/bin/opencode.exe', 'package/postinstall.mjs'].join('\n')) throw new Error('Unexpected OpenCode wrapper archive paths');
+        if ((await archiveEntries(nativeArchive)).join('\n') !== ['package/package.json', 'package/bin/opencode'].join('\n')) throw new Error('Unexpected OpenCode native archive paths');
         const wrapperExtract = join(temporary, 'wrapper'), nativeExtract = join(temporary, 'native');
         await mkdir(wrapperExtract); await mkdir(nativeExtract);
-        if ((await run('/usr/bin/tar', ['-xzf', wrapperArchive, '--directory', wrapperExtract, '--no-same-owner', '--no-same-permissions'])).code !== 0
+        if ((await run('/usr/bin/tar', ['-xzf', wrapperArchive, '--directory', wrapperExtract, '--no-same-owner', '--no-same-permissions', 'package/package.json'])).code !== 0
             || (await run('/usr/bin/tar', ['-xzf', nativeArchive, '--directory', nativeExtract, '--no-same-owner', '--no-same-permissions'])).code !== 0) throw new Error('Could not extract OpenCode artifacts');
         const wrapperPackage = await verifyPackage(join(wrapperExtract, 'package', 'package.json'), OC2_UPDATE_RELEASE.wrapper.package);
+        const bins = wrapperPackage.bin;
+        if (!bins || typeof bins !== 'object' || Array.isArray(bins) || (bins as Record<string, unknown>).opencode !== './bin/opencode.exe' || (bins as Record<string, unknown>).opencode2 !== './bin/opencode.exe') throw new Error('OpenCode wrapper executable contract changed');
         const optional = wrapperPackage.optionalDependencies;
         if (optional === null || typeof optional !== 'object' || (optional as Record<string, unknown>)[native.package] !== OC2_UPDATE_RELEASE.version) throw new Error('OpenCode wrapper does not pin the selected native package');
         await verifyPackage(join(nativeExtract, 'package', 'package.json'), native.package);
-        const extracted = join(nativeExtract, 'package', 'bin', 'opencode2');
+        const extracted = join(nativeExtract, 'package', 'bin', 'opencode');
         await regularOwnedFile(extracted, 'native OpenCode executable');
         const bytes = await readFile(extracted);
         if (!['cffaedfe', 'feedfacf', 'cafebabe', '7f454c46'].includes(bytes.subarray(0, 4).toString('hex'))) throw new Error('OpenCode artifact is not a native executable');
         await chmod(extracted, 0o755);
         const probeRoot = join(temporary, 'probe'); await mkdir(probeRoot, { mode: 0o700 });
         const result = await run(extracted, ['--version'], { cwd: probeRoot, env: { HOME: probeRoot, XDG_CONFIG_HOME: probeRoot, XDG_DATA_HOME: probeRoot, XDG_CACHE_HOME: probeRoot, XDG_STATE_HOME: probeRoot, OPENCODE_DB: join(probeRoot, 'opencode.db'), OPENCODE_DISABLE_AUTOUPDATE: 'true', PATH: '/usr/bin:/bin' } });
-        if (result.code !== 0 || result.stdout.trim() !== `opencode2 v${OC2_UPDATE_RELEASE.version}`) throw new Error('Pinned OpenCode executable failed its isolated version check');
+        if (result.code !== 0 || result.stdout.trim() !== `opencode v${OC2_UPDATE_RELEASE.version}`) throw new Error('Pinned OpenCode executable failed its isolated version check');
         const versions = join(nativeRoot, 'versions'); await mkdir(versions, { recursive: true, mode: 0o700 });
         const destination = join(versions, OC2_UPDATE_RELEASE.version); await absent(destination, 'versioned OpenCode destination');
         const staging = join(versions, `.update-${process.pid}-${randomBytes(6).toString('hex')}`); await mkdir(staging, { mode: 0o700 });
@@ -331,7 +333,7 @@ export async function applyPreparedOc2Update(options: Omit<UpdateOptions, 'nativ
 }
 
 export async function updateOc2(options: UpdateOptions, adapters: Oc2UpdateAdapters = {}): Promise<string> {
-    for (const [label, value] of Object.entries(options)) if (label !== 'node' && !isAbsolute(value!)) throw new Error(`${label} must be an absolute path`);
+    for (const label of ['previewCli', 'v2Wrapper', 'root', 'nativeRoot'] as const) if (!isAbsolute(options[label])) throw new Error(`${label} must be an absolute path`);
     if (process.versions.node.split('.')[0] !== '24') throw new Error('Run the oc2 updater with Node 24');
     await validateOc2UpdaterBuild(options.previewCli);
     const guard = await acquirePreviewUpdateGuard(options.root);

@@ -196,6 +196,23 @@ test('catalogue readiness requires an exact 204 response', async () => {
     finally { server.closeAllConnections(); await new Promise<void>(resolvePromise => server.close(() => resolvePromise())); }
 });
 
+test('catalogue readiness waits for plugin activation when v2 omits the old endpoint', async () => {
+    const requests: string[] = [];
+    let polls = 0;
+    const server = (await import('node:http')).createServer((request, response) => {
+        requests.push(`${request.method} ${request.url}`);
+        response.setHeader('content-type', 'application/json');
+        if (request.url?.startsWith('/api/plugin?')) response.end(JSON.stringify({ data: ++polls > 1 ? [{ id: 'opencode.models.dev' }] : [] }));
+        else response.writeHead(404).end('{}');
+    });
+    await new Promise<void>(resolvePromise => server.listen(0, '127.0.0.1', resolvePromise));
+    const address = server.address(); assert.ok(address && typeof address === 'object');
+    try {
+        await waitForPreviewReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', { pollIntervalMs: 1 });
+        assert.deepEqual(requests, ['POST /api/plugin/await-activation?location%5Bdirectory%5D=%2Ffixture', 'GET /api/plugin?location%5Bdirectory%5D=%2Ffixture', 'GET /api/plugin?location%5Bdirectory%5D=%2Ffixture']);
+    } finally { await new Promise<void>(resolvePromise => server.close(() => resolvePromise())); }
+});
+
 test('catalogue readiness bounds stalled requests by per-request and overall timeouts', async () => {
     for (const timing of [{ deadlineMs: 100, requestTimeoutMs: 20 }, { deadlineMs: 20, requestTimeoutMs: 100 }]) {
         const server = (await import('node:http')).createServer((_request, response) => { setTimeout(() => response.writeHead(204).end(), 60); });

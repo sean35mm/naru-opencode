@@ -8,8 +8,8 @@ import { cleanProcessEnvironment, nodeSpawner, startPreviewServer } from '../too
 import { validateSmokeNative } from './naru-smoke-native.mjs';
 
 if (process.platform !== 'darwin') throw new Error('Native capability acceptance requires the certified macOS network sandbox');
-const defaultNative = '/Users/seangil/.local/share/naru-opencode-v2/versions/0.0.0-beta-19425/opencode2';
-const native = await validateSmokeNative(process.argv[2] ?? defaultNative);
+if (!process.argv[2]) throw new Error('Usage: node scripts/naru-native-capabilities-smoke.mjs /absolute/path/to/opencode-2.0.15');
+const native = await validateSmokeNative(process.argv[2]);
 const builtRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const pluginRoot = join(builtRoot, 'tools', 'oc2-native-plugin');
 const skillRoot = join(pluginRoot, 'skills');
@@ -24,7 +24,7 @@ for (const directory of [workspace, home, join(configRoot, 'opencode'), dataRoot
     await mkdir(directory, { recursive: true, mode: 0o700 });
 }
 
-let sequence = 0, parentPhase = 0, workerPhase = 0, reviewBlocked = false;
+let sequence = 0, parentPhase = 0, workerPhase = 0, reviewBlocked = false, commandReceived = false, userCommandReceived = false;
 const advertised = new Map<string, string[]>();
 function outputs(input: unknown): string {
     const serialized = JSON.stringify(input);
@@ -65,7 +65,7 @@ function custom(tools: string[], suffix: string): string {
 
 const provider = createServer(async (request, response) => {
     if (request.method === 'GET' && request.url?.endsWith('/models')) {
-        response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ object: 'list', data: [{ id: 'native-capability-upstream', object: 'model' }] }));
+        response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ object: 'list', data: ['native-capability-parent', 'native-capability-worker'].map(id => ({ id, object: 'model' })) }));
         return;
     }
     let body = '';
@@ -76,6 +76,33 @@ const provider = createServer(async (request, response) => {
     const tools = (input.tools ?? []).map(tool => tool.name).sort();
     advertised.set(role, tools);
     const result = outputs(input.input);
+    if (JSON.stringify(input.input).includes('USER_COMMAND_SENTINEL')) {
+        assert.equal(role, 'naru');
+        assert.equal(input.model, 'native-capability-parent');
+        assert.match(JSON.stringify(input.input), /custom-only/);
+        assert.doesNotMatch(JSON.stringify(input.input), /Handle this Naru convenience invocation/);
+        userCommandReceived = true;
+        send(response, input.model, message('USER_COMMAND_COMPLETE'));
+        return;
+    }
+    if (JSON.stringify(input.input).includes('CUSTOM_COMMAND_SETUP')) {
+        assert.equal(role, 'naru');
+        send(response, input.model, message('CUSTOM_SESSION_READY'));
+        return;
+    }
+    if (JSON.stringify(input.input).includes('WORKER_COMMAND_SETUP')) {
+        assert.equal(role, 'worker');
+        send(response, input.model, message('WORKER_SESSION_READY'));
+        return;
+    }
+    if (JSON.stringify(input.input).includes('Handle this Naru convenience invocation')) {
+        assert.equal(role, 'naru');
+        assert.equal(input.model, 'native-capability-parent', 'command changed the user-selected parent model');
+        assert.match(JSON.stringify(input.input), /ship-review owner\/repo#7 --dry-run/);
+        commandReceived = true;
+        send(response, input.model, message('NATIVE_COMMAND_DRY_RUN_COMPLETE'));
+        return;
+    }
     if (role === 'worker') {
         if (workerPhase === 0) send(response, input.model, call('skill', { id: 'naru-review' }));
         else if (workerPhase === 1) {
@@ -111,21 +138,22 @@ await new Promise<void>(resolvePromise => provider.listen(0, '127.0.0.1', resolv
 const address = provider.address();
 assert.ok(address && typeof address === 'object');
 
-const model = { modelID: 'native-capability-upstream', capabilities: { tools: true, input: ['text'], output: ['text'] }, limit: { context: 200000, output: 8000 }, variants: [{ id: 'high', settings: { reasoningEffort: 'high' } }] };
+const model = (modelID: string, variant: string) => ({ modelID, capabilities: { tools: true, input: ['text'], output: ['text'] }, limit: { context: 200000, output: 8000 }, variants: [{ id: variant, settings: { reasoningEffort: variant } }] });
 const config = {
     default_agent: 'naru', update: 'disable', share: 'disabled', snapshots: false,
     permissions: [{ action: '*', resource: '*', effect: 'allow' }],
     plugins: [pluginRoot],
     skills: [skillRoot],
     agents: {
-        naru: { description: 'Native capability parent', mode: 'primary', model: { providerID: 'fixture', model: 'worker', variant: 'high' }, system: 'ROLE:naru', permissions: [{ action: '*', resource: '*', effect: 'allow' }] },
+        naru: { description: 'Native capability parent', mode: 'primary', system: 'ROLE:naru', permissions: [{ action: '*', resource: '*', effect: 'allow' }] },
         writer: { description: 'Native capability worker', mode: 'subagent', model: { providerID: 'fixture', model: 'worker', variant: 'high' }, system: 'ROLE:worker', permissions: [{ action: '*', resource: '*', effect: 'allow' }] },
     },
-    providers: { fixture: { canonical: 'openai', settings: { baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'local-fixture-only' }, models: { worker: model } } },
+    providers: { fixture: { canonical: 'openai', settings: { baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'local-fixture-only' }, models: { parent: model('native-capability-parent', 'medium'), worker: model('native-capability-worker', 'high') } } },
 };
 await writeFile(join(configRoot, 'opencode', 'opencode.json'), JSON.stringify(config, null, 2), { mode: 0o600 });
 const modelSource = join(root, 'models.json');
-await writeFile(modelSource, JSON.stringify({ fixture: { id: 'fixture', name: 'Fixture', env: [], npm: '@ai-sdk/openai-compatible', models: { worker: { id: 'worker', name: 'Fixture worker', release_date: '2026-09-13', attachment: false, reasoning: true, tool_call: true, modalities: { input: ['text'], output: ['text'] }, limit: { context: 200000, output: 8000 }, provider: { npm: '@ai-sdk/openai' } } } } }), { mode: 0o600 });
+const sourceModel = (id: string) => ({ id, name: `Fixture ${id}`, release_date: '2026-09-13', attachment: false, reasoning: true, tool_call: true, modalities: { input: ['text'], output: ['text'] }, limit: { context: 200000, output: 8000 }, provider: { npm: '@ai-sdk/openai' } });
+await writeFile(modelSource, JSON.stringify({ fixture: { id: 'fixture', name: 'Fixture', env: [], npm: '@ai-sdk/openai-compatible', models: { parent: sourceModel('parent'), worker: sourceModel('worker') } } }), { mode: 0o600 });
 
 let server: Awaited<ReturnType<typeof startPreviewServer>> | undefined;
 try {
@@ -148,13 +176,71 @@ try {
         OPENCODE_DISABLE_AUTOUPDATE: 'true', OPENCODE_DISABLE_PROJECT_CONFIG: 'true', OPENCODE_DISABLE_MODELS_FETCH: 'true', OPENCODE_MODELS_PATH: modelSource,
     };
     server = await startPreviewServer(wrapper, workspace, environment, 'catalogue');
-    const execution = await nodeSpawner(server.env)([wrapper, 'run', '--server', server.url, '--agent', 'naru', '--format', 'json', 'Run native capability acceptance.'], { cwd: workspace, timeout: 45_000, maxBytes: 1024 * 1024 });
+    const location = `?location%5Bdirectory%5D=${encodeURIComponent(workspace)}`;
+    const commandResponse = await fetch(server.url + '/api/command' + location, { headers: server.headers });
+    assert.equal(commandResponse.status, 200, `Native command listing failed: ${commandResponse.status}`);
+    const commandList = await commandResponse.json() as { data?: Array<{ name: string }> };
+    const execution = await nodeSpawner(server.env)([wrapper, 'run', '--server', server.url, '--agent', 'naru', '--model', 'fixture/parent#medium', '--format', 'json', 'Run native capability acceptance.'], { cwd: workspace, timeout: 45_000, maxBytes: 1024 * 1024 });
     assert.equal(execution.ok, true, execution.stdout + execution.stderr);
     assert.match(execution.stdout, /NATIVE_CAPABILITIES_ACCEPTANCE_COMPLETE/);
+    assert.ok(commandList.data?.some(entry => entry.name === 'naru'), `native /naru command not registered: ${JSON.stringify(commandList)}`);
+    const sessionID = execution.stdout.match(/"sessionID":"([^"]+)"/)?.[1];
+    assert.ok(sessionID, 'native run did not return a session ID');
+    const commandInvocation = await fetch(server.url + `/api/session/${encodeURIComponent(sessionID)}/command` + location, {
+        method: 'POST', headers: { ...server.headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'naru', text: 'ship-review owner/repo#7 --dry-run', agent: 'naru' }),
+    });
+    const commandResult = await commandInvocation.text();
+    assert.equal(commandInvocation.status, 204, `Native command invocation failed: ${commandInvocation.status} ${commandResult}`);
+    for (let attempt = 0; attempt < 100 && !commandReceived; attempt++) await new Promise(resolvePromise => setTimeout(resolvePromise, 50));
+    assert.equal(commandReceived, true, 'native command did not reach the loopback provider');
+    const workerExecution = await nodeSpawner(server.env)([wrapper, 'run', '--server', server.url, '--agent', 'writer', '--format', 'json', 'WORKER_COMMAND_SETUP'], { cwd: workspace, timeout: 30_000 });
+    assert.equal(workerExecution.ok, true, workerExecution.stdout + workerExecution.stderr);
+    const workerSessionID = workerExecution.stdout.match(/"sessionID":"([^"]+)"/)?.[1];
+    assert.ok(workerSessionID);
+    const workerCommand = await fetch(server.url + `/api/session/${encodeURIComponent(workerSessionID)}/command` + location, {
+        method: 'POST', headers: { ...server.headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'naru', text: 'ship-review owner/repo#8 --dry-run', agent: 'naru' }),
+    });
+    assert.equal(workerCommand.status, 500);
+    assert.match(await workerCommand.text(), /worker sessions cannot invoke it/);
+    assert.equal(commandReceived, true, 'worker command promoted to parent provider prompt');
     assert.equal(reviewBlocked, true);
     assert.ok(advertised.get('naru')?.includes('skill'));
     assert.ok(advertised.get('worker')?.includes('skill'));
-    console.log('PASS beta-19425 native capabilities: directory-loaded package plugin; four specialized tools; trusted per-session Git cwd; parent and worker skill({id}) loading; worker review rejected before transport; loopback-only network');
+
+    server.stop(); server = undefined;
+    const project = join(root, 'custom-command-workspace');
+    await mkdir(join(project, '.opencode'), { recursive: true, mode: 0o700 });
+    await writeFile(join(project, '.opencode', 'opencode.json'), JSON.stringify({
+        commands: { naru: { description: 'User fixture command', template: 'USER_COMMAND_SENTINEL $ARGUMENTS' } },
+    }), { mode: 0o600 });
+    const { OPENCODE_DISABLE_PROJECT_CONFIG: _disabled, ...projectEnvironment } = environment;
+    server = await startPreviewServer(wrapper, project, projectEnvironment, 'catalogue');
+    const projectLocation = `?location%5Bdirectory%5D=${encodeURIComponent(project)}`;
+    const sourcesResponse = await fetch(server.url + '/api/config' + projectLocation, { headers: server.headers });
+    assert.equal(sourcesResponse.status, 200);
+    const sources = await sourcesResponse.json() as Array<{ path: string }>;
+    assert.ok(sources.some(source => source.path === join(project, '.opencode', 'opencode.json')), 'custom project configuration did not load');
+    const userListResponse = await fetch(server.url + '/api/command' + projectLocation, { headers: server.headers });
+    assert.equal(userListResponse.status, 200);
+    const userList = await userListResponse.json() as { data?: Array<{ name: string; description: string }> };
+    const userCommands = userList.data?.filter(entry => entry.name === 'naru') ?? [];
+    assert.equal(userCommands.length, 1, JSON.stringify(userList));
+    assert.equal(userCommands[0]!.description, 'User fixture command');
+    const userExecution = await nodeSpawner(server.env)([wrapper, 'run', '--server', server.url, '--agent', 'naru', '--model', 'fixture/parent#medium', '--format', 'json', 'CUSTOM_COMMAND_SETUP'], { cwd: project, timeout: 30_000 });
+    assert.equal(userExecution.ok, true, userExecution.stdout + userExecution.stderr);
+    const userSessionID = userExecution.stdout.match(/"sessionID":"([^"]+)"/)?.[1];
+    assert.ok(userSessionID);
+    const userInvocation = await fetch(server.url + `/api/session/${encodeURIComponent(userSessionID)}/command` + projectLocation, {
+        method: 'POST', headers: { ...server.headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'naru', text: 'custom-only', agent: 'naru' }),
+    });
+    const userResult = await userInvocation.text();
+    assert.equal(userInvocation.status, 204, `User command invocation failed: ${userInvocation.status} ${userResult}`);
+    for (let attempt = 0; attempt < 100 && !userCommandReceived; attempt++) await new Promise(resolvePromise => setTimeout(resolvePromise, 50));
+    assert.equal(userCommandReceived, true, 'preexisting user command was not invoked');
+    console.log('PASS 2.0.15 native capabilities: managed command dry-run, worker denial, preexisting project command preserved and invoked; four tools; trusted cwd; skills; loopback-only network');
 } finally {
     server?.stop();
     provider.closeAllConnections();

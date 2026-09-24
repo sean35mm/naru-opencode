@@ -108,6 +108,19 @@ test('read-only help/version do not create native profile, while explicit models
     } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('explicit native pool retains separate base, Fast, and variant references without catalogue inference', async () => {
+    const { root } = await fixture();
+    try {
+        const references = ['fixture/worker', 'fixture/worker#high', 'fixture/worker-fast', 'fixture/worker-fast#low'];
+        assert.equal(await runOc2Native(['naru', 'models', '--set', references.join(',')], { root }), 0);
+        assert.deepEqual((await loadOc2NativeModelProfile(root))?.models, references);
+        await assert.rejects(runOc2Native(['naru', 'models', '--set', 'fixture/worker#high,fixture/worker#high'], { root }), /Duplicate native model reference/);
+        await assert.rejects(runOc2Native(['naru', 'models', '--set', '\u0000all-variants:fixture/worker'], { root }), /reference|model/i);
+        assert.deepEqual((await loadOc2NativeModelProfile(root))?.models, references);
+        await assert.rejects(lstat(join(root, 'broker.sock')), { code: 'ENOENT' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('legacy recovery is explicit and normal native plans never use it', async () => {
     const { root } = await fixture();
     try {

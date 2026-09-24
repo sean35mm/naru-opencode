@@ -7,7 +7,7 @@ description: The 0.1.0 release target, feature prerequisites, exclusions, and ev
 
 The stable compatibility floor is OpenCode **1.18.4**. Builds **1.18.4** and **1.18.28** are tested history, and 1.18.28 is the current release target; that table is evidence, not a version allowlist. Any syntactically valid stable release at or above the floor—including a future stable major—may run the same bounded host-contract probe. An unlisted release remains a probe-required candidate until that current local probe passes, and a pass records only local-tested evidence rather than adding the release to tested history or qualifying a release matrix. Versions below the floor, malformed output, and stable-profile prereleases fail precisely. The initial platform targets are **macOS arm64** and **Ubuntu x64**, and **Node 24** is the runtime target for everything Naru ships.
 
-The `overhaul/host-agnostic` branch has an isolated exploratory profile for exactly **0.0.0-beta-19425**. It runs only the bounded v2 commands confirmed for that build. Its evidence is marked exploratory and release-ineligible; OpenCode v2 is not stable upstream, and this does not claim full Naru parity. The beta-19271 and beta-19086 records remain historical evidence, not accepted current builds.
+The `overhaul/host-agnostic` branch has an isolated exploratory profile for exactly upstream stable **2.0.15**. It runs only bounded v2 commands; its evidence remains exploratory and release-ineligible for Naru. This does not claim full Naru parity. The beta builds are historical evidence, not accepted current builds.
 
 The dedicated transport test (`npm run test:bun`) requires **Bun 1.3.9** on `PATH`. The Node suite (`npm test`) may skip Bun-specific assertions when Bun is unavailable. Any explicitly requested optional dashboard/Bun compatibility mode also requires Bun.
 
@@ -18,7 +18,7 @@ Git is a prerequisite for the Git-backed tools (`naru-git-read`, `naru-worktree`
 | Surface | Policy |
 | --- | --- |
 | Naru agents, tools, and skills | Stable profile: OpenCode >= 1.18.4 after the current bounded host-contract probe; 1.18.4 and 1.18.28 are tested history; Node 24; depth-1 topology |
-| OpenCode v2 exploration | Exact beta 0.0.0-beta-19425 only; isolated, bounded, and never release-qualifying |
+| OpenCode v2 exploration | Exact upstream stable 2.0.15 only; isolated, bounded, and not yet Naru release-qualifying |
 | Transport smoke test | The Node suite skips Bun-specific assertions; `npm run test:bun` requires Bun 1.3.9 |
 | Git-backed tools | `git` on `PATH`; no version floor |
 | GitHub read and review posting | Authenticated `gh`; no version floor |

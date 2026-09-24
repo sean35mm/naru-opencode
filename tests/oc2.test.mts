@@ -193,19 +193,40 @@ test('fresh installer stages native profile and launcher while retaining legacy 
 });
 
 test('oc2 updater pins exact public artifacts and requires the exact predecessor', () => {
-    assert.equal(OC2_UPDATE_RELEASE.predecessorVersion, '0.0.0-beta-19271');
-    assert.equal(OC2_UPDATE_RELEASE.version, '0.0.0-beta-19425');
+    assert.equal(OC2_UPDATE_RELEASE.predecessorVersion, '0.0.0-beta-19425');
+    assert.equal(OC2_UPDATE_RELEASE.version, '2.0.15');
     assert.equal(OC2_UPDATE_RELEASE.wrapper.package, '@opencode/cli');
-    assert.equal(OC2_UPDATE_RELEASE.wrapper.sri, 'sha512-2cJtOckNpLHs0fpLS1n/JZKoIJ5LWmVvQOhoGJzi7KeVCk0jZ8jiuxIK4WO+9dlYH4tVotwQUNIVKjr/ydD/Ww==');
+    assert.equal(OC2_UPDATE_RELEASE.wrapper.sri, 'sha512-Ynxz9HRJiHQBotBrQeEt3T/3TyEpkwdZkMTE7HPxT2nB1IU3WAqFXBYiIpWTYLKifXga4L5UG0sXEDISe/rJxg==');
     assert.equal(OC2_UPDATE_RELEASE.native['darwin-arm64'].package, '@opencode/cli-darwin-arm64');
-    assert.equal(OC2_UPDATE_RELEASE.native['darwin-arm64'].sri, 'sha512-HevgkocfjHbMVGODmgtTS+ftw50bTYVHlEs/X4mWZEJG3smMaB1LpCEbYF58S+BO3YeR3INo/obnKXRc7+2RLw==');
+    assert.equal(OC2_UPDATE_RELEASE.native['darwin-arm64'].sri, 'sha512-qIFmkv6f01Deih/DH+OvblNQEZrAUal54PjUHLu61zS5OYCpXnRjkYWHV3RiEZhP5DtfQZsJeitmMW5v6f2NTw==');
     assert.equal(OC2_UPDATE_RELEASE.native['linux-x64'].package, '@opencode/cli-linux-x64');
-    assert.equal(OC2_UPDATE_RELEASE.native['linux-x64'].sri, 'sha512-62w+MgyOiInAxuGo9VCjWOrenOkCvmyaKFEUBNRaUqq+BDbizBGsTjn/pqKj9wrst+GtqREWjH8bVn302h3g7w==');
-    assert.doesNotThrow(() => validateOc2PredecessorVersion('opencode2 v0.0.0-beta-19271\n'));
-    for (const value of ['opencode2 v0.0.0-beta-19425', 'v0.0.0-beta-19271', 'opencode2 v0.0.0-beta-19086']) assert.throws(() => validateOc2PredecessorVersion(value), /exact predecessor/);
-    assert.doesNotThrow(() => validateOc2UpdaterTarget('0.0.0-beta-19425', ['0.0.0-beta-19425']));
-    assert.throws(() => validateOc2UpdaterTarget('0.0.0-beta-19271', ['0.0.0-beta-19425']), /does not target exact/);
-    assert.throws(() => validateOc2UpdaterTarget('0.0.0-beta-19425', ['0.0.0-beta-19271']), /does not target exact/);
+    assert.equal(OC2_UPDATE_RELEASE.native['linux-x64'].sri, 'sha512-PGVHuIb6uDgCx19zbD3wGwDYBZLeZnZY89c28SCcB87ckAgfOp+L2o7rra1TMbyQVLhZAqccbymWDeqrynfOCA==');
+    assert.doesNotThrow(() => validateOc2PredecessorVersion('opencode2 v0.0.0-beta-19425\n'));
+    for (const value of ['opencode v2.0.15', 'v0.0.0-beta-19425', 'opencode2 v0.0.0-beta-19271']) assert.throws(() => validateOc2PredecessorVersion(value), /exact predecessor/);
+    assert.doesNotThrow(() => validateOc2UpdaterTarget('2.0.15', ['2.0.15']));
+    assert.throws(() => validateOc2UpdaterTarget('0.0.0-beta-19425', ['2.0.15']), /does not target exact/);
+    assert.throws(() => validateOc2UpdaterTarget('2.0.15', ['0.0.0-beta-19425']), /does not target exact/);
+});
+
+test('built --update CLI dispatch accepts its action while rejecting missing or unsafe paths', async () => {
+    const temporary = await realpath(await mkdtemp(join(tmpdir(), 'naru-oc2-cli-update-')));
+    try {
+        const root = join(temporary, 'preview'); await mkdir(root, { mode: 0o700 });
+        const previewCli = join(built, 'tools', 'naru-preview.mjs'), v2Wrapper = join(temporary, 'missing-wrapper'), nativeRoot = join(temporary, 'missing-native');
+        const cli = join(built, 'tools', 'install-oc2.mjs');
+        const args = ['--update', '--preview-cli', previewCli, '--v2-wrapper', v2Wrapper, '--root', root, '--native-root', nativeRoot];
+        const run = (argv: string[]) => nodeSpawner(process.env)([process.execPath, cli, ...argv], { timeout: 10_000 });
+        const missing = await run(args);
+        assert.equal(missing.ok, false); assert.doesNotMatch(missing.stderr, /action must be an absolute path/);
+        assert.match(missing.stderr, /ENOENT.*host\.json/);
+        await assert.rejects(lstat(join(root, 'start.lock')), { code: 'ENOENT' });
+        const requiredPath = await run(args.slice(0, -1));
+        assert.equal(requiredPath.ok, false); assert.match(requiredPath.stderr, /--native-root requires a value/);
+        for (const label of ['previewCli', 'v2Wrapper', 'root', 'nativeRoot'] as const) {
+            await assert.rejects(updateOc2({ previewCli, v2Wrapper, root, nativeRoot, [label]: 'relative' }), new RegExp(`${label} must be an absolute path`));
+        }
+        await assert.rejects(lstat(join(root, 'start.lock')), { code: 'ENOENT' });
+    } finally { await rm(temporary, { recursive: true, force: true }); }
 });
 
 test('oc2 updater changes only technical host targets and preserves preview state byte-for-byte', async () => {
@@ -215,8 +236,8 @@ test('oc2 updater changes only technical host targets and preserves preview stat
         const installedTools = join(root, 'lib', 'tools'); await mkdir(installedTools, { recursive: true }); await writeFile(join(installedTools, 'old.txt'), 'old snapshot');
         const previewCli = join(built, 'tools', 'naru-preview.mjs');
         const arbitraryTools = join(temporary, 'candidate-tools'); await mkdir(arbitraryTools); const arbitraryPreviewCli = join(arbitraryTools, 'naru-preview.mjs'); await writeFile(arbitraryPreviewCli, 'candidate preview');
-        const oldExecutable = join(temporary, 'opencode-19271'); await cp(process.execPath, oldExecutable);
-        const newDirectory = join(temporary, 'versions', '0.0.0-beta-19425'); await mkdir(newDirectory, { recursive: true });
+        const oldExecutable = join(temporary, 'opencode-19425'); await cp(process.execPath, oldExecutable);
+        const newDirectory = join(temporary, 'versions', '2.0.15'); await mkdir(newDirectory, { recursive: true });
         let executable = join(newDirectory, 'opencode2'); await cp(process.execPath, executable); await chmod(executable, 0o755); executable = await realpath(executable);
         const wrapper = join(temporary, 'opencode2-naru');
         const wrapperPrefix = '#!/bin/sh\nset -eu\nroot=/isolated\nexport HOME="$root/home"\nexport OPENCODE_DB="$root/state/opencode.db"\n';
@@ -250,7 +271,7 @@ test('oc2 updater changes only technical host targets and preserves preview stat
         assert.equal(updatedHost.executableHash, createHash('sha256').update(await readFile(executable)).digest('hex'));
         assert.equal(await readFile(wrapper, 'utf8'), `${wrapperPrefix}exec '${executable}' "$@"\n`);
         assert.deepEqual(await readFile(oldExecutable), await readFile(process.execPath));
-        const recovery = join(root, 'update-recovery-0.0.0-beta-19271');
+        const recovery = join(root, 'update-recovery-0.0.0-beta-19425');
         assert.equal(await readFile(join(recovery, 'host.json'), 'utf8'), JSON.stringify(host, null, 2) + '\n');
         assert.equal(await readFile(join(recovery, 'opencode2-naru'), 'utf8'), `${wrapperPrefix}exec '${oldExecutable}' "$@"\n`);
         assert.equal(await readFile(join(root, 'naru-preview'), 'utf8'), '#!/bin/sh\nexit 0\n');
@@ -260,20 +281,20 @@ test('oc2 updater changes only technical host targets and preserves preview stat
 });
 
 const actualPredecessor = process.env.NARU_OC2_UPDATE_E2E_PREDECESSOR;
-test('public native updater keeps committed beta-19425 active after cleanup failure and removes its target after confirmed pre-commit rollback', {
+test('public native updater preserves committed and rolled-back generations and upgrades via the built CLI', {
     skip: process.platform !== 'darwin' || process.arch !== 'arm64' || !actualPredecessor,
     timeout: 240_000,
 }, async () => {
     const temporary = await realpath(await mkdtemp(join(tmpdir(), 'naru-oc2-public-update-')));
     try {
-        const nativeRoot = join(temporary, 'native'), predecessorDirectory = join(nativeRoot, 'versions', '0.0.0-beta-19271');
+        const nativeRoot = join(temporary, 'native'), predecessorDirectory = join(nativeRoot, 'versions', '0.0.0-beta-19425');
         await mkdir(predecessorDirectory, { recursive: true, mode: 0o700 });
         const predecessor = join(predecessorDirectory, 'opencode2'); await cp(actualPredecessor!, predecessor); await chmod(predecessor, 0o755);
         const version = await nodeSpawner(cleanProcessEnvironment(process.execPath))([predecessor, '--version'], { cwd: temporary, timeout: 10_000 });
-        assert.equal(version.ok, true, version.stderr); assert.equal(version.stdout.trim(), 'opencode2 v0.0.0-beta-19271');
+        assert.equal(version.ok, true, version.stderr); assert.equal(version.stdout.trim(), 'opencode2 v0.0.0-beta-19425');
 
         const root = join(temporary, 'preview'); await mkdir(join(root, 'lib', 'tools'), { recursive: true, mode: 0o700 });
-        await writeFile(join(root, 'lib', 'tools', 'old.txt'), 'beta-19271 compiled snapshot');
+        await writeFile(join(root, 'lib', 'tools', 'old.txt'), 'beta-19425 compiled snapshot');
         const previewCli = join(built, 'tools', 'naru-preview.mjs'), wrapper = join(temporary, 'opencode2-naru');
         const wrapperPrefix = '#!/bin/sh\nset -eu\numask 077\nroot=/synthetic-isolated\n';
         const host = { root, executable: predecessor, executableHash: createHash('sha256').update(await readFile(predecessor)).digest('hex'), node: process.execPath, cli: join(root, 'lib', 'tools', 'naru-preview.mjs') };
@@ -301,32 +322,32 @@ test('public native updater keeps committed beta-19425 active after cleanup fail
             cleanupCommittedSwap: async () => { throw new Error('synthetic committed cleanup failure'); },
             report: message => cleanupWarnings.push(message),
         });
-        assert.equal(executable, join(nativeRoot, 'versions', '0.0.0-beta-19425', 'opencode2'));
+        assert.equal(executable, join(nativeRoot, 'versions', '2.0.15', 'opencode2'));
         const updatedVersion = await nodeSpawner(cleanProcessEnvironment(process.execPath))([executable, '--version'], { cwd: temporary, timeout: 10_000 });
-        assert.equal(updatedVersion.ok, true, updatedVersion.stderr); assert.equal(updatedVersion.stdout.trim(), 'opencode2 v0.0.0-beta-19425');
+        assert.equal(updatedVersion.ok, true, updatedVersion.stderr); assert.equal(updatedVersion.stdout.trim(), 'opencode v2.0.15');
         const updatedHost = JSON.parse(await readFile(join(root, 'host.json'), 'utf8'));
         assert.equal(updatedHost.executable, executable); assert.equal(updatedHost.executableHash, createHash('sha256').update(await readFile(executable)).digest('hex'));
         assert.equal(await readFile(wrapper, 'utf8'), `${wrapperPrefix}exec '${executable}' "$@"\n`);
         const wrapperVersion = await nodeSpawner(cleanProcessEnvironment(process.execPath))([wrapper, '--version'], { cwd: temporary, timeout: 10_000 });
-        assert.equal(wrapperVersion.ok, true, wrapperVersion.stderr); assert.equal(wrapperVersion.stdout.trim(), 'opencode2 v0.0.0-beta-19425');
+        assert.equal(wrapperVersion.ok, true, wrapperVersion.stderr); assert.equal(wrapperVersion.stdout.trim(), 'opencode v2.0.15');
         assert.ok((await readFile(join(root, 'lib', 'tools', 'naru-preview.mjs'), 'utf8')).length > 0);
         await assert.rejects(lstat(join(root, 'start.lock')), { code: 'ENOENT' });
         assert.deepEqual(cleanupWarnings, ['oc2 native update committed successfully, but old-generation staging could not be removed; the active generation was not rolled back']);
         assert.deepEqual(await readFile(predecessor), await readFile(actualPredecessor!));
         for (const [relative, bytes] of preserved) assert.deepEqual(await readFile(join(root, relative)), bytes, relative);
-        assert.equal(await readFile(join(root, 'update-recovery-0.0.0-beta-19271', 'host.json'), 'utf8'), JSON.stringify(host, null, 2) + '\n');
+        assert.equal(await readFile(join(root, 'update-recovery-0.0.0-beta-19425', 'host.json'), 'utf8'), JSON.stringify(host, null, 2) + '\n');
 
-        const rollbackNativeRoot = join(temporary, 'rollback-native'), rollbackPredecessorDirectory = join(rollbackNativeRoot, 'versions', '0.0.0-beta-19271');
+        const rollbackNativeRoot = join(temporary, 'rollback-native'), rollbackPredecessorDirectory = join(rollbackNativeRoot, 'versions', '0.0.0-beta-19425');
         await mkdir(rollbackPredecessorDirectory, { recursive: true, mode: 0o700 });
         const rollbackPredecessor = join(rollbackPredecessorDirectory, 'opencode2'); await cp(actualPredecessor!, rollbackPredecessor); await chmod(rollbackPredecessor, 0o755);
         const rollbackRoot = join(temporary, 'rollback-preview'), rollbackTools = join(rollbackRoot, 'lib', 'tools'); await mkdir(rollbackTools, { recursive: true, mode: 0o700 });
-        await writeFile(join(rollbackTools, 'old.txt'), 'working beta-19271 tools');
+        await writeFile(join(rollbackTools, 'old.txt'), 'working beta-19425 tools');
         const rollbackWrapper = join(temporary, 'rollback-opencode2-naru'), rollbackPrefix = '#!/bin/sh\nset -eu\n';
         await writeFile(rollbackWrapper, `${rollbackPrefix}exec '${rollbackPredecessor}' "$@"\n`, { mode: 0o755 });
         const rollbackHost = { root: rollbackRoot, executable: rollbackPredecessor, executableHash: createHash('sha256').update(await readFile(rollbackPredecessor)).digest('hex'), node: process.execPath, cli: join(rollbackRoot, 'lib', 'tools', 'naru-preview.mjs') };
         await writeFile(join(rollbackRoot, 'host.json'), JSON.stringify(rollbackHost, null, 2) + '\n', { mode: 0o600 });
         await writeFile(join(rollbackRoot, 'naru-preview'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-        const rollbackTarget = join(rollbackNativeRoot, 'versions', '0.0.0-beta-19425', 'opencode2');
+        const rollbackTarget = join(rollbackNativeRoot, 'versions', '2.0.15', 'opencode2');
         await assert.rejects(updateOc2({ previewCli, v2Wrapper: rollbackWrapper, root: rollbackRoot, nativeRoot: rollbackNativeRoot }, {
             prepareNative: async () => {
                 await mkdir(dirname(rollbackTarget), { recursive: true, mode: 0o700 }); await cp(executable, rollbackTarget); await chmod(rollbackTarget, 0o755);
@@ -335,13 +356,33 @@ test('public native updater keeps committed beta-19425 active after cleanup fail
             beforeSwitch: async () => { throw new Error('synthetic pre-commit failure'); },
         }), /synthetic pre-commit failure/);
         await assert.rejects(lstat(dirname(rollbackTarget)), { code: 'ENOENT' });
-        assert.equal(await readFile(join(rollbackTools, 'old.txt'), 'utf8'), 'working beta-19271 tools');
+        assert.equal(await readFile(join(rollbackTools, 'old.txt'), 'utf8'), 'working beta-19425 tools');
         assert.equal(JSON.parse(await readFile(join(rollbackRoot, 'host.json'), 'utf8')).executable, rollbackPredecessor);
         assert.equal(await readFile(rollbackWrapper, 'utf8'), `${rollbackPrefix}exec '${rollbackPredecessor}' "$@"\n`);
         const rollbackVersion = await nodeSpawner(cleanProcessEnvironment(process.execPath))([rollbackWrapper, '--version'], { cwd: temporary, timeout: 10_000 });
-        assert.equal(rollbackVersion.ok, true, rollbackVersion.stderr); assert.equal(rollbackVersion.stdout.trim(), 'opencode2 v0.0.0-beta-19271');
+        assert.equal(rollbackVersion.ok, true, rollbackVersion.stderr); assert.equal(rollbackVersion.stdout.trim(), 'opencode2 v0.0.0-beta-19425');
         await assert.rejects(lstat(join(rollbackRoot, 'start.lock')), { code: 'ENOENT' });
-        assert.equal(await readFile(join(rollbackRoot, 'update-recovery-0.0.0-beta-19271', 'host.json'), 'utf8'), JSON.stringify(rollbackHost, null, 2) + '\n');
+        assert.equal(await readFile(join(rollbackRoot, 'update-recovery-0.0.0-beta-19425', 'host.json'), 'utf8'), JSON.stringify(rollbackHost, null, 2) + '\n');
+
+        const cliNativeRoot = join(temporary, 'cli-native'), cliPredecessor = join(cliNativeRoot, 'versions', '0.0.0-beta-19425', 'opencode2');
+        await mkdir(dirname(cliPredecessor), { recursive: true, mode: 0o700 }); await cp(rollbackPredecessor, cliPredecessor); await chmod(cliPredecessor, 0o755);
+        const cliRoot = join(temporary, 'cli-preview'), cliTools = join(cliRoot, 'lib', 'tools'); await mkdir(cliTools, { recursive: true, mode: 0o700 });
+        await writeFile(join(cliTools, 'old.txt'), 'beta compiled snapshot');
+        const cliWrapper = join(temporary, 'cli-opencode2-naru'); await writeFile(cliWrapper, `#!/bin/sh\nexec '${cliPredecessor}' "$@"\n`, { mode: 0o755 });
+        await writeFile(join(cliRoot, 'naru-preview'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        const cliHost = { root: cliRoot, executable: cliPredecessor, executableHash: createHash('sha256').update(await readFile(cliPredecessor)).digest('hex'), node: process.execPath, cli: join(cliTools, 'naru-preview.mjs') };
+        await writeFile(join(cliRoot, 'host.json'), JSON.stringify(cliHost, null, 2) + '\n', { mode: 0o600 });
+        const cliResult = await nodeSpawner(cleanProcessEnvironment(process.execPath))([process.execPath, join(built, 'tools', 'install-oc2.mjs'), '--update', '--preview-cli', previewCli, '--v2-wrapper', cliWrapper, '--root', cliRoot, '--native-root', cliNativeRoot], { cwd: temporary, timeout: 120_000 });
+        assert.equal(cliResult.ok, true, cliResult.stderr);
+        const cliExecutable = join(cliNativeRoot, 'versions', '2.0.15', 'opencode2');
+        assert.match(cliResult.stdout, /Updated oc2 preview to 2\.0\.15/);
+        const cliUpdatedHost = JSON.parse(await readFile(join(cliRoot, 'host.json'), 'utf8'));
+        assert.equal(cliUpdatedHost.executable, cliExecutable);
+        assert.equal(cliUpdatedHost.executableHash, createHash('sha256').update(await readFile(cliExecutable)).digest('hex'));
+        const cliVersion = await nodeSpawner(cleanProcessEnvironment(process.execPath))([cliWrapper, '--version'], { cwd: temporary, timeout: 10_000 });
+        assert.equal(cliVersion.ok, true, cliVersion.stderr); assert.equal(cliVersion.stdout.trim(), 'opencode v2.0.15');
+        assert.deepEqual(await readFile(cliPredecessor), await readFile(rollbackPredecessor));
+        await assert.rejects(lstat(join(cliRoot, 'start.lock')), { code: 'ENOENT' });
     } finally { await rm(temporary, { recursive: true, force: true }); }
 });
 
