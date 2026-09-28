@@ -112,7 +112,7 @@ async function nativeContext(context: NativeExecutionContext, plugin: NativePlug
         ? directory
         : absoluteDirectory(context.worktree, 'worktree');
     return {
-        agent: context.agent === 'naru' ? 'naru-orchestrator' : context.agent,
+        agent: context.agent,
         directory,
         worktree,
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,

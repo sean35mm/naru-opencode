@@ -733,6 +733,7 @@ async function buildNativeDoctorReport(options: DoctorOptions): Promise<DoctorRe
         runtime: { name: Reflect.get(globalThis, 'Bun') ? 'bun' : 'node', version: process.versions.node },
     };
     if (!exact) addIssue(issues, 'opencode-compatibility', 'host', 'native install requires observed exact OpenCode 2.0.15; no runtime qualification was inferred');
+    if (await statOrNull(path.join(root, 'agents', 'naru.md')) !== null) addIssue(issues, 'native-agent-collision', 'global', 'filesystem agents/naru.md is ambiguous with the native naru definition; manual cutover required');
     try {
         const inspected = await inspectNativeInstall(root);
         native.installed = inspected.installed;
@@ -773,7 +774,7 @@ async function buildNativeDoctorReport(options: DoctorOptions): Promise<DoctorRe
         })) throw new Error('native worker pool missing or changed');
         native.agents = 'valid';
         const plugin = path.join(paths.packageRoot, 'tools', 'oc2-native-plugin');
-        if (!config || !Array.isArray(config.plugins) || config.plugins.filter(value => value === plugin).length !== 1 || !Array.isArray(config.skills) || config.skills.filter(value => value === path.join(plugin, 'skills')).length !== 1 || await statOrNull(path.join(root, 'opencode.jsonc')) !== null || await statOrNull(path.join(root, '.naru-install.json')) !== null) throw new Error('native plugin or skills not registered or v1 configuration collides');
+        if (!config || !Array.isArray(config.plugins) || config.plugins.filter(value => value === plugin).length !== 1 || !Array.isArray(config.skills) || config.skills.filter(value => value === path.join(plugin, 'skills')).length !== 1 || await statOrNull(path.join(root, 'agents', 'naru.md')) !== null || await statOrNull(path.join(root, 'opencode.jsonc')) !== null || await statOrNull(path.join(root, '.naru-install.json')) !== null) throw new Error('native plugin or skills not registered or v1 configuration collides');
         native.registration = 'valid';
     } catch (error) {
         const message = error instanceof Error && 'code' in error && error.code === 'ENOENT' ? 'native install is missing or incomplete' : 'native install is invalid, modified, or collides with user configuration';

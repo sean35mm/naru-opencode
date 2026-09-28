@@ -250,13 +250,13 @@ const agentListOutputBytes = ${agentListOutputBytes};
 const agentListOutputMarker = ${JSON.stringify(AGENT_LIST_OUTPUT_MARKER)};
 const debugConfigOutputBytes = ${debugConfigOutputBytes};
 const debugConfigOutputMarker = ${JSON.stringify(DEBUG_CONFIG_OUTPUT_MARKER)};
-const agent = { 'naru-orchestrator': { mode: 'primary', permission: { '*': 'deny', 'safe_tools_*': 'ask', 'codebase_*': 'ask', 'codebase-memory-mcp_search_graph': 'allow', safe_tools_delete: 'deny', task: { '*': 'deny' } }, prompt: ${disablePlugin ? "'Plugin disabled'" : "'Effective defaults: profile=release-critical; decision=comment-only; output=concise.'"} } };
+const agent = { 'naru': { mode: 'primary', permission: { '*': 'deny', 'safe_tools_*': 'ask', 'codebase_*': 'ask', 'codebase-memory-mcp_search_graph': 'allow', safe_tools_delete: 'deny', task: { '*': 'deny' } }, prompt: ${disablePlugin ? "'Plugin disabled'" : "'Effective defaults: profile=release-critical; decision=comment-only; output=concise.'"} } };
 for (const role of ['naru-reader', 'naru-runner', 'naru-writer']) {
-  agent[role] = { mode: 'subagent', permission: { '*': 'deny', ...(role === 'naru-writer' ? { 'safe_tools_*': 'ask', 'codebase_*': 'ask', 'codebase-memory-mcp_search_graph': 'allow' } : {}), task: 'deny', edit: role === 'naru-writer' ? 'allow' : 'deny', ...(role === 'naru-runner' ? { bash: 'deny', 'naru-check': 'allow' } : {}), ...(role === 'naru-writer' ? { safe_tools_delete: 'deny' } : {}) } };
-  agent['naru-orchestrator'].permission.task[role] = 'allow';
+  agent[role] = { mode: 'subagent', permission: { '*': 'deny', 'safe_tools_*': 'ask', 'codebase_*': 'ask', 'codebase-memory-mcp_search_graph': 'allow', task: 'deny', edit: role === 'naru-writer' ? 'allow' : 'deny', ...(role === 'naru-runner' ? { bash: { '*': 'allow' } } : {}), safe_tools_delete: 'deny' } };
+  agent['naru'].permission.task[role] = 'allow';
   if (!${disablePlugin}) {
     agent[role + '-smoke'] = { ...agent[role], model: 'openai/naru-compat-fixture', variant: 'high' };
-    agent['naru-orchestrator'].permission.task[role + '-smoke'] = 'allow';
+    agent['naru'].permission.task[role + '-smoke'] = 'allow';
   }
 }
 const required = ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'TMPDIR', 'GH_CONFIG_DIR'];
@@ -269,7 +269,7 @@ else if (args.join(' ') === 'debug paths') console.log('isolated paths');
 else if (args.join(' ') === 'debug config') {
   ${failDebugConfig ? "console.error('SUPER_SECRET_VALUE'); process.exit(9);" : "console.log(JSON.stringify({agent, padding: debugConfigOutputMarker.repeat(Math.ceil(debugConfigOutputBytes / debugConfigOutputMarker.length)).slice(0, debugConfigOutputBytes)}));"}
 } else if (args.join(' ') === 'agent list') {
-  if (agentListOutputBytes === 0) console.log('naru-orchestrator');
+  if (agentListOutputBytes === 0) console.log('naru');
   else process.stdout.write(agentListOutputMarker.repeat(Math.ceil(agentListOutputBytes / agentListOutputMarker.length)).slice(0, agentListOutputBytes));
 }
 else if (args[0] === 'serve' && args[1] === '--hostname' && args[2] === '127.0.0.1' && args[3] === '--port') {
@@ -279,8 +279,8 @@ else if (args[0] === 'serve' && args[1] === '--hostname' && args[2] === '127.0.0
   const attempted = new Map();
   const body = request => new Promise(resolve => { let value=''; request.on('data', chunk => value += chunk); request.on('end', () => resolve(value ? JSON.parse(value) : {})); });
   const send = (response, value) => { response.writeHead(200, {'content-type':'application/json'}); response.end(JSON.stringify(value)); };
-  const rules = name => [{permission:'*',pattern:'*',action:'deny'},{permission:'edit',pattern:'*',action:'deny'},{permission:'task',pattern:'*',action:'deny'},...(['naru-orchestrator','naru-writer','naru-writer-smoke'].includes(name)?[{permission:'safe_tools_*',pattern:'*',action:'ask'},{permission:'codebase_*',pattern:'*',action:'ask'},{permission:'safe_tools_delete',pattern:'*',action:'deny'}]:[]),...(name==='naru-orchestrator'?[{permission:'codebase-memory-mcp_search_graph',pattern:'*',action:'allow'}]:[])];
-  const hostAgents = ['naru-orchestrator','naru-reader','naru-runner','naru-writer'].flatMap(name => [{name,permission:rules(name),options:{}},...(name==='naru-orchestrator'?[]:[{name,permission:rules(name+'-smoke'),variant:'high',options:{naruVariant:true}}])]);
+  const rules = name => [{permission:'*',pattern:'*',action:'deny'},{permission:'edit',pattern:'*',action:'deny'},{permission:'task',pattern:'*',action:'deny'},...(['naru','naru-reader','naru-runner','naru-writer','naru-reader-smoke','naru-runner-smoke','naru-writer-smoke'].includes(name)?[{permission:'safe_tools_*',pattern:'*',action:'ask'},{permission:'codebase_*',pattern:'*',action:'ask'},{permission:'safe_tools_delete',pattern:'*',action:'deny'}]:[]),...(name==='naru'?[{permission:'codebase-memory-mcp_search_graph',pattern:'*',action:'allow'}]:[])];
+  const hostAgents = ['naru','naru-reader','naru-runner','naru-writer'].flatMap(name => [{name,permission:rules(name),options:{}},...(name==='naru'?[]:[{name,permission:rules(name+'-smoke'),variant:'high',options:{naruVariant:true}}])]);
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     if (url.pathname === '/global/health') send(response, {healthy:true});
@@ -297,16 +297,16 @@ else if (args[0] === 'serve' && args[1] === '--hostname' && args[2] === '127.0.0
         const input = await body(request); const agentName = sessions.get(prompt[1]); const action = String(input.parts?.[0]?.text || '').split(':').at(-1); attempted.set(prompt[1], action);
         const config = JSON.parse(readFileSync(path.join(process.cwd(), 'opencode.json'), 'utf8'));
         await fetch(config.provider.openai.options.baseURL + '/responses', {method:'POST', body:'{}'});
-        if (['naru-orchestrator','naru-writer','naru-writer-smoke'].includes(agentName) && ['safe_tools_read','codebase_read'].includes(action)) pending.get(prompt[1]).push({sessionID:prompt[1],permission:action});
+        if (['naru','naru-reader','naru-runner','naru-writer','naru-reader-smoke','naru-runner-smoke','naru-writer-smoke'].includes(agentName) && ['safe_tools_read','codebase_read'].includes(action)) pending.get(prompt[1]).push({sessionID:prompt[1],permission:action});
         response.writeHead(204); response.end(); return;
       }
       const parts = url.pathname.split('/'); const match = parts.length === 5 && parts[1] === 'api' && parts[2] === 'session' && parts[4] === 'permission' ? [url.pathname, parts[3]] : null;
       if (!match) { response.writeHead(404); response.end('{}'); return; }
       const sessionID = match[1];
       if (request.method === 'GET') { send(response, {data:pending.get(sessionID) || []}); return; }
-      const input = await body(request); const agentName = sessions.get(sessionID); const eligible = ['naru-orchestrator','naru-writer','naru-writer-smoke'].includes(agentName);
+      const input = await body(request); const agentName = sessions.get(sessionID); const eligible = ['naru','naru-reader','naru-runner','naru-writer','naru-reader-smoke','naru-runner-smoke','naru-writer-smoke'].includes(agentName);
       const effect = eligible && ['safe_tools_read','codebase_read'].includes(input.action) ? 'ask'
-        : agentName === 'naru-orchestrator' && input.action === 'codebase-memory-mcp_search_graph' ? 'allow' : 'deny';
+        : agentName === 'naru' && input.action === 'codebase-memory-mcp_search_graph' ? 'allow' : 'deny';
       const item = {id:'per_' + (++sequence), action:input.action, effect};
       if (effect === 'ask') pending.get(sessionID).push(item);
       send(response, {data:item});

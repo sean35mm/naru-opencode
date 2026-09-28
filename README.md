@@ -283,13 +283,13 @@ For **v1 only**, `--preview` is the default and mutates nothing; `--apply` is th
 
 Installs write a `.naru-install.json` ownership manifest, skip unchanged assets, and back up only the paths they replace. `--uninstall` and `--rollback` also preview by default; applying either requires `--apply` plus the exact confirmation token printed by its own preview. `--with-dashboard` is accepted and ignored.
 
-Restart OpenCode after applying. Then select `naru-orchestrator` in the agent picker, set it as `default_agent`, or launch `opencode --agent naru-orchestrator`.
+Restart OpenCode after applying. Then select `naru` in the agent picker, set it as `default_agent`, or launch `opencode --agent naru`.
 
 ## Historical v1: the four agents
 
 | Agent | Mode | Can | Cannot |
 | --- | --- | --- | --- |
-| `naru-orchestrator` | primary, visible | Plan, read, delegate, call the Naru tools, report | Edit files, run bash |
+| `naru` | primary, visible | Plan, read, delegate, call the Naru tools, report | Edit files, run bash |
 | `naru-reader` | subagent | Read-only investigation: find code, trace behavior, diagnose, review | Run bash, edit files |
 | `naru-runner` | subagent | Read-only inspection plus `naru-check` in a disposable contained copy | Edit files |
 | `naru-writer` | subagent | The only role with edit and `apply_patch` | Spawn children |
@@ -307,7 +307,7 @@ To give a role its own model — for example a stronger one for the orchestrator
 ```json
 {
   "agent": {
-    "naru-orchestrator": { "model": "anthropic/claude-opus-5" },
+    "naru": { "model": "anthropic/claude-opus-5" },
     "naru-reader": { "model": "anthropic/claude-haiku-4-5" }
   }
 }
@@ -341,11 +341,11 @@ V5 starts from a compact manifest that binds target, base-ref `baseSha`, compare
 
 At posting time the tool reacquires declared bounded batches, recovery, and pages during both freshness passes instead of rebuilding one monolithic all-patch snapshot. Patch evidence remains bounded at 1 MiB and 1,024 retained line-map entries per file, 16 MiB and 16,384 retained line-map entries per batch, and 32 MiB per transport response. Crossing a line-map ceiling clears only the partial location map: a structurally valid patch remains complete and digest-bound for path-level review, while inline locations are ineligible. For `missing-patch` only, Naru verifies each exact commit, then fetches the base side from the base repository at `diffBaseSha` and the head side from the manifest-bound head repository at `headSha`; path, canonical base64, byte length, fatal UTF-8, expected absence, and per-side/per-batch bounds fail closed. Binary, oversized, unexpectedly absent, and unsupported cases remain unavailable. Recovered text supports complete path-level review but never inline findings without a validated map. Provenance remains exhaustive snapshot-bound attestation—not proof of cognition or semantic quality.
 
-A complete same-head v5 review may supersede exactly one prior limited v4 or v5 `COMMENT` only with a fresh explicit posting authorization and the predecessor's review ID and digest. This is a new submission, never a retry. The tool still makes one POST attempt; an ambiguous outcome is terminal. It cannot merge, and only `naru-orchestrator` can call it.
+A complete same-head v5 review may supersede exactly one prior limited v4 or v5 `COMMENT` only with a fresh explicit posting authorization and the predecessor's review ID and digest. This is a new submission, never a retry. The tool still makes one POST attempt; an ambiguous outcome is terminal. It cannot merge, and only `naru` can call it.
 
 ### Per-dispatch models (naru-dispatch)
 
-Naru ships one plugin, `plugins/naru-dispatch.js`. It registers no tools and creates no sessions — it hooks only OpenCode's `config` hook. At startup it reads the optional `models` block from `naru-runtime.json` and clones the three base subagents into hidden per-class variants — `naru-reader-<class>`, `naru-runner-<class>`, `naru-writer-<class>` — each with the class's model and reasoning effort baked in. The orchestrator dispatches these variants by name through OpenCode's native `task` tool: a cheap class for wide reader fan-out, a strong one for a tricky edit, both in the same turn if the work calls for it. In the TUI they render as ordinary subagent cards with the class visible in the agent name. When model choice doesn't matter, the plain base agents remain the right target; the base agents remain available if the plugin fails. Review defaults are rendered independently of variant generation; removing the plugin also removes its configuration hook.
+The historical v1 `plugins/naru-dispatch.js` hooks only OpenCode's `config` hook. It applies the optional configured-MCP policy and clones the three base subagents into hidden per-class variants (`naru-reader-<class>`, `naru-runner-<class>`, `naru-writer-<class>`) from the optional `models` block in `naru-runtime.json`. The primary `naru` dispatches them through the native `task` tool. The normal native v2 install instead uses its packaged plugin and explicit visible worker pool; it does not generate these legacy variants.
 
 Classes are your own names, defined in an optional `models` block in `naru-runtime.json` (the schema is unchanged from earlier releases). Each maps to a short description of when to pick it and an ordered chain of `provider/model@effort` entries:
 
@@ -359,7 +359,7 @@ Classes are your own names, defined in an optional `models` block in `naru-runti
 
 Each class's chain resolves once, at config load: the first entry whose provider is authenticated is baked into that class's variants; if the auth state is unknown, the first entry is used; if no entry is authenticated, the class is skipped and generates no variants — nothing breaks. There is no runtime fallthrough. Reasoning effort is part of the class definition, not a per-call knob: finer granularity comes from defining more classes (for example `"deep-max": { "chain": ["openai/gpt-5.6-sol@max"] }` — six discrete effort levels means a few class lines cover the space). The orchestrator's `task` allowlist and a generated "Model classes" appendix in its prompt are refreshed idempotently on every config load, and `naru-reader-*`, `naru-runner-*`, `naru-writer-*` is a reserved Naru-managed namespace — do not hand-define agents with these names.
 
-Variants are byte-for-byte permission clones of the base agents — model selection never touches permissions. Only `naru-writer` variants can edit, readers stay shell-less. The plugin fails open: a broken or malformed config leaves OpenCode's config untouched, and the base agents keep working, inheriting the session model. The config is read at plugin load, so restart OpenCode after editing it.
+Variants begin as byte-for-byte permission clones of the base agents; model selection never touches permissions. The separate MCP policy pass applies equally to base roles and variants. Only `naru-writer` variants can use native edit tools, and readers stay shell-less. A malformed runtime config synthesizes no MCP permissions. Restart OpenCode after editing it.
 
 ### Code intelligence
 
@@ -395,6 +395,9 @@ Configuration is optional. `naru-runtime.example.json` ships as an example; copy
     "maxConcurrentWriters": 50,
     "workspaceMode": "auto"
   },
+  "mcp": {
+    "configuredTools": "allow"
+  },
   "review": {
     "defaultDecision": "automatic",
     "defaultOutput": "concise",
@@ -406,8 +409,11 @@ Configuration is optional. `naru-runtime.example.json` ships as an example; copy
 - `cleanWorkspaceRequired` — must be `true`. Isolation is attempted only on a clean repository.
 - `maxConcurrentWriters` — integer from 1 to 50. A runaway brake, not a target; the orchestrator decides actual fan-out.
 - `workspaceMode` — `auto` isolates when the repository is clean and shares otherwise; `shared` and `worktree` force one behavior.
+- `mcp.configuredTools` — `off` (default) inherits static policy, `ask` prompts, and `allow` lets all base roles and model variants call tools from eligible enabled MCP servers without prompts. Server-scoped rules never create a global allow; explicit MCP denies remain effective.
 
 The file also accepts an optional `models` block defining the classes the `naru-dispatch` plugin turns into per-class agent variants — see [Per-dispatch models](#per-dispatch-models-naru-dispatch). Absent, no variants exist and every subagent inherits the parent session model.
+
+`allow` is an explicit trust decision: configured MCP tools may mutate local or remote data, so native reader/runner read-only guarantees do not extend to MCP. It does not authorize actions outside the current user request or relax scope, secret, delivery, database, or irreversible-action rules. Merge the `mcp` block into an existing runtime file rather than replacing its model or review settings, then restart OpenCode.
 
 The optional `review` block accepts `defaultProfile` (`standard` or `release-critical`), `defaultDecision` (`automatic` or `comment-only`), and `defaultOutput` (`concise` or `detailed`). Installations without it retain the backward-safe `standard`/`comment-only`/`detailed` defaults. The shipped example sets this user's preferred `release-critical`/`automatic`/`concise` values. Configuration never authorizes a post or formal state: generic current-message post/comment/submit wording stays `comment-only` even when `defaultDecision` is `automatic`. Only the current native `/naru ship-review` invocation explicitly authorizes automatic `select-state` for its finite targets.
 
@@ -440,7 +446,7 @@ Copy the exact permission fragment and the full integration rules from the [agen
 ## Repository layout
 
 ```text
-agents/                     naru-orchestrator and its three subagents
+agents/                     naru and its three subagents
 commands/                   the native /naru convenience command
 skills/                     four skills, loaded on demand
 tools/                      custom OpenCode tools and their shared library

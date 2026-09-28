@@ -1,6 +1,6 @@
 // Naru runtime configuration.
-// Small on purpose: the orchestrator decides fan-out at reasoning time, so the
-// only durable settings are the workspace mode and a runaway-concurrency brake.
+// Small on purpose: durable settings cover workspace behavior, review defaults,
+// model dispatch, and explicitly opted-in configured MCP policy.
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -10,7 +10,7 @@ const WORKSPACE_MODES = Object.freeze(['auto', 'shared', 'worktree'] as const);
 const REVIEW_PROFILES = Object.freeze(['standard', 'release-critical'] as const);
 const REVIEW_DECISIONS = Object.freeze(['automatic', 'comment-only'] as const);
 const REVIEW_OUTPUTS = Object.freeze(['concise', 'detailed'] as const);
-const CONFIGURED_MCP_TOOL_MODES = Object.freeze(['off', 'ask'] as const);
+const CONFIGURED_MCP_TOOL_MODES = Object.freeze(['off', 'ask', 'allow'] as const);
 const MAX_CONCURRENT_WRITERS = 50;
 type UnknownRecord = Record<string, unknown>;
 

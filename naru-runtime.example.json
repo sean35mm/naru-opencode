@@ -5,7 +5,7 @@
     "workspaceMode": "auto"
   },
   "mcp": {
-    "configuredTools": "off"
+    "configuredTools": "allow"
   },
   "models": {
     "deep": {

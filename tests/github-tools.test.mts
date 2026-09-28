@@ -1015,7 +1015,7 @@ test('same-head rename source drift rejects stale v5 provenance without POST', a
     { match: argv => argv.includes('POST'), reply: response({ id: 450 }) },
   ]);
   const result = await postReview(reviewInput({ head, files: [reviewed], comments: [] }),
-    { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+    { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.ok, false);
   assert.match(result.error, /bounded manifest (?:snapshotId|feedbackDigest|evidenceDigest) mismatch/);
   assert.equal(fake.calls.some(call => call.argv.includes('POST')), false);
@@ -1028,7 +1028,7 @@ test('formal v5 posting cannot derive complete evidence from malformed file meta
     ...snapshotHandlers({ meta: pullMeta(head), files: files as unknown as RawPullFile[] }),
     { match: argv => argv.includes('POST'), reply: response({ id: 430 }) },
   ]);
-  const result = await postReview(reviewInput({ head, files: files as unknown as RawPullFile[], comments: [] }), { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(reviewInput({ head, files: files as unknown as RawPullFile[], comments: [] }), { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.ok, false);
   assert.match(result.error, /unpostable/);
   assert.equal(fake.calls.some(call => call.argv.includes('POST')), false);
@@ -1121,7 +1121,7 @@ test('release-critical objective miss blocks without an invented finding', async
     ...snapshotHandlers({ meta: pullMeta(head) }),
     { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = parsePostedReview(options); return response({ id: 880 }); } },
   ]);
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(posted.event, 'REQUEST_CHANGES');
   assert.equal(result.data.derivedConclusion, 'blocking');
@@ -1142,7 +1142,7 @@ test('release-critical medium-confidence risk stays COMMENT and clear approval i
     ...snapshotHandlers({ meta: pullMeta(mediumHead) }),
     { match: argv => argv.includes('POST'), reply: (_argv, options) => { mediumPost = parsePostedReview(options); return response({ id: 881 }); } },
   ]);
-  assert.equal((await postReview(medium, { agent: 'naru-orchestrator' }, { spawn: mediumFake.spawn })).ok, true);
+  assert.equal((await postReview(medium, { agent: 'naru' }, { spawn: mediumFake.spawn })).ok, true);
   assert.equal(mediumPost.event, 'COMMENT');
   assert.match(mediumPost.body, /Release-critical review: unresolved/);
 
@@ -1156,7 +1156,7 @@ test('release-critical medium-confidence risk stays COMMENT and clear approval i
     ...snapshotHandlers({ meta: pullMeta(clearHead) }),
     { match: argv => argv.includes('POST'), reply: (_argv, options) => { clearPost = parsePostedReview(options); return response({ id: 882 }); } },
   ]);
-  assert.equal((await postReview(clear, { agent: 'naru-orchestrator' }, { spawn: clearFake.spawn })).ok, true);
+  assert.equal((await postReview(clear, { agent: 'naru' }, { spawn: clearFake.spawn })).ok, true);
   assert.equal(clearPost.event, 'APPROVE');
   assert.match(clearPost.body, /Release-critical review: clear\./);
   assert.doesNotMatch(clearPost.body, /## Verdict/);
@@ -1181,7 +1181,7 @@ test('truncated pull-request objective text forces release-critical uncertainty 
       ...snapshotHandlers({ meta: pullMeta(head, BASE, 1, 42, metaOverrides) }),
       { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = parsePostedReview(options); return response({ id: Number.parseInt(item.seed, 16) }); } },
     ]);
-    const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+    const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
     assert.equal(result.ok, true, result.error);
     assert.equal(posted.event, 'COMMENT');
     assert.equal(result.data.derivedConclusion, 'informational');
@@ -1208,7 +1208,7 @@ test('bounded current-request objective remains formally eligible when PR object
     ...snapshotHandlers({ meta: pullMeta(head, BASE, 1, 42, metaOverrides) }),
     { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = parsePostedReview(options); return response({ id: 195 }); } },
   ]);
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(posted.event, 'APPROVE');
   assert.equal(result.data.objectiveAssessment.source, 'current-request');
@@ -1232,7 +1232,7 @@ test('release-critical blockers with stale paths or invalid lines downgrade to f
       ...snapshotHandlers({ meta: pullMeta(head) }),
       { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = parsePostedReview(options); return response({ id: Number.parseInt(item.seed, 16) }); } },
     ]);
-    const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+    const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
     assert.equal(result.ok, true, result.error);
     assert.equal(posted.event, 'COMMENT');
     assert.equal(result.data.derivedConclusion, 'informational');
@@ -1283,7 +1283,7 @@ test('post tool accepts only the orchestrator identity and rejects all others be
   const input = reviewInput({ status: 'incomplete', degraded: true });
   input.reviewResult.submissionMode = 'complete';
   const fake = fakeSpawn(snapshotHandlers());
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
   assert.match(result.error, /submissionMode=limited/);
   assert.equal(fake.calls.some(call => call.argv.includes('POST')), false);
 });
@@ -1296,11 +1296,11 @@ test('a correctable invalid preflight can be corrected with exactly one POST tot
   ]);
   const invalid = structuredClone(reviewInput({ head }));
   invalid.reviewResult.unknown = true;
-  const rejected = await postReview(invalid, { agent: 'naru-orchestrator' }, { spawn });
+  const rejected = await postReview(invalid, { agent: 'naru' }, { spawn });
   assert.equal(rejected.postAttempted, false);
   assert.equal(rejected.correctable, true);
   assert.equal(rejected.outcomeUnknown, false);
-  const posted = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn });
+  const posted = await postReview(reviewInput({ head }), { agent: 'naru' }, { spawn });
   assert.equal(posted.ok, true, posted.error);
   assert.equal(posted.postAttempted, true);
   assert.equal(posted.correctable, false);
@@ -1313,7 +1313,7 @@ test('post tool rejects initial mode for incomplete and degraded reviews before 
     const input = reviewInput({ status, degraded: true });
     input.reviewResult.submissionMode = 'complete';
     const fake = fakeSpawn(snapshotHandlers());
-    assert.match((await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn })).error, /submissionMode=limited/);
+    assert.match((await postReview(input, { agent: 'naru' }, { spawn: fake.spawn })).error, /submissionMode=limited/);
     assert.equal(fake.calls.some(call => call.argv.includes('POST')), false);
   }
 });
@@ -1322,7 +1322,7 @@ test('post tool rejects initial submissionMode for limited coverage before POST'
   const input = reviewInput({ snapshotComplete: false });
   input.reviewResult.submissionMode = 'complete';
   const fake = fakeSpawn(snapshotHandlers());
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.postAttempted, false);
   assert.equal(result.correctable, true);
   assert.equal(result.outcomeUnknown, false);
@@ -1344,7 +1344,7 @@ test('post tool preserves body, hard-codes COMMENT and commit_id, and posts once
   ];
   const { spawn, calls } = fakeSpawn(handlers);
   const input = reviewInput();
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(result.postAttempted, true);
   assert.equal(result.outcomeUnknown, false);
@@ -1371,7 +1371,7 @@ test('v3 limited patch evidence posts one COMMENT with a generated banner and no
     submissionPolicy: 'approve-if-clear', conclusion: 'clear',
     findings: [{ path: 'src/index.js', line: 1, side: 'RIGHT', body: 'Potential issue', priority: 'P1', severity: 'High', confidence: 'High' }],
   });
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(posted.event, 'COMMENT');
   assert.equal(posted.comments.length, 0);
@@ -1406,7 +1406,7 @@ test('payload-incomplete evidence forces every formal policy to one visible limi
       submissionPolicy: item.policy,
       conclusion: item.conclusion,
       findings: item.findings,
-    }), { agent: 'naru-orchestrator' }, { spawn });
+    }), { agent: 'naru' }, { spawn });
     assert.equal(result.ok, true, result.error);
     assert.equal(posted.event, 'COMMENT');
     assert.equal(result.data.evidencePosture, 'limited');
@@ -1428,7 +1428,7 @@ test('payload-incomplete evidence requires limited posture before any POST', asy
     conclusion: 'clear',
   });
   input.reviewResult.submissionMode = 'complete';
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn });
   assert.equal(result.ok, false);
   assert.equal(result.correctable, true);
   assert.match(result.error, /submissionMode=limited/);
@@ -1453,7 +1453,7 @@ test('complete v3 evidence with honest non-material limitations remains formally
     submissionPolicy: 'approve-if-clear',
     conclusion: 'clear',
     body: 'Review complete. Browser suite was not run.',
-  }), { agent: 'naru-orchestrator' }, { spawn });
+  }), { agent: 'naru' }, { spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(posted.event, 'APPROVE');
   assert.equal(result.data.evidencePosture, 'complete');
@@ -1468,7 +1468,7 @@ test('inventory and feedback integrity gaps refuse every v3 submission policy', 
     const files = [changedFile()];
     const { spawn, calls } = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, 2), files }));
     const input = reviewInputV3({ head, files, submissionPolicy, conclusion: 'blocking' });
-    const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+    const result = await postReview(input, { agent: 'naru' }, { spawn });
     assert.equal(result.ok, false);
     assert.match(result.error, /unpostable/);
     assert.equal(calls.some((call) => call.argv.includes('POST')), false);
@@ -1478,7 +1478,7 @@ test('inventory and feedback integrity gaps refuse every v3 submission policy', 
   const { spawn, calls } = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), issueComments }));
   const result = await postReview(
     reviewInputV3({ head, issueComments }),
-    { agent: 'naru-orchestrator' },
+    { agent: 'naru' },
     { spawn },
   );
   assert.match(result.error, /unpostable/);
@@ -1509,7 +1509,7 @@ test('APPROVE is derived only for complete clear non-draft non-self reviews with
     ]);
     const result = await postReview(reviewInputV3({
       head, submissionPolicy: 'approve-if-clear', conclusion: 'clear', findings: item.findings,
-    }), { agent: 'naru-orchestrator' }, { spawn });
+    }), { agent: 'naru' }, { spawn });
     assert.equal(result.ok, true, result.error);
     assert.equal(posted.event, item.expected);
     assert.equal(result.data.event, item.expected);
@@ -1519,7 +1519,7 @@ test('APPROVE is derived only for complete clear non-draft non-self reviews with
   const closed = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, 1, 42, { state: 'closed' }) }));
   const result = await postReview(
     reviewInputV3({ head, submissionPolicy: 'approve-if-clear', conclusion: 'clear' }),
-    { agent: 'naru-orchestrator' }, { spawn: closed.spawn },
+    { agent: 'naru' }, { spawn: closed.spawn },
   );
   assert.match(result.error, /not open/);
   assert.equal(closed.calls.some((call) => call.argv.includes('POST')), false);
@@ -1573,7 +1573,7 @@ test('REQUEST_CHANGES requires a final eligible blocker and otherwise falls back
     ]);
     const result = await postReview(reviewInputV3({
       head, submissionPolicy: 'request-changes-if-blocked', conclusion: item.conclusion ?? 'blocking', findings: [item.finding],
-    }), { agent: 'naru-orchestrator' }, { spawn });
+    }), { agent: 'naru' }, { spawn });
     assert.equal(result.ok, true, result.error);
     assert.equal(posted.event, item.expected);
     assert.equal(result.data.submissionPolicy, 'request-changes-if-blocked');
@@ -1608,7 +1608,7 @@ test('v5 renders every non-inline finding safely and refuses redacted paths', as
       { path: 'src/index.js', body: 'Path-level observation', priority: 'P3', severity: 'Low', confidence: 'Medium' },
       { path: 'src/index.js', line: 999, side: 'RIGHT', body: 'Invalid line observation', priority: 'P2', severity: 'Medium', confidence: 'High' },
     ],
-  }), { agent: 'naru-orchestrator' }, { spawn });
+  }), { agent: 'naru' }, { spawn });
   assert.equal(result.ok, true, result.error);
   assert.match(posted.body, /Unlocated &lt;!-- naru-review:/);
   assert.match(posted.body, /Path-level observation/);
@@ -1628,7 +1628,7 @@ test('v5 renders every non-inline finding safely and refuses redacted paths', as
     posture: 'limited',
     limitations: ['One path was redacted'],
     findings: [{ path: 'src/safe.js', body: 'Redacted-path observation', priority: 'P2', severity: 'Medium', confidence: 'High' }],
-  }), { agent: 'naru-orchestrator' }, { spawn: redacted.spawn });
+  }), { agent: 'naru' }, { spawn: redacted.spawn });
   assert.equal(redactedResult.ok, false);
   assert.match(redactedResult.error, /unpostable/);
   assert.equal(redacted.calls.some(call => call.argv.includes('POST')), false);
@@ -1647,7 +1647,7 @@ test('comment-only and informational select-state policies stay COMMENT', async 
     ]);
     const result = await postReview(
       reviewInputV3({ head, submissionPolicy, conclusion: 'informational' }),
-      { agent: 'naru-orchestrator' }, { spawn },
+      { agent: 'naru' }, { spawn },
     );
     assert.equal(result.ok, true, result.error);
     assert.equal(posted.event, 'COMMENT');
@@ -1682,7 +1682,7 @@ test('each submission authorization policy derives only events in its exact allo
     ]);
     const result = await postReview(reviewInputV3({
       head, submissionPolicy: item.policy, conclusion: item.conclusion, findings: item.findings,
-    }), { agent: 'naru-orchestrator' }, { spawn });
+    }), { agent: 'naru' }, { spawn });
     assert.equal(result.ok, true, result.error);
     assert.equal(posted.event, item.expected);
     assert.equal(requiredProperty(allowed, item.policy).has(posted.event), true);
@@ -1708,8 +1708,8 @@ test('concurrent identical review posts serialize and use the process-local succ
     },
   ]);
   const input = reviewInput({ head });
-  const first = postReview(input, { agent: 'naru-orchestrator' }, { spawn });
-  const second = postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+  const first = postReview(input, { agent: 'naru' }, { spawn });
+  const second = postReview(input, { agent: 'naru' }, { spawn });
 
   await postStarted.promise;
   assert.equal(postCalls, 1);
@@ -1739,8 +1739,8 @@ test('concurrent differing review posts on one head refuse the second digest', a
       },
     },
   ]);
-  const first = postReview(reviewInput({ head, body: 'first result' }), { agent: 'naru-orchestrator' }, { spawn });
-  const second = postReview(reviewInput({ head, body: 'different result' }), { agent: 'naru-orchestrator' }, { spawn });
+  const first = postReview(reviewInput({ head, body: 'first result' }), { agent: 'naru' }, { spawn });
+  const second = postReview(reviewInput({ head, body: 'different result' }), { agent: 'naru' }, { spawn });
 
   await postStarted.promise;
   releasePost.resolve();
@@ -1770,8 +1770,8 @@ test('review post lock releases after a snapshot failure', async () => {
   ]);
   const input = reviewInput({ head });
   const [failed, succeeded] = await Promise.all([
-    postReview(input, { agent: 'naru-orchestrator' }, { spawn }),
-    postReview(input, { agent: 'naru-orchestrator' }, { spawn }),
+    postReview(input, { agent: 'naru' }, { spawn }),
+    postReview(input, { agent: 'naru' }, { spawn }),
   ]);
   assert.equal(failed.ok, false);
   assert.match(failed.error, /snapshot failed/);
@@ -1797,8 +1797,8 @@ test('different pull request keys can post concurrently', { timeout: 1000 }, asy
     },
   ]);
   const results = await Promise.all([
-    postReview(reviewInput({ number: 50, head }), { agent: 'naru-orchestrator' }, { spawn }),
-    postReview(reviewInput({ number: 51, head }), { agent: 'naru-orchestrator' }, { spawn }),
+    postReview(reviewInput({ number: 50, head }), { agent: 'naru' }, { spawn }),
+    postReview(reviewInput({ number: 51, head }), { agent: 'naru' }, { spawn }),
   ]);
   assert.equal(started, 2);
   assert.ok(results.every((result) => result.ok), results.map((result) => result.error).join('\n'));
@@ -1810,7 +1810,7 @@ test('orchestrator caller posts through the same fixed one-POST path', async () 
     ...snapshotHandlers({ meta: pullMeta(head) }),
     { match: (argv) => argv.includes('POST'), reply: response({ id: 100 }) },
   ]);
-  const result = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn });
+  const result = await postReview(reviewInput({ head }), { agent: 'naru' }, { spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(calls.filter((call) => call.argv.includes('POST')).length, 1);
 });
@@ -1819,12 +1819,12 @@ test('post tool rejects head and feedback drift', async () => {
   const expectedHead = '6'.repeat(40);
   const otherHead = 'd'.repeat(40);
   const headDrift = fakeSpawn(snapshotHandlers({ meta: pullMeta(otherHead) }));
-  assert.match((await postReview(reviewInput({ head: expectedHead }), { agent: 'naru-orchestrator' }, { spawn: headDrift.spawn })).error, /(?:head SHA|headSha) mismatch/);
+  assert.match((await postReview(reviewInput({ head: expectedHead }), { agent: 'naru' }, { spawn: headDrift.spawn })).error, /(?:head SHA|headSha) mismatch/);
 
   const feedbackHead = '7'.repeat(40);
   const comments = [{ id: 10, body: 'new feedback', updated_at: 'now' }];
   const feedbackDrift = fakeSpawn(snapshotHandlers({ meta: pullMeta(feedbackHead), issueComments: comments }));
-  assert.match((await postReview(reviewInput({ head: feedbackHead }), { agent: 'naru-orchestrator' }, { spawn: feedbackDrift.spawn })).error, /(?:feedback digest|feedbackDigest) mismatch/);
+  assert.match((await postReview(reviewInput({ head: feedbackHead }), { agent: 'naru' }, { spawn: feedbackDrift.spawn })).error, /(?:feedback digest|feedbackDigest) mismatch/);
 });
 
 test('PR title and description participate in snapshot freshness', async () => {
@@ -1843,7 +1843,7 @@ test('PR title and description participate in snapshot freshness', async () => {
     meta: pullMeta(head, BASE, 1, 42, { body: 'Changed before posting' }),
   }));
   const initialResult = await postReview(
-    reviewInputV3({ head }), { agent: 'naru-orchestrator' }, { spawn: initialDrift.spawn },
+    reviewInputV3({ head }), { agent: 'naru' }, { spawn: initialDrift.spawn },
   );
   assert.match(initialResult.error, /(?:feedback digest|feedbackDigest) mismatch/);
   assert.equal(initialDrift.calls.some((call) => call.argv.includes('POST')), false);
@@ -1856,7 +1856,7 @@ test('PR title and description participate in snapshot freshness', async () => {
     })),
   }));
   const finalResult = await postReview(
-    reviewInputV3({ head: finalHead }), { agent: 'naru-orchestrator' }, { spawn: finalDrift.spawn },
+    reviewInputV3({ head: finalHead }), { agent: 'naru' }, { spawn: finalDrift.spawn },
   );
   assert.match(finalResult.error, /(?:final snapshot feedback digest|file batch manifest identity|bounded manifest feedbackDigest) mismatch/);
   assert.equal(finalDrift.calls.some((call) => call.argv.includes('POST')), false);
@@ -1869,7 +1869,7 @@ test('post tool refuses final head and feedback drift without POST', async () =>
   const headDrift = fakeSpawn(snapshotHandlers({
     metadataReply: () => response(pullMeta((metadataCalls++ < 2) ? head : movedHead)),
   }));
-  const headResult = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn: headDrift.spawn });
+  const headResult = await postReview(reviewInput({ head }), { agent: 'naru' }, { spawn: headDrift.spawn });
   assert.equal(headResult.ok, false);
   assert.match(headResult.error, /(?:final snapshot head SHA|file batch manifest identity|bounded manifest headSha) mismatch/);
   assert.equal(headDrift.calls.filter((call) => call.argv.includes('POST')).length, 0);
@@ -1887,7 +1887,7 @@ test('post tool refuses final head and feedback drift without POST', async () =>
     },
     ...snapshotHandlers({ meta: pullMeta(feedbackHead) }),
   ]);
-  const feedbackResult = await postReview(reviewInput({ head: feedbackHead }), { agent: 'naru-orchestrator' }, { spawn: feedbackDrift.spawn });
+  const feedbackResult = await postReview(reviewInput({ head: feedbackHead }), { agent: 'naru' }, { spawn: feedbackDrift.spawn });
   assert.equal(feedbackResult.ok, false);
   assert.match(feedbackResult.error, /(?:final snapshot feedback digest|file batch manifest identity|bounded manifest feedbackDigest) mismatch/);
   assert.equal(feedbackDrift.calls.filter((call) => call.argv.includes('POST')).length, 0);
@@ -1915,7 +1915,7 @@ test('post tool refuses final patch-evidence and pull-state drift without POST',
     ...snapshotHandlers({ meta: pullMeta(head) }),
   ]);
   const evidenceResult = await postReview(
-    reviewInputV3({ head }), { agent: 'naru-orchestrator' }, { spawn: evidenceDrift.spawn },
+    reviewInputV3({ head }), { agent: 'naru' }, { spawn: evidenceDrift.spawn },
   );
   assert.match(evidenceResult.error, /(?:review evidence.*changed|evidence digest mismatch|file batch digest mismatch)/);
   assert.equal(evidenceDrift.calls.some((call) => call.argv.includes('POST')), false);
@@ -1926,7 +1926,7 @@ test('post tool refuses final patch-evidence and pull-state drift without POST',
     metadataReply: () => response(pullMeta(stateHead, BASE, 1, 42, { draft: metadataCalls++ >= 2 })),
   }));
   const stateResult = await postReview(
-    reviewInputV3({ head: stateHead }), { agent: 'naru-orchestrator' }, { spawn: stateDrift.spawn },
+    reviewInputV3({ head: stateHead }), { agent: 'naru' }, { spawn: stateDrift.spawn },
   );
   assert.match(stateResult.error, /(?:state changed|compact manifest changed)/);
   assert.equal(stateDrift.calls.some((call) => call.argv.includes('POST')), false);
@@ -1946,7 +1946,7 @@ test('post tool drops invalid inline locations', async () => {
     { path: 'src/index.js', line: 1, side: 'RIGHT', body: 'valid', priority: 'P1', severity: 'High', confidence: 'High' },
     { path: 'src/index.js', line: 999, side: 'RIGHT', body: 'invalid', priority: 'P2', severity: 'Medium', confidence: 'Medium' },
   ] });
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(posted.comments.length, 1);
   assert.equal(result.data.droppedComments.length, 1);
@@ -1962,13 +1962,13 @@ test('post tool refuses a prior marker after same-head feedback identity changes
       return response({ id: 8 });
     } },
   ]);
-  const firstResult = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn: first.spawn });
+  const firstResult = await postReview(reviewInput({ head }), { agent: 'naru' }, { spawn: first.spawn });
   assert.equal(firstResult.ok, true, firstResult.error);
   const marker = reviewMarker(firstPost.body);
   const existingReview = [{ id: 8, commit_id: head, body: marker, html_url: 'review-url', user: { login: 'viewer' } }];
   const same = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), reviews: existingReview }));
   const sameInput = reviewInput({ head, reviews: existingReview });
-  const sameResult = await postReview(sameInput, { agent: 'naru-orchestrator' }, { spawn: same.spawn });
+  const sameResult = await postReview(sameInput, { agent: 'naru' }, { spawn: same.spawn });
   assert.equal(sameResult.ok, false);
   assert.match(sameResult.error, /different Naru review/);
   assert.equal(same.calls.some(call => call.argv.includes('POST')), false);
@@ -1981,7 +1981,7 @@ test('post tool refuses a prior marker after same-head feedback identity changes
   }];
   const conflict = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), reviews: conflictReview }));
   const conflictInput = reviewInput({ head, reviews: conflictReview });
-  const conflictResult = await postReview(conflictInput, { agent: 'naru-orchestrator' }, { spawn: conflict.spawn });
+  const conflictResult = await postReview(conflictInput, { agent: 'naru' }, { spawn: conflict.spawn });
   assert.equal(conflictResult.ok, false);
   assert.match(conflictResult.error, /different Naru review/);
 });
@@ -2003,11 +2003,11 @@ test('v5 dedupe binds same-head reviews to base and evidence identities', async 
       ...snapshotHandlers({ meta: pullMeta(head) }),
       { match: argv => argv.includes('POST'), reply: response({ id: Number.parseInt(seed, 16) }) },
     ]);
-    const initialResult = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn: initial.spawn });
+    const initialResult = await postReview(reviewInput({ head }), { agent: 'naru' }, { spawn: initial.spawn });
     assert.equal(initialResult.ok, true, initialResult.error);
 
     const changed = fakeSpawn(changedHandlers(head));
-    const changedResult = await postReview(changedInput(head), { agent: 'naru-orchestrator' }, { spawn: changed.spawn });
+    const changedResult = await postReview(changedInput(head), { agent: 'naru' }, { spawn: changed.spawn });
     assert.equal(changedResult.ok, false);
     assert.match(changedResult.error, /different Naru review/);
     assert.equal(changed.calls.some(call => call.argv.includes('POST')), false);
@@ -2021,7 +2021,7 @@ test('v5 dedupe identity binds profile, output mode, and objective assessment', 
     ...snapshotHandlers({ meta: pullMeta(head) }),
     { match: argv => argv.includes('POST'), reply: response({ id: 340 }) },
   ]);
-  assert.equal((await postReview(initialInput, { agent: 'naru-orchestrator' }, { spawn: initial.spawn })).ok, true);
+  assert.equal((await postReview(initialInput, { agent: 'naru' }, { spawn: initial.spawn })).ok, true);
 
   const changed = reviewInputV3({ head, findings: [], conclusion: 'clear' });
   changed.reviewResult.reviewProfile = 'release-critical';
@@ -2030,7 +2030,7 @@ test('v5 dedupe identity binds profile, output mode, and objective assessment', 
     source: 'pull-request', status: 'met', confidence: 'High', summary: 'Objective met.', rationale: 'Manifest evidence supports it.',
   };
   const changedFake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head) }));
-  const result = await postReview(changed, { agent: 'naru-orchestrator' }, { spawn: changedFake.spawn });
+  const result = await postReview(changed, { agent: 'naru' }, { spawn: changedFake.spawn });
   assert.equal(result.ok, false);
   assert.match(result.error, /different Naru review/);
   assert.equal(changedFake.calls.some(call => call.argv.includes('POST')), false);
@@ -2065,21 +2065,21 @@ test('v5 dedupe binds provenance digests and canonicalizes declaration ordering'
     ...snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files, reviews, issueComments }),
     { match: argv => argv.includes('POST'), reply: response({ id: 73 }) },
   ]);
-  assert.equal((await postReview(input, { agent: 'naru-orchestrator' }, { spawn: initial.spawn })).ok, true);
+  assert.equal((await postReview(input, { agent: 'naru' }, { spawn: initial.spawn })).ok, true);
 
   const reordered = structuredClone(input);
   reordered.reviewResult.coverage.fileBatches.reverse();
   reordered.reviewResult.coverage.recoveryBatches.reverse();
   reordered.reviewResult.coverage.feedbackPages.reverse();
   const identical = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files, reviews, issueComments }));
-  const identicalResult = await postReview(reordered, { agent: 'naru-orchestrator' }, { spawn: identical.spawn });
+  const identicalResult = await postReview(reordered, { agent: 'naru' }, { spawn: identical.spawn });
   assert.equal(identicalResult.ok, true, identicalResult.error);
   assert.equal(identicalResult.data.reason, 'alreadyPosted');
   assert.equal(identical.calls.some(call => call.argv.includes('POST')), false);
 
   const repartitioned = reviewInput({ head, files, reviews, issueComments, comments: [] });
   const changed = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files, reviews, issueComments }));
-  const changedResult = await postReview(repartitioned, { agent: 'naru-orchestrator' }, { spawn: changed.spawn });
+  const changedResult = await postReview(repartitioned, { agent: 'naru' }, { spawn: changed.spawn });
   assert.equal(changedResult.ok, false);
   assert.match(changedResult.error, /different Naru review/);
   assert.equal(changed.calls.some(call => call.argv.includes('POST')), false);
@@ -2093,12 +2093,12 @@ test('v5 dedupe canonicalizes semantically identical coverage ledger ordering', 
     ...snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }),
     { match: argv => argv.includes('POST'), reply: response({ id: 74 }) },
   ]);
-  assert.equal((await postReview(input, { agent: 'naru-orchestrator' }, { spawn: initial.spawn })).ok, true);
+  assert.equal((await postReview(input, { agent: 'naru' }, { spawn: initial.spawn })).ok, true);
 
   const reordered = structuredClone(input);
   reordered.reviewResult.coverage.ledger.reverse();
   const repeated = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }));
-  const repeatedResult = await postReview(reordered, { agent: 'naru-orchestrator' }, { spawn: repeated.spawn });
+  const repeatedResult = await postReview(reordered, { agent: 'naru' }, { spawn: repeated.spawn });
   assert.equal(repeatedResult.ok, true, repeatedResult.error);
   assert.equal(repeatedResult.data.reason, 'alreadyPosted');
   assert.equal(repeated.calls.some(call => call.argv.includes('POST')), false);
@@ -2113,7 +2113,7 @@ test('v5 dedupe binds coverage ledger status, evidence, and reason', async () =>
     ...snapshotHandlers({ meta: pullMeta(head), files }),
     { match: argv => argv.includes('POST'), reply: response({ id: 75 }) },
   ]);
-  assert.equal((await postReview(input, { agent: 'naru-orchestrator' }, { spawn: initial.spawn })).ok, true);
+  assert.equal((await postReview(input, { agent: 'naru' }, { spawn: initial.spawn })).ok, true);
 
   const variants: Array<(ledger: TestCoverageEntry) => void> = [
     ledger => { ledger.status = 'blocked'; },
@@ -2129,7 +2129,7 @@ test('v5 dedupe binds coverage ledger status, evidence, and reason', async () =>
       changedInput.reviewResult.submissionMode = 'limited';
     }
     const changed = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), files }));
-    const result = await postReview(changedInput, { agent: 'naru-orchestrator' }, { spawn: changed.spawn });
+    const result = await postReview(changedInput, { agent: 'naru' }, { spawn: changed.spawn });
     assert.equal(result.ok, false);
     assert.match(result.error, /different Naru review/);
     assert.equal(changed.calls.some(call => call.argv.includes('POST')), false);
@@ -2150,7 +2150,7 @@ test('post tool ignores marker-shaped text from another GitHub actor', async () 
   ]);
   const result = await postReview(
     reviewInput({ head, reviews: foreignReview }),
-    { agent: 'naru-orchestrator' },
+    { agent: 'naru' },
     { spawn },
   );
   assert.equal(result.ok, true, result.error);
@@ -2167,13 +2167,13 @@ test('ambiguous POST is never retried', async () => {
       return response('gateway timeout', false);
     } },
   ]);
-  const result = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn });
+  const result = await postReview(reviewInput({ head }), { agent: 'naru' }, { spawn });
   assert.equal(result.ok, false);
   assert.match(result.error, /outcomeUnknown/);
   assert.equal(result.postAttempted, true);
   assert.equal(result.correctable, false);
   assert.equal(result.outcomeUnknown, true);
-  const priorUnknown = await postReview(reviewInput({ head }), { agent: 'naru-orchestrator' }, { spawn });
+  const priorUnknown = await postReview(reviewInput({ head }), { agent: 'naru' }, { spawn });
   assert.match(priorUnknown.error, /prior in-process POST attempt/);
   assert.equal(priorUnknown.postAttempted, false);
   assert.equal(priorUnknown.correctable, false);
@@ -2206,8 +2206,8 @@ test('ambiguous formal review POSTs are attempted exactly once and remain termin
     const input = reviewInputV3({
       head: item.head, submissionPolicy: item.policy, conclusion: item.conclusion, findings: item.findings,
     });
-    const first = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
-    const second = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+    const first = await postReview(input, { agent: 'naru' }, { spawn });
+    const second = await postReview(input, { agent: 'naru' }, { spawn });
     assert.equal(postedEvent, item.event);
     assert.equal(first.outcomeUnknown, true);
     assert.equal(first.postAttempted, true);
@@ -2376,7 +2376,7 @@ test('honest non-material limitations in the bounded summary do not imply incomp
   ]);
   const input = reviewInput();
   input.reviewResult.summary = '## Review limitations\n\n- Did not run the browser suite\n- Native build not exercised';
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn });
   assert.equal(result.ok, true, result.error);
   assert.match(posted.body, /## Review limitations/);
   assert.match(posted.body, /Did not run the browser suite/);
@@ -2395,14 +2395,14 @@ test('bounded summary changes alter the dedupe digest', async () => {
   ]);
   const initial = reviewInput({ head });
   initial.reviewResult.summary = 'Browser suite not run';
-  assert.equal((await postReview(initial, { agent: 'naru-orchestrator' }, { spawn: first.spawn })).ok, true);
+  assert.equal((await postReview(initial, { agent: 'naru' }, { spawn: first.spawn })).ok, true);
 
   const marker = reviewMarker(posted.body);
   const reviews = [{ id: 302, commit_id: head, body: marker, user: { login: 'viewer' } }];
   const changed = reviewInput({ head, reviews });
   changed.reviewResult.summary = 'Native build not run';
   const second = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), reviews }));
-  const result = await postReview(changed, { agent: 'naru-orchestrator' }, { spawn: second.spawn });
+  const result = await postReview(changed, { agent: 'naru' }, { spawn: second.spawn });
   assert.equal(result.ok, false);
   assert.match(result.error, /different Naru review/);
   assert.equal(result.postAttempted, false);
@@ -2420,12 +2420,12 @@ test('v3 derived event and evidence limitations alter same-head dedupe', async (
     } },
   ]);
   const approve = reviewInputV3({ head: eventHead, submissionPolicy: 'approve-if-clear', conclusion: 'clear' });
-  assert.equal((await postReview(approve, { agent: 'naru-orchestrator' }, { spawn: firstEvent.spawn })).data.event, 'APPROVE');
+  assert.equal((await postReview(approve, { agent: 'naru' }, { spawn: firstEvent.spawn })).data.event, 'APPROVE');
   const eventMarker = reviewMarker(eventPost.body);
   const eventReviews = [{ id: 701, commit_id: eventHead, body: eventMarker, user: { login: 'viewer' } }];
   const secondEvent = fakeSpawn(snapshotHandlers({ meta: pullMeta(eventHead), reviews: eventReviews }));
   const comment = reviewInputV3({ head: eventHead, reviews: eventReviews, submissionPolicy: 'comment-only', conclusion: 'clear' });
-  const eventConflict = await postReview(comment, { agent: 'naru-orchestrator' }, { spawn: secondEvent.spawn });
+  const eventConflict = await postReview(comment, { agent: 'naru' }, { spawn: secondEvent.spawn });
   assert.match(eventConflict.error, /different Naru review/);
 
   const limitationHead = '72'.repeat(20);
@@ -2438,14 +2438,14 @@ test('v3 derived event and evidence limitations alter same-head dedupe', async (
     } },
   ]);
   const limited = reviewInputV3({ head: limitationHead, posture: 'limited', limitations: ['Browser suite not run'] });
-  assert.equal((await postReview(limited, { agent: 'naru-orchestrator' }, { spawn: firstLimitation.spawn })).ok, true);
+  assert.equal((await postReview(limited, { agent: 'naru' }, { spawn: firstLimitation.spawn })).ok, true);
   const limitationMarker = reviewMarker(limitationPost.body);
   const limitationReviews = [{ id: 702, commit_id: limitationHead, body: limitationMarker, user: { login: 'viewer' } }];
   const changed = reviewInputV3({
     head: limitationHead, reviews: limitationReviews, posture: 'limited', limitations: ['Native build not run'],
   });
   const secondLimitation = fakeSpawn(snapshotHandlers({ meta: pullMeta(limitationHead), reviews: limitationReviews }));
-  const limitationConflict = await postReview(changed, { agent: 'naru-orchestrator' }, { spawn: secondLimitation.spawn });
+  const limitationConflict = await postReview(changed, { agent: 'naru' }, { spawn: secondLimitation.spawn });
   assert.match(limitationConflict.error, /different Naru review/);
 
   const postureHead = '73'.repeat(20);
@@ -2457,13 +2457,13 @@ test('v3 derived event and evidence limitations alter same-head dedupe', async (
       return response({ id: 703 });
     } },
   ]);
-  assert.equal((await postReview(reviewInputV3({ head: postureHead }), { agent: 'naru-orchestrator' }, { spawn: firstPosture.spawn })).data.evidencePosture, 'complete');
+  assert.equal((await postReview(reviewInputV3({ head: postureHead }), { agent: 'naru' }, { spawn: firstPosture.spawn })).data.evidencePosture, 'complete');
   const postureMarker = reviewMarker(posturePost.body);
   const postureReviews = [{ id: 703, commit_id: postureHead, body: postureMarker, user: { login: 'viewer' } }];
   const secondPosture = fakeSpawn(snapshotHandlers({ meta: pullMeta(postureHead), reviews: postureReviews }));
   const postureConflict = await postReview(
     reviewInputV3({ head: postureHead, reviews: postureReviews, posture: 'limited', limitations: ['Manual coverage was limited'] }),
-    { agent: 'naru-orchestrator' }, { spawn: secondPosture.spawn },
+    { agent: 'naru' }, { spawn: secondPosture.spawn },
   );
   assert.match(postureConflict.error, /different Naru review/);
 });
@@ -2471,7 +2471,7 @@ test('v3 derived event and evidence limitations alter same-head dedupe', async (
 test('oversized summary is a correctable pre-POST failure with no I/O', async () => {
   let ioCalls = 0;
   const input = reviewInput({ body: 'x'.repeat(8193) });
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, {
+  const result = await postReview(input, { agent: 'naru' }, {
     spawn: async () => { ioCalls += 1; throw new Error('unexpected I/O'); },
   });
   assert.match(result.error, /invalid value for summary/);
@@ -2492,7 +2492,7 @@ test('rendered non-inline findings participate in final review body bounds', asy
       { body: 'y'.repeat(30 * 1024), priority: 'P2', severity: 'Medium', confidence: 'High' },
     ],
   });
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn });
   assert.match(result.error, /rendered non-inline findings exceed/);
   assert.equal(result.correctable, true);
   assert.equal(calls.some((call) => call.argv.includes('POST')), false);
@@ -2502,7 +2502,7 @@ test('initial submissionMode still refuses derived limited coverage', async () =
   const input = reviewInput({ status: 'incomplete', degraded: true });
   input.reviewResult.submissionMode = 'complete';
   const fake = fakeSpawn(snapshotHandlers());
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
   assert.match(result.error, /submissionMode=limited/);
   assert.equal(fake.calls.some(call => call.argv.includes('POST')), false);
 });
@@ -2534,7 +2534,7 @@ test('v5 posting reacquires multiple finite batches and never uses the monolithi
     { match: argv => argv.includes('POST'), reply: response({ id: 900 }) },
   ]);
   const input = reviewInput({ head, files, comments: [] });
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.ok, true, result.error);
   const fileReads = fake.calls.filter(call => call.argv[3] === 'GET' && has(call.argv, 'pulls/42/files'));
   assert.ok(fileReads.length > 4);
@@ -2552,7 +2552,7 @@ test('v5 posting acquires a 3000-file, 30-batch review with linear file-list tra
     ...snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }),
     { match: argv => argv.includes('POST'), reply: response({ id: 899 }) },
   ]);
-  const result = await postReview(reviewInput({ head, files, comments: [] }), { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(reviewInput({ head, files, comments: [] }), { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.ok, true, result.error);
   const fileReads = fake.calls.filter(call => call.argv[3] === 'GET' && has(call.argv, 'pulls/42/files'));
   const compactReads = fileReads.filter(call => call.argv[call.argv.indexOf('--jq') + 1]?.includes('map({filename'));
@@ -2616,7 +2616,7 @@ test('midstream evidence failure stops later pages and prevents POST', async () 
     { match: argv => argv.includes('POST'), reply: response({ id: 810 }) },
   ]);
   const result = await postReview(reviewInput({ head, files, comments: [] }),
-    { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+    { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.ok, false);
   assert.match(result.error, /truncated/);
   assert.equal(fake.calls.some(call => has(call.argv, 'per_page=16&page=3')), false);
@@ -2660,7 +2660,7 @@ test('v5 posting reconstructs scattered declared batches from one ordered eviden
     ...snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }),
     { match: argv => argv.includes('POST'), reply: response({ id: 898 }) },
   ]);
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.ok, true, result.error);
   const evidenceReads = fake.calls.filter(call => call.argv.includes('--jq')
     && argumentAfter(call.argv, '--jq').includes('patch_base64'));
@@ -2682,7 +2682,7 @@ test('internal v5 evidence reapplies the 16 MiB aggregate limit per declared bat
     ...snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }),
     { match: argv => argv.includes('POST'), reply: response({ id: 897 }) },
   ]);
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(result.data.evidencePosture, 'limited');
   assert.match(result.data.limitations.join('\n'), /aggregate patch evidence limit/);
@@ -2886,13 +2886,13 @@ test('v5 fork identity is required by posting freshness and bound into its marke
     ...snapshotHandlers({ meta: pullMeta(head, BASE, 1, 42, { headOwner, headRepo }) }),
     { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = parsePostedReview(options); return response({ id: 1199 }); } },
   ]);
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.ok, true, result.error);
   assert.match(posted.body, /headRepo=fork-owner\/fork-repo/);
 
   const stale = structuredClone(input);
   stale.reviewResult.snapshot.headRepo = 'other-fork';
-  const rejected = await postReview(stale, { agent: 'naru-orchestrator' }, {
+  const rejected = await postReview(stale, { agent: 'naru' }, {
     spawn: fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, 1, 42, { headOwner, headRepo }) })).spawn,
   });
   assert.match(rejected.error, /headRepo mismatch|snapshot ID mismatch/);
@@ -2943,7 +2943,7 @@ test('v5 posting reacquires recovered content in both freshness passes and rejec
     ...snapshotHandlers({ meta: pullMeta(head), files }),
     { match: argv => argv.includes('POST'), reply: response({ id: 1100 }) },
   ]);
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(result.data.evidencePosture, 'complete');
   assert.equal(fake.calls.filter(call => has(call.argv, '/contents/')).length, 4);
@@ -2951,7 +2951,7 @@ test('v5 posting reacquires recovered content in both freshness passes and rejec
   const tampered = structuredClone(input);
   requiredAt(tampered.reviewResult.coverage.recoveryBatches, 0).recoveryBatchDigest = 'f'.repeat(64);
   const rejected = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), files }));
-  const rejectedResult = await postReview(tampered, { agent: 'naru-orchestrator' }, { spawn: rejected.spawn });
+  const rejectedResult = await postReview(tampered, { agent: 'naru' }, { spawn: rejected.spawn });
   assert.match(rejectedResult.error, /recovery batch digest mismatch/);
   assert.equal(rejected.calls.some(call => call.argv.includes('POST')), false);
 });
@@ -2971,7 +2971,7 @@ test('recovered text supports path-level decisions but never unvalidated inline 
     ...snapshotHandlers({ meta: pullMeta(head), files }),
     { match: argv => argv.includes('POST'), reply: (_argv, options) => { posted = parsePostedReview(options); return response({ id: 1101 }); } },
   ]);
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(posted.event, 'REQUEST_CHANGES');
   assert.equal(posted.comments.length, 0);
@@ -3063,7 +3063,7 @@ test('complete-mode formal posting accepts valid line-map-limited evidence witho
     ...snapshotHandlers({ meta: pullMeta(head, BASE, files.length), files }),
     { match: argv => argv.includes('POST'), reply: response({ id: 1001 }) },
   ]);
-  const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+  const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
   assert.equal(result.ok, true, result.error);
   assert.equal(result.data.evidencePosture, 'complete');
   assert.equal(fake.calls.filter(call => call.argv.includes('POST')).length, 1);
@@ -3430,7 +3430,7 @@ test('v5 ledger and feedback acknowledgement are exact and caller completeness i
     const input = structuredClone(baseInput);
     input.reviewResult.coverage.ledger = item.ledger;
     const fake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head, BASE, 2), files }));
-    const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+    const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
     assert.match(result.error, item.error);
     assert.equal(fake.calls.some(call => call.argv.includes('POST')), false);
   }
@@ -3466,7 +3466,7 @@ test('legacy v2, v3, and v4 payloads are recognized but cannot create reviews', 
   for (const input of [v2, v3, v4]) {
     assert.ok([2, 3, 4].includes(validateReviewPayload(input).schemaVersion));
     let io = 0;
-    const result = await postReview(input, { agent: 'naru-orchestrator' }, {
+    const result = await postReview(input, { agent: 'naru' }, {
       spawn: async () => { io += 1; throw new Error('unexpected I/O'); },
     });
     assert.match(result.error, /schemas v2\/v3\/v4/);
@@ -3494,7 +3494,7 @@ test('current-head duplicate blockers are suppressed only from posting and retai
     ]);
     const result = await postReview(reviewInputV3({
       head, reviewComments, submissionPolicy: item.policy, conclusion: item.conclusion, findings: [finding],
-    }), { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+    }), { agent: 'naru' }, { spawn: fake.spawn });
     assert.equal(result.ok, true, result.error);
     assert.equal(posted.event, item.event);
     assert.equal(posted.comments.length, item.comments);
@@ -3519,7 +3519,7 @@ test('redacted changed paths are unpostable and never reach POST', async () => {
   assert.match(snapshot.reviewability.limitations.join('\n'), /redacted/);
 
   const postFake = fakeSpawn(snapshotHandlers({ meta: pullMeta(head), files }));
-  const result = await postReview(reviewInputV3({ head, files, posture: 'limited' }), { agent: 'naru-orchestrator' }, { spawn: postFake.spawn });
+  const result = await postReview(reviewInputV3({ head, files, posture: 'limited' }), { agent: 'naru' }, { spawn: postFake.spawn });
   assert.match(result.error, /unpostable/);
   assert.equal(postFake.calls.some(call => call.argv.includes('POST')), false);
 });
@@ -3532,7 +3532,7 @@ test('supersession ambiguous outcomes are terminal for identical and altered fol
     ...snapshotHandlers({ meta: pullMeta(head), files: missingFiles }),
     { match: argv => argv.includes('POST'), reply: (_argv, options) => { firstBody = parsePostedReview(options).body; return response({ id: 801 }); } },
   ]);
-  assert.equal((await postReview(reviewInputV3({ head, files: missingFiles, posture: 'limited' }), { agent: 'naru-orchestrator' }, { spawn: first.spawn })).ok, true);
+  assert.equal((await postReview(reviewInputV3({ head, files: missingFiles, posture: 'limited' }), { agent: 'naru' }, { spawn: first.spawn })).ok, true);
   const marker = reviewMarker(firstBody);
   const digest = markerDigest(marker);
   const predecessor = { id: 801, state: 'COMMENTED', commit_id: head, body: marker, user: { login: 'viewer' } };
@@ -3543,15 +3543,15 @@ test('supersession ambiguous outcomes are terminal for identical and altered fol
   ]);
   const input = reviewInputV3({ head, reviews: [predecessor] });
   input.reviewResult.supersedes = { reviewId: 801, digest };
-  const firstAttempt = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: ambiguous.spawn });
+  const firstAttempt = await postReview(input, { agent: 'naru' }, { spawn: ambiguous.spawn });
   assert.equal(firstAttempt.outcomeUnknown, true);
   assert.equal(firstAttempt.postAttempted, true);
-  const identical = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: ambiguous.spawn });
+  const identical = await postReview(input, { agent: 'naru' }, { spawn: ambiguous.spawn });
   assert.equal(identical.outcomeUnknown, true);
   assert.equal(identical.postAttempted, false);
   const altered = structuredClone(input);
   altered.reviewResult.summary = 'Altered superseding review';
-  const alteredResult = await postReview(altered, { agent: 'naru-orchestrator' }, { spawn: ambiguous.spawn });
+  const alteredResult = await postReview(altered, { agent: 'naru' }, { spawn: ambiguous.spawn });
   assert.equal(alteredResult.postAttempted, false);
   assert.match(alteredResult.error, /different Naru review/);
   assert.equal(posts, 1);
@@ -3595,7 +3595,7 @@ test('ambiguous supersession recovery finds the expected successor in either mar
     ]);
     const input = reviewInputV3({ head, reviews: [predecessor] });
     input.reviewResult.supersedes = { reviewId: predecessor.id, digest: predecessorDigest };
-    const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+    const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
     assert.equal(result.ok, true, result.error);
     assert.equal(result.data.recovered, true);
     assert.equal(result.data.reviewId, predecessor.id + 1000);
@@ -3642,10 +3642,10 @@ test('ambiguous supersession recovery stays unknown without one conflict-free ex
     ]);
     const input = reviewInputV3({ head, reviews: [predecessor] });
     input.reviewResult.supersedes = { reviewId: predecessor.id, digest: predecessorDigest };
-    const result = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+    const result = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
     assert.equal(result.outcomeUnknown, true);
     assert.equal(result.postAttempted, true);
-    const repeated = await postReview(input, { agent: 'naru-orchestrator' }, { spawn: fake.spawn });
+    const repeated = await postReview(input, { agent: 'naru' }, { spawn: fake.spawn });
     if (recoveryKind === 'missing') assert.equal(repeated.outcomeUnknown, true);
     assert.equal(repeated.postAttempted, false);
     assert.equal(fake.calls.filter(call => call.argv.includes('POST')).length, 1);
@@ -3660,7 +3660,7 @@ test('same-head limited v5 can be superseded once, while legacy predecessors are
     ...snapshotHandlers({ meta: pullMeta(head), files: missingFiles }),
     { match: argv => argv.includes('POST'), reply: (_argv, options) => { limitedBody = parsePostedReview(options).body; return response({ id: 901 }); } },
   ]);
-  assert.equal((await postReview(reviewInputV3({ head, files: missingFiles, posture: 'limited' }), { agent: 'naru-orchestrator' }, { spawn: limited.spawn })).ok, true);
+  assert.equal((await postReview(reviewInputV3({ head, files: missingFiles, posture: 'limited' }), { agent: 'naru' }, { spawn: limited.spawn })).ok, true);
   const marker = reviewMarker(limitedBody);
   const digest = markerDigest(marker);
   const predecessor = { id: 901, state: 'COMMENTED', commit_id: head, body: marker, user: { login: 'viewer' } };
@@ -3671,7 +3671,7 @@ test('same-head limited v5 can be superseded once, while legacy predecessors are
   ]);
   const completeInput = reviewInputV3({ head, reviews: [predecessor] });
   completeInput.reviewResult.supersedes = { reviewId: 901, digest };
-  const completeResult = await postReview(completeInput, { agent: 'naru-orchestrator' }, { spawn: complete.spawn });
+  const completeResult = await postReview(completeInput, { agent: 'naru' }, { spawn: complete.spawn });
   assert.equal(completeResult.ok, true, completeResult.error);
   assert.match(completeBody, /v=5 posture=complete supersedes=901/);
   assert.equal(complete.calls.filter(call => call.argv.includes('POST')).length, 1);
@@ -3682,14 +3682,14 @@ test('same-head limited v5 can be superseded once, while legacy predecessors are
   const rejected = fakeSpawn(snapshotHandlers({ meta: pullMeta(legacyHead), reviews: [legacy] }));
   const rejectedInput = reviewInputV3({ head: legacyHead, reviews: [legacy] });
   rejectedInput.reviewResult.supersedes = { reviewId: 903, digest: legacyDigest };
-  const rejectedResult = await postReview(rejectedInput, { agent: 'naru-orchestrator' }, { spawn: rejected.spawn });
+  const rejectedResult = await postReview(rejectedInput, { agent: 'naru' }, { spawn: rejected.spawn });
   assert.match(rejectedResult.error, /limited v4\/v5 COMMENT/);
   assert.equal(rejected.calls.some(call => call.argv.includes('POST')), false);
 });
 
 test('review policy docs lock authorization, formal gates, and one-POST terminal behavior', async () => {
   const [orchestrator, skill, command, readme, userGuide, agentsGuide, reviewLane, visualGuide] = await Promise.all([
-    readFile(new URL('../agents/naru-orchestrator.md', import.meta.url), 'utf8'),
+    readFile(new URL('../agents/naru.md', import.meta.url), 'utf8'),
     readFile(new URL('../skills/naru-review/SKILL.md', import.meta.url), 'utf8'),
     readFile(new URL('../commands/naru.md', import.meta.url), 'utf8'),
     readFile(new URL('../README.md', import.meta.url), 'utf8'),

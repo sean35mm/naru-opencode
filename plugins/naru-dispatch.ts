@@ -5,9 +5,9 @@
 // class's model and effort baked in (naru-reader-<class>, ...). The
 // orchestrator dispatches them through OpenCode's native task tool, so the
 // TUI's subagent rendering and click-through behave exactly as they do for
-// the base agents. Its opt-in MCP pass reads only merged server names and
-// enabled states. The plugin hooks config only — no tools, no events, no
-// session access — and policy synthesis is atomic.
+// the base agents. Its opt-in MCP pass reads only server names and enabled
+// states. The plugin hooks config only — no tools, no events, no session access
+// — and every config mutation is atomic.
 import { fileURLToPath } from 'node:url';
 import {
     applyDispatchToConfigAtomically,
@@ -81,7 +81,7 @@ export function createNaruDispatchHooks(runtime: RuntimeConfig | null, classes: 
                 return;
             }
             try {
-                const prompt = config.agent?.['naru-orchestrator']?.prompt;
+                const prompt = config.agent?.naru?.prompt;
                 if (typeof prompt !== 'string' || !prompt.includes(buildReviewDefaultsAppendix(runtime.review))) {
                     applyReviewDefaultsToConfig(config, runtime.review);
                 }

@@ -27,10 +27,10 @@ Restart OpenCode after the applied install.
 
 ## 2. Select the orchestrator
 
-Pick **`naru-orchestrator`** in OpenCode's agent picker, set it as `default_agent`, or start OpenCode with it:
+Pick **`naru`** in OpenCode's agent picker, set it as `default_agent`, or start OpenCode with it:
 
 ```sh
-opencode --agent naru-orchestrator
+opencode --agent naru
 ```
 
 ## 3. Ask for something

@@ -36,7 +36,7 @@ One visible primary orchestrator, three hidden leaf subagents, five validated to
 
 ```mermaid
 flowchart LR
-  ORC{{"naru-orchestrator<br/><small>primary · no bash · no edit</small>"}}
+  ORC{{"naru<br/><small>primary · no bash · no edit</small>"}}
   RD["naru-reader"]
   RUN["naru-runner<br/><small>+ bash</small>"]
   WR["naru-writer<br/><small>+ edit</small>"]
@@ -50,7 +50,7 @@ flowchart LR
 
 Agents (`agents/naru-*.md`):
 
-- **`naru-orchestrator`** — primary, visible. Coordinates, plans,
+- **`naru`** — primary, visible. Coordinates, plans,
   delegates, synthesizes. Its permission block starts at `'*': deny` and never allows `bash`,
   `edit`, or `apply_patch`, so it cannot run commands or change files. It may call `naru-git-read`,
   `naru-github-read`, `naru-github-post-review`, and `naru-worktree`.

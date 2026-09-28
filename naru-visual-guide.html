@@ -231,14 +231,14 @@
       <p class="section-number">01</p>
       <h2>Sixty-second overview</h2>
       <p class="section-intro">
-        You talk to <code>naru-orchestrator</code>. It cannot edit files or run bash — it reads,
+        You talk to <code>naru</code>. It cannot edit files or run bash — it reads,
         plans, and delegates. The topology is flat and fixed: one root, leaf subagents at depth 1.
         Subagents are hidden and carry <code>task: deny</code>, so nothing can spawn grandchildren.
         Breadth is unlimited by design; nesting does not exist.
       </p>
 
       <div class="flow" role="list" aria-label="How a task moves through Naru">
-        <div class="flow-step" role="listitem"><b>You ask</b><small>Plain request in OpenCode with <code>naru-orchestrator</code> selected. Your intent is the only source of authorization.</small></div>
+        <div class="flow-step" role="listitem"><b>You ask</b><small>Plain request in OpenCode with <code>naru</code> selected. Your intent is the only source of authorization.</small></div>
         <div class="flow-step" role="listitem"><b>It plans</b><small>Reads the repo, consults a fresh code graph or LSP if available, splits work at real boundaries.</small></div>
         <div class="flow-step" role="listitem"><b>It fans out</b><small>Readers investigate, runners run checks, writers edit — in parallel, all through the native <code>task</code> tool, on model-class variants when the model matters.</small></div>
         <div class="flow-step" role="listitem"><b>It verifies</b><small>Real evidence from actual runs, after every writer has finished — never a subagent's assurance.</small></div>
@@ -249,7 +249,7 @@
         <div class="card">
           <p class="meta">Agents</p>
           <h3>Four roles</h3>
-          <p class="micro"><code>naru-orchestrator</code> coordinates; <code>naru-reader</code> investigates; <code>naru-runner</code> checks; <code>naru-writer</code> — and only <code>naru-writer</code> — edits.</p>
+          <p class="micro"><code>naru</code> coordinates; <code>naru-reader</code> investigates; <code>naru-runner</code> checks; <code>naru-writer</code> — and only <code>naru-writer</code> — edits.</p>
         </div>
         <div class="card">
           <p class="meta">Skills</p>
@@ -290,7 +290,7 @@
       </p>
 
       <div class="tab-list" role="tablist" aria-label="Agent roles">
-        <button class="tab-button" role="tab" id="tab-orc" aria-controls="panel-orc" aria-selected="true">naru-orchestrator</button>
+        <button class="tab-button" role="tab" id="tab-orc" aria-controls="panel-orc" aria-selected="true">naru</button>
         <button class="tab-button" role="tab" id="tab-reader" aria-controls="panel-reader" aria-selected="false" tabindex="-1">naru-reader</button>
         <button class="tab-button" role="tab" id="tab-runner" aria-controls="panel-runner" aria-selected="false" tabindex="-1">naru-runner</button>
         <button class="tab-button" role="tab" id="tab-writer" aria-controls="panel-writer" aria-selected="false" tabindex="-1">naru-writer</button>
@@ -396,7 +396,7 @@
           <p>A stronger model for the orchestrator's planning, a cheaper one for wide reader fan-out — set it in <code>opencode.json</code>. No Naru-specific config file is involved:</p>
           <pre class="block">{
   "agent": {
-    "naru-orchestrator": { "model": "anthropic/claude-opus-5" },
+    "naru": { "model": "anthropic/claude-opus-5" },
     "naru-reader": { "model": "anthropic/claude-haiku-4-5" }
   }
 }</pre>
@@ -640,8 +640,8 @@ naru install</pre>
             and installs exactly one file — the <code>naru</code> command. It does not touch your
             OpenCode configuration; <code>naru install</code> does, and it previews every change
             and asks before applying anything. Restart OpenCode afterwards and pick
-            <code>naru-orchestrator</code> in the agent picker (or <code>opencode --agent
-            naru-orchestrator</code>).
+            <code>naru</code> in the agent picker (or <code>opencode --agent
+            naru</code>).
           </p>
         </div>
         <div class="card">

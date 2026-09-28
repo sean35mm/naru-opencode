@@ -53,7 +53,7 @@ flowchart LR
   D["Apply native install"]:::write
   I["Copy package and register native profile"]:::write
   J["Restart OpenCode"]:::gate
-  K["Choose parent model; configure workers"]:::entry
+  K["Choose parent model; configure workers; select naru"]:::entry
 
   subgraph targets["INSTALL TARGET"]
     direction TB

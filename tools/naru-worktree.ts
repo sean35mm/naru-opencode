@@ -128,8 +128,8 @@ const worktreeTool: WorktreeTool = {
     execute: async (args = {}, context = {}) => {
         let input;
         try {
-            if (context.agent !== 'naru-orchestrator')
-                throw new Error('naru-worktree is restricted to naru-orchestrator');
+            if (context.agent !== 'naru')
+                throw new Error('naru-worktree is restricted to naru');
             const directory = await workspaceDirectory(context);
             input = validate(args?.input);
             const config = await runtimeConfig(context);

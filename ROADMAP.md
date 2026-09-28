@@ -54,7 +54,7 @@ are fatal to adoption.
 4. **Provider neutrality.** Drop `model:` and `variant:` from the agent frontmatter so
    agents inherit the user's configured default model. Remove `naru-reader-deep`; with
    no model difference it is indistinguishable from `naru-reader`, and a lens belongs
-   in the dispatch prompt. Final roster: `naru-orchestrator`, `naru-reader`,
+   in the dispatch prompt. Final roster: `naru`, `naru-reader`,
    `naru-runner`, `naru-writer`.
 5. **Docs.** Curl install as the primary path, clone-and-run as the alternative, and a
    section on overriding any agent's model or permissions through the native

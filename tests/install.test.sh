@@ -26,7 +26,7 @@ for skill in naru-plan naru-impact naru-triage naru-review; do
   mkdir -p "$FIXTURE/skills/$skill"
   cp "$ROOT/skills/$skill/SKILL.md" "$FIXTURE/skills/$skill/SKILL.md"
 done
-cp "$ROOT/agents/naru-orchestrator.md" "$FIXTURE/agents/naru-orchestrator.md"
+cp "$ROOT/agents/naru.md" "$FIXTURE/agents/naru.md"
 cp "$ROOT/agents/naru-reader.md" "$FIXTURE/agents/naru-reader.md"
 cp "$ROOT/agents/naru-runner.md" "$FIXTURE/agents/naru-runner.md"
 cp "$ROOT/agents/naru-writer.md" "$FIXTURE/agents/naru-writer.md"
@@ -66,6 +66,8 @@ const manifest = await buildInstallManifest({
     { method: 'copy', source: `${sourceRoot}/commands/naru-plan.md`, path: 'commands/naru-plan.md' },
     { method: 'copy', source: `${sourceRoot}/agents/naru-plan.md`, path: 'agents/naru-plan.md' },
     { method: 'copy', source: `${sourceRoot}/agents/naru-review-post.md`, path: 'agents/naru-review-post.md' },
+    { method: 'copy', source: `${sourceRoot}/agents/naru-orchestrator.md`, path: 'agents/naru-orchestrator.md' },
+    { method: 'copy', source: `${sourceRoot}/tools/naru-doctor.js`, path: 'tools/naru-doctor.js' },
   ],
 });
 await writeFile(`${targetRoot}/.naru-install.json`, serializeInstallManifest(manifest));
@@ -84,7 +86,7 @@ has_mode_600() { [ "$(LC_ALL=C ls -ld "$1" | cut -c 2-10)" = "rw-------" ]; }
 has_native_inventory() {
   install_root="$1"
   [ "$(find "$install_root/skills" \( -type f -o -type l \) -name SKILL.md | wc -l | tr -d ' ')" -eq 4 ] || return 1
-  [ "$(find "$install_root/agents" \( -type f -o -type l \) -name 'naru-*.md' | wc -l | tr -d ' ')" -eq 4 ] || return 1
+  [ "$(find "$install_root/agents" \( -type f -o -type l \) \( -name 'naru.md' -o -name 'naru-*.md' \) | wc -l | tr -d ' ')" -eq 4 ] || return 1
   [ -f "$install_root/commands/naru.md" ] || return 1
   [ ! -e "$install_root/commands/naru-plan.md" ]
 }
@@ -155,8 +157,8 @@ T1="$TMP/t1"
 mkdir -p "$T1"
 apply_install --dir "$T1"
 if is_link "$T1/skills/naru-plan/SKILL.md"; then pass "symlinked skill"; else fail "symlinked skill"; fi
-if is_link "$T1/agents/naru-orchestrator.md"; then pass "symlinked orchestrator"; else fail "symlinked orchestrator"; fi
-if is_link "$T1/commands/naru.md" && grep -q 'agent: naru-orchestrator' "$T1/commands/naru.md" && grep -q 'subtask: false' "$T1/commands/naru.md" && grep -q '\$ARGUMENTS' "$T1/commands/naru.md"; then pass "native command forwards arguments to the orchestrator"; else fail "native command forwards arguments to the orchestrator"; fi
+if is_link "$T1/agents/naru.md"; then pass "symlinked orchestrator"; else fail "symlinked orchestrator"; fi
+if is_link "$T1/commands/naru.md" && grep -q 'agent: naru' "$T1/commands/naru.md" && grep -q 'subtask: false' "$T1/commands/naru.md" && grep -q '\$ARGUMENTS' "$T1/commands/naru.md"; then pass "native command forwards arguments to the orchestrator"; else fail "native command forwards arguments to the orchestrator"; fi
 if grep -q -- '--dry-run' "$T1/commands/naru.md" && grep -q -- '--comment-only' "$T1/commands/naru.md" && grep -q -- '--standard' "$T1/commands/naru.md" && grep -q 'independently' "$T1/commands/naru.md"; then pass "ship-review command documents batch and override semantics"; else fail "ship-review command documents batch and override semantics"; fi
 if has_native_inventory "$T1"; then pass "native skills, agents, and command installed"; else fail "native skills, agents, and command installed"; fi
 if is_file "$T1/tools/naru-git-read.js" && is_file "$T1/tools/naru-doctor.js" && is_file "$T1/tools/package.json"; then pass "tools and doctor copy-pinned with ESM marker"; else fail "tools and doctor copy-pinned with ESM marker"; fi
@@ -164,11 +166,11 @@ if is_dir "$T1/tools/naru-lib"; then pass "tool helper dir copy-pinned"; else fa
 if is_file "$T1/THIRD_PARTY_NOTICES" && grep -q '@clack/prompts 1.8.0' "$T1/THIRD_PARTY_NOTICES"; then pass "bundled prompt notices installed"; else fail "bundled prompt notices installed"; fi
 if is_file "$T1/tools/naru-worktree.js"; then pass "worktree runtime copy-pinned"; else fail "worktree runtime copy-pinned"; fi
 if is_file "$T1/naru-runtime.example.json"; then pass "runtime example copy-pinned"; else fail "runtime example copy-pinned"; fi
-if [ "$(grep -c '^  naru-worktree: allow$' "$T1/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$T1/agents/naru-writer.md"; then pass "global root and delegated runtime permissions"; else fail "global root and delegated runtime permissions"; fi
-if has_exact_figma_read_permissions "$T1/agents/naru-orchestrator.md" && has_exact_figma_read_permissions "$T1/agents/naru-reader.md"; then pass "orchestrator and reader allow only the six approved Figma tools"; else fail "orchestrator and reader allow only the six approved Figma tools"; fi
+if [ "$(grep -c '^  naru-worktree: allow$' "$T1/agents/naru.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$T1/agents/naru-writer.md"; then pass "global root and delegated runtime permissions"; else fail "global root and delegated runtime permissions"; fi
+if has_exact_figma_read_permissions "$T1/agents/naru.md" && has_exact_figma_read_permissions "$T1/agents/naru-reader.md"; then pass "orchestrator and reader allow only the six approved Figma tools"; else fail "orchestrator and reader allow only the six approved Figma tools"; fi
 if is_file "$T1/plugins/naru-dispatch.js" && [ "$(ls "$T1/plugins" | wc -l | tr -d " ")" = "1" ]; then pass "dispatch is the only plugin installed"; else fail "dispatch is the only plugin installed"; fi
-if grep -q 'applyDispatchToConfigAtomically' "$T1/plugins/naru-dispatch.js" && grep -q '"configuredTools": "off"' "$T1/naru-runtime.example.json"; then pass "configured MCP policy hook and off-by-default example installed"; else fail "configured MCP policy hook and off-by-default example installed"; fi
-if grep -q 'MCP permission prompt approves only that tool invocation' "$T1/agents/naru-orchestrator.md" && grep -q 'MCP permission prompt approves only that tool invocation' "$T1/agents/naru-writer.md"; then pass "eligible MCP roles retain authorization boundaries"; else fail "eligible MCP roles retain authorization boundaries"; fi
+if grep -q 'applyDispatchToConfigAtomically' "$T1/plugins/naru-dispatch.js" && grep -q '"configuredTools": "allow"' "$T1/naru-runtime.example.json"; then pass "configured MCP policy hook and explicit allow example installed"; else fail "configured MCP policy hook and explicit allow example installed"; fi
+if grep -q 'MCP permission prompt approves only that tool invocation' "$T1/agents/naru.md" && grep -q 'MCP permission prompt approves only that tool invocation' "$T1/agents/naru-writer.md"; then pass "eligible MCP roles retain authorization boundaries"; else fail "eligible MCP roles retain authorization boundaries"; fi
 if [ -f "$T1/commands/naru.md" ] && [ ! -e "$T1/commands/naru-review.md" ] && [ ! -e "$T1/agents/naru" ] && [ ! -e "$T1/commands/naru-plan.md" ]; then pass "single convenience command installed and retired commands absent"; else fail "single convenience command installed and retired commands absent"; fi
 
 # 2. Copy mode.
@@ -176,7 +178,7 @@ T2="$TMP/t2"
 mkdir -p "$T2"
 apply_install --dir "$T2" --copy
 if is_file "$T2/skills/naru-plan/SKILL.md"; then pass "copied skill"; else fail "copied skill"; fi
-if is_file "$T2/agents/naru-orchestrator.md"; then pass "copied orchestrator"; else fail "copied orchestrator"; fi
+if is_file "$T2/agents/naru.md"; then pass "copied orchestrator"; else fail "copied orchestrator"; fi
 if has_native_inventory "$T2"; then pass "four copied skills and four agents installed"; else fail "four copied skills and four agents installed"; fi
 if is_file "$T2/tools/naru-git-read.js"; then pass "copied tool"; else fail "copied tool"; fi
 
@@ -186,7 +188,7 @@ mkdir -p "$PROJECT"
 (cd "$PROJECT" && apply_install --project >/dev/null)
 if is_link "$PROJECT/.opencode/skills/naru-plan/SKILL.md"; then pass "project install"; else fail "project install"; fi
 if has_native_inventory "$PROJECT/.opencode"; then pass "four skills and four project agents installed"; else fail "four skills and four project agents installed"; fi
-if [ "$(grep -c '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru-orchestrator.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru-writer.md"; then pass "project root and delegated runtime permissions"; else fail "project root and delegated runtime permissions"; fi
+if [ "$(grep -c '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru.md")" -eq 1 ] && ! grep -qE '^  naru-worktree: allow$' "$PROJECT/.opencode/agents/naru-writer.md"; then pass "project root and delegated runtime permissions"; else fail "project root and delegated runtime permissions"; fi
 
 # 3. Paths with spaces.
 T3="$TMP/path with spaces/target"
@@ -259,13 +261,17 @@ if apply_install --copy --dir "$T7U" >/dev/null 2>&1; then fail "unowned selecte
 install_legacy_manifest() {
   legacy_target="$1"
   legacy_source="$legacy_target/legacy-source"
-  mkdir -p "$legacy_source/commands" "$legacy_source/agents" "$legacy_target/commands" "$legacy_target/agents"
+  mkdir -p "$legacy_source/commands" "$legacy_source/agents" "$legacy_source/tools" "$legacy_target/commands" "$legacy_target/agents" "$legacy_target/tools"
   printf '%s\n' 'legacy command' > "$legacy_source/commands/naru-plan.md"
   printf '%s\n' 'legacy agent' > "$legacy_source/agents/naru-plan.md"
   printf '%s\n' 'legacy review-post agent' > "$legacy_source/agents/naru-review-post.md"
+  printf '%s\n' 'legacy orchestrator' > "$legacy_source/agents/naru-orchestrator.md"
+  printf '%s\n' 'legacy doctor' > "$legacy_source/tools/naru-doctor.js"
   cp "$legacy_source/commands/naru-plan.md" "$legacy_target/commands/naru-plan.md"
   cp "$legacy_source/agents/naru-plan.md" "$legacy_target/agents/naru-plan.md"
   cp "$legacy_source/agents/naru-review-post.md" "$legacy_target/agents/naru-review-post.md"
+  cp "$legacy_source/agents/naru-orchestrator.md" "$legacy_target/agents/naru-orchestrator.md"
+  cp "$legacy_source/tools/naru-doctor.js" "$legacy_target/tools/naru-doctor.js"
   node "$LEGACY_MANIFEST_BUILDER" "$legacy_source" "$legacy_target" "$FIXTURE_PHYS/tools/naru-lib/install-manifest.mjs"
 }
 
@@ -274,17 +280,17 @@ mkdir -p "$T7R"
 install_legacy_manifest "$T7R"
 RETIRE_PREVIEW="$TMP/t7-retire-preview"
 "$FIXTURE/install.sh" --copy --dir "$T7R" > "$RETIRE_PREVIEW"
-if grep -q 'retire: commands/naru-plan.md' "$RETIRE_PREVIEW" && [ -f "$T7R/commands/naru-plan.md" ]; then pass "retirement preview lists healthy prior-owned assets"; else fail "retirement preview lists healthy prior-owned assets"; fi
+if grep -q 'retire: commands/naru-plan.md' "$RETIRE_PREVIEW" && grep -q 'retire: agents/naru-orchestrator.md' "$RETIRE_PREVIEW" && [ -f "$T7R/agents/naru-orchestrator.md" ]; then pass "retirement preview lists healthy prior-owned assets including renamed agent"; else fail "retirement preview lists healthy prior-owned assets including renamed agent"; fi
 apply_install --copy --dir "$T7R" >/dev/null
 RETIRE_BACKUP=$(backup_dir "$T7R")
-if [ ! -e "$T7R/commands/naru-plan.md" ] && [ ! -e "$T7R/agents/naru-plan.md" ] && [ ! -e "$T7R/agents/naru-review-post.md" ] && [ -f "$RETIRE_BACKUP/commands/naru-plan.md" ] && [ -f "$RETIRE_BACKUP/agents/naru-review-post.md" ] && [ -f "$RETIRE_BACKUP/.naru-transaction.json" ]; then pass "healthy retired assets are removed with rollback backup and receipt"; else fail "healthy retired assets are removed with rollback backup and receipt"; fi
-if node -e 'const m=require(process.argv[1]); if(m.managed.some(x=>x.path.startsWith("commands/naru-")||x.path==="agents/naru-plan.md")) process.exit(1)' "$T7R/.naru-install.json"; then pass "migration drops retired ownership"; else fail "migration drops retired ownership"; fi
+if [ ! -e "$T7R/commands/naru-plan.md" ] && [ ! -e "$T7R/agents/naru-plan.md" ] && [ ! -e "$T7R/agents/naru-review-post.md" ] && [ ! -e "$T7R/agents/naru-orchestrator.md" ] && [ -f "$T7R/agents/naru.md" ] && [ -f "$RETIRE_BACKUP/commands/naru-plan.md" ] && [ -f "$RETIRE_BACKUP/agents/naru-orchestrator.md" ] && [ -f "$RETIRE_BACKUP/.naru-transaction.json" ]; then pass "healthy retired assets are removed with rollback backup and receipt"; else fail "healthy retired assets are removed with rollback backup and receipt"; fi
+if node -e 'const m=require(process.argv[1]); if(m.managed.some(x=>x.path.startsWith("commands/naru-")||x.path==="agents/naru-plan.md"||x.path==="agents/naru-orchestrator.md")||!m.managed.some(x=>x.path==="agents/naru.md")) process.exit(1)' "$T7R/.naru-install.json"; then pass "migration drops retired ownership and tracks renamed agent"; else fail "migration drops retired ownership and tracks renamed agent"; fi
 RETIRE_ID=$(basename "$RETIRE_BACKUP")
 RETIRE_ROLLBACK_PREVIEW="$TMP/t7-retire-rollback-preview"
 "$FIXTURE/install.sh" --dir "$T7R" --rollback "$RETIRE_ID" > "$RETIRE_ROLLBACK_PREVIEW"
 RETIRE_ROLLBACK_TOKEN=$(preview_token "$RETIRE_ROLLBACK_PREVIEW")
 "$FIXTURE/install.sh" --dir "$T7R" --rollback "$RETIRE_ID" --apply --confirm-rollback "$RETIRE_ROLLBACK_TOKEN" >/dev/null
-if [ -f "$T7R/commands/naru-plan.md" ] && [ -f "$T7R/agents/naru-plan.md" ] && [ -f "$T7R/agents/naru-review-post.md" ]; then pass "retirement rollback restores prior manifest-owned assets"; else fail "retirement rollback restores prior manifest-owned assets"; fi
+if [ -f "$T7R/commands/naru-plan.md" ] && [ -f "$T7R/agents/naru-plan.md" ] && [ -f "$T7R/agents/naru-review-post.md" ] && [ -f "$T7R/agents/naru-orchestrator.md" ] && [ ! -e "$T7R/agents/naru.md" ]; then pass "retirement rollback restores prior manifest-owned assets"; else fail "retirement rollback restores prior manifest-owned assets"; fi
 
 T7RM="$TMP/t7-retire-modified"
 mkdir -p "$T7RM"
@@ -295,6 +301,16 @@ MODIFIED_RETIRE_PREVIEW="$TMP/t7-retire-modified-preview"
 if grep -q 'preserve-retired-modified: commands/naru-plan.md' "$MODIFIED_RETIRE_PREVIEW" && grep -q 'modified legacy command' "$T7RM/commands/naru-plan.md"; then pass "modified retired asset is clearly preserved by default"; else fail "modified retired asset is clearly preserved by default"; fi
 apply_install --copy --dir "$T7RM" >/dev/null
 if grep -q 'modified legacy command' "$T7RM/commands/naru-plan.md"; then pass "apply preserves modified retired asset"; else fail "apply preserves modified retired asset"; fi
+
+T7RA="$TMP/t7-retire-modified-agent"
+mkdir -p "$T7RA"
+install_legacy_manifest "$T7RA"
+printf '%s\n' 'user-modified orchestrator' > "$T7RA/agents/naru-orchestrator.md"
+MODIFIED_AGENT_PREVIEW="$TMP/t7-retire-modified-agent-preview"
+"$FIXTURE/install.sh" --copy --replace-conflicts --dir "$T7RA" > "$MODIFIED_AGENT_PREVIEW"
+if grep -q 'preserve-retired-modified: agents/naru-orchestrator.md' "$MODIFIED_AGENT_PREVIEW"; then pass "modified old agent is not retired even with replace-conflicts"; else fail "modified old agent is not retired even with replace-conflicts"; fi
+apply_install --copy --replace-conflicts --dir "$T7RA" >/dev/null
+if grep -q 'user-modified orchestrator' "$T7RA/agents/naru-orchestrator.md" && [ -f "$T7RA/agents/naru.md" ]; then pass "modified old agent remains beside new canonical agent"; else fail "modified old agent remains beside new canonical agent"; fi
 
 T7RX="$TMP/t7-retire-replace"
 mkdir -p "$T7RX"
@@ -308,6 +324,16 @@ mkdir -p "$T7RU/commands"
 printf '%s\n' 'unowned legacy command' > "$T7RU/commands/naru-plan.md"
 apply_install --copy --dir "$T7RU" >/dev/null
 if grep -q 'unowned legacy command' "$T7RU/commands/naru-plan.md"; then pass "unowned same-name retired path is preserved"; else fail "unowned same-name retired path is preserved"; fi
+mkdir -p "$T7RU/agents"
+printf '%s\n' 'unowned orchestrator' > "$T7RU/agents/naru-orchestrator.md"
+apply_install --copy --dir "$T7RU" >/dev/null
+if grep -q 'unowned orchestrator' "$T7RU/agents/naru-orchestrator.md"; then pass "unowned old agent is never retired"; else fail "unowned old agent is never retired"; fi
+
+T7RS="$TMP/t7-retire-selective"
+mkdir -p "$T7RS"
+install_legacy_manifest "$T7RS"
+apply_install --dir "$T7RS" --only tools/naru-doctor.js >/dev/null
+if [ -f "$T7RS/agents/naru-orchestrator.md" ] && [ ! -e "$T7RS/agents/naru.md" ] && node -e 'const m=require(process.argv[1]); if(!m.managed.some(x=>x.path==="agents/naru-orchestrator.md")) process.exit(1)' "$T7RS/.naru-install.json"; then pass "selective update preserves old agent and ownership"; else fail "selective update preserves old agent and ownership"; fi
 
 # 9. Source/target overlap rejection.
 T8="$TMP/t8"
@@ -718,12 +744,12 @@ LINK_TARGET="$TMP/only-link-target"
 mkdir -p "$LINK_TARGET"
 "$LINK_SOURCE_A/install.sh" --apply --dir "$LINK_TARGET" >/dev/null
 LINK_SOURCE_B_PHYS=$(CDPATH= cd -- "$LINK_SOURCE_B" && pwd -P)
-cp "$LINK_SOURCE_A/agents/naru-orchestrator.md" "$TMP/only-old-source-agent"
-printf '%s\n' 'replacement orchestrator' > "$LINK_SOURCE_B/agents/naru-orchestrator.md"
-"$LINK_SOURCE_B/install.sh" --apply --dir "$LINK_TARGET" --only agents/naru-orchestrator.md >/dev/null
-if [ -L "$LINK_TARGET/agents/naru-orchestrator.md" ] &&
-   [ "$(readlink "$LINK_TARGET/agents/naru-orchestrator.md")" = "$LINK_SOURCE_B_PHYS/agents/naru-orchestrator.md" ] &&
-   cmp -s "$LINK_SOURCE_A/agents/naru-orchestrator.md" "$TMP/only-old-source-agent"; then
+cp "$LINK_SOURCE_A/agents/naru.md" "$TMP/only-old-source-agent"
+printf '%s\n' 'replacement orchestrator' > "$LINK_SOURCE_B/agents/naru.md"
+"$LINK_SOURCE_B/install.sh" --apply --dir "$LINK_TARGET" --only agents/naru.md >/dev/null
+if [ -L "$LINK_TARGET/agents/naru.md" ] &&
+   [ "$(readlink "$LINK_TARGET/agents/naru.md")" = "$LINK_SOURCE_B_PHYS/agents/naru.md" ] &&
+   cmp -s "$LINK_SOURCE_A/agents/naru.md" "$TMP/only-old-source-agent"; then
   pass "--only replaces symlinks without writing through the live link"
 else
   fail "--only replaces symlinks without writing through the live link"

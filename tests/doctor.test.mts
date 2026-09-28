@@ -33,6 +33,8 @@ interface DoctorScope {
 
 interface DoctorReport {
   schemaVersion: number;
+  status: string;
+  native?: { registration: string };
   diagnostic: string;
   providerFree: boolean;
   readOnly: boolean;
@@ -64,12 +66,18 @@ test('runtime review defaults are backward-safe and strictly validated', () => {
   });
   assert.throws(() => parseRuntimeConfig({ review: { defaultProfile: 'critical' } }), /defaultProfile/);
   assert.throws(() => parseRuntimeConfig({ review: { ticket: true } }), /unknown fields/);
+  assert.equal(parseRuntimeConfig({}).mcp.configuredTools, 'off');
+  assert.equal(parseRuntimeConfig({ mcp: { configuredTools: 'ask' } }).mcp.configuredTools, 'ask');
+  assert.equal(parseRuntimeConfig({ mcp: { configuredTools: 'allow' } }).mcp.configuredTools, 'allow');
+  assert.throws(() => parseRuntimeConfig({ mcp: [] }), /plain object/);
+  assert.throws(() => parseRuntimeConfig({ mcp: { configuredTools: 'always' } }), /configuredTools/);
+  assert.throws(() => parseRuntimeConfig({ mcp: { enabled: true } }), /unknown fields/);
 });
 
 test('configured MCP runtime policy is backward-safe and strictly validated', () => {
   assert.deepEqual(parseRuntimeConfig({}).mcp, { configuredTools: 'off' });
   assert.deepEqual(parseRuntimeConfig({ mcp: { configuredTools: 'ask' } }).mcp, { configuredTools: 'ask' });
-  assert.throws(() => parseRuntimeConfig({ mcp: { configuredTools: 'allow' } }), /mcp\.configuredTools/);
+  assert.equal(parseRuntimeConfig({ mcp: { configuredTools: 'allow' } }).mcp.configuredTools, 'allow');
   assert.throws(() => parseRuntimeConfig({ mcp: { configuredTools: true } }), /mcp\.configuredTools/);
   assert.throws(() => parseRuntimeConfig({ mcp: { extra: 'ask' } }), /unknown fields/);
 });
@@ -129,7 +137,10 @@ ${mode === 'timeout' ? 'await new Promise(()=>{});' : mode === 'overflow' ? "pro
 let seq=0,delayed=false;const observationDelay=${mode === 'delayed' ? 1250 : 0};const sessions=new Map(),pending=new Map(),attempted=new Map();const body=req=>new Promise(resolve=>{let value='';req.on('data',chunk=>value+=chunk);req.on('end',()=>resolve(value?JSON.parse(value):{}))});const send=(res,value)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(value))};const rules=name=>[{permission:'*',pattern:'*',action:'deny'},{permission:'edit',pattern:'*',action:'deny'},{permission:'task',pattern:'*',action:'deny'},...(['naru-orchestrator','naru-writer','naru-writer-smoke'].includes(name)?[{permission:'safe_tools_*',pattern:'*',action:'ask'},{permission:'codebase_*',pattern:'*',action:'ask'},{permission:'safe_tools_delete',pattern:'*',action:'deny'}]:[]),...(name==='naru-orchestrator'?[{permission:'codebase-memory-mcp_search_graph',pattern:'*',action:'allow'}]:[])];const hostAgents=['naru-orchestrator','naru-reader','naru-runner','naru-writer'].flatMap(name=>[{name,permission:rules(name),options:{}},...(name==='naru-orchestrator'?[]:[{name,permission:rules(name+'-smoke'),variant:'high',options:{naruVariant:true}}])]);
 const server=http.createServer(async(req,res)=>{const url=new URL(req.url,'http://127.0.0.1');if(url.pathname==='/global/health')send(res,{healthy:true});else if(url.pathname==='/agent')send(res,hostAgents);else if((url.pathname==='/api/session'||url.pathname==='/session')&&req.method==='POST'){const input=await body(req),id='ses_'+(++seq);sessions.set(id,input.agent);pending.set(id,[]);send(res,url.pathname==='/session'?{id}:{data:{id}})}else if(url.pathname==='/permission'&&req.method==='GET')send(res,[...pending.values()].flat());else{const message=url.pathname.match(/^\\/session\\/(ses_[0-9]+)\\/message$/);if(message&&req.method==='GET'){send(res,[{parts:[{type:'tool',tool:attempted.get(message[1]),state:{status:'error'}}]}]);return}const prompt=url.pathname.match(/^\\/session\\/(ses_[0-9]+)\\/prompt_async$/);if(prompt&&req.method==='POST'){const input=await body(req),agent=sessions.get(prompt[1]),action=String(input.parts?.[0]?.text||'').split(':').at(-1),config=JSON.parse(readFileSync(path.join(process.cwd(),'opencode.json'),'utf8'));attempted.set(prompt[1],action);if(observationDelay&&!delayed){delayed=true;await new Promise(resolve=>setTimeout(resolve,observationDelay))}await fetch(config.provider.openai.options.baseURL+'/responses',{method:'POST',body:'{}'});if(['naru-orchestrator','naru-writer','naru-writer-smoke'].includes(agent)&&['safe_tools_read','codebase_read'].includes(action))pending.get(prompt[1]).push({sessionID:prompt[1],permission:action});res.writeHead(204);res.end();return}const match=url.pathname.match(/^\\/api\\/session\\/(ses_[0-9]+)\\/permission$/);if(!match){res.writeHead(404);res.end('{}');return}const id=match[1];if(req.method==='GET'){send(res,{data:pending.get(id)||[]});return}const input=await body(req),agent=sessions.get(id),eligible=['naru-orchestrator','naru-writer','naru-writer-smoke'].includes(agent);const effect=eligible&&['safe_tools_read','codebase_read'].includes(input.action)?'ask':agent==='naru-orchestrator'&&input.action==='codebase-memory-mcp_search_graph'?'allow':'deny';const item={id:'per_'+(++seq),action:input.action,effect};if(effect==='ask')pending.get(id).push(item);send(res,{data:item})}});server.listen(Number(args[4]),'127.0.0.1');process.on('SIGTERM',()=>server.close(()=>process.exit(0)));
 `;
-  await writeFile(executable, source, { mode: 0o755 });
+  await writeFile(executable, source.replaceAll('naru-orchestrator', 'naru').replaceAll(
+    "'naru','naru-writer','naru-writer-smoke'",
+    "'naru','naru-reader','naru-runner','naru-writer','naru-reader-smoke','naru-runner-smoke','naru-writer-smoke'",
+  ), { mode: 0o755 });
   return executable;
 }
 
@@ -240,6 +251,7 @@ test('doctor is read-only and diagnoses scope, default depth, and source generat
     const doctor = path.join(target, 'tools', 'naru-doctor.js');
     const manifestPath = path.join(target, '.naru-install.json');
     const manifestBefore = await readFile(manifestPath, 'utf8');
+    await assert.rejects(readFile(path.join(target, 'naru-runtime.json')), (error) => error instanceof Error && 'code' in error && error.code === 'ENOENT');
 
     let report = runDoctor(doctor, { home, project, source });
     assert.equal(report.schemaVersion, 3);
@@ -265,6 +277,10 @@ test('doctor is read-only and diagnoses scope, default depth, and source generat
     );
     assert.equal(JSON.stringify(report).includes(temporary), false);
     assert.equal(await readFile(manifestPath, 'utf8'), manifestBefore);
+
+    await writeFile(path.join(target, 'naru-runtime.json'), JSON.stringify({ mcp: { configuredTools: 'allow' } }));
+    report = runDoctor(doctor, { home, project, source });
+    assert.equal(report.scopes.find(scope => scope.id === 'global')?.runtime.configuredMcpTools, 'allow');
 
     await writeFile(path.join(target, 'opencode.json'), '{"mcp":{"foo":{}}}\n');
     await writeFile(path.join(project, 'opencode.jsonc'), '{\n  // project wins\n  "subagent_depth": 4,\n  "mcp": {\n    "foo_bar": {},\n    "disabled": { "enabled": false },\n    "codebase-memory-mcp": {}\n  },\n}\n');
@@ -344,6 +360,19 @@ test('normal CLI doctor inspects a packaged native install, not historical v1 as
     doctor = invoke(['doctor', '--json']);
     assert.equal(doctor.status, 0, doctor.stderr + doctor.stdout);
     assert.equal(JSON.parse(doctor.stdout).native.workers, 1);
+    const manualAgent = path.join(configRoot, 'agents', 'naru.md');
+    await mkdir(path.dirname(manualAgent));
+    await writeFile(manualAgent, 'user-owned Naru agent\n');
+    doctor = invoke(['doctor', '--json']);
+    assert.equal(doctor.status, 1);
+    const collision = JSON.parse(doctor.stdout) as DoctorReport;
+    assert.equal(collision.status, 'warning');
+    assert.equal(collision.native?.registration, 'invalid');
+    assert.ok(collision.issues.some(issue => issue.code === 'native-agent-collision'));
+    assert.equal(await readFile(manualAgent, 'utf8'), 'user-owned Naru agent\n');
+    await rm(manualAgent);
+    doctor = invoke(['doctor', '--json']);
+    assert.equal(doctor.status, 0, doctor.stderr + doctor.stdout);
     const packageFile = path.join(home, '.config/opencode/.naru-native/package/tools/oc2-native-plugin/command.md');
     await appendFile(packageFile, '\nmodified\n');
     doctor = invoke(['doctor', '--json']);

@@ -105,7 +105,7 @@ export async function installNative(configRoot: string, sourceRoot: string, appl
     await verifyNativeHostVersion(executable);
     if (await safeDirectory(configRoot)) {
         for (const directory of ['commands', 'command', 'plugins', 'agents']) await safeDirectory(join(configRoot, directory));
-        for (const name of ['opencode.jsonc', 'commands/naru', 'commands/naru.md', 'command/naru', 'command/naru.md', 'plugins/naru-dispatch.js', 'agents/naru', 'agents/naru-orchestrator.md']) if (await occupied(join(configRoot, name))) throw new Error(`Existing configuration or v1 asset requires explicit manual cutover: ${name}`);
+        for (const name of ['opencode.jsonc', 'commands/naru', 'commands/naru.md', 'command/naru', 'command/naru.md', 'plugins/naru-dispatch.js', 'agents/naru', 'agents/naru.md', 'agents/naru-orchestrator.md']) if (await occupied(join(configRoot, name))) throw new Error(`Existing configuration or v1 asset requires explicit manual cutover: ${name}`);
         if (await regular(join(configRoot, '.naru-install.json'))) throw new Error('Existing v1 install requires explicit manual cutover; native install did not modify it');
         if (await regular(paths.configPath)) {
             let config: unknown;

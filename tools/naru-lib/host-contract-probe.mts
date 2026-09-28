@@ -149,7 +149,7 @@ export async function runBoundedProcess(executable: string, args: readonly strin
 export function coreConfigContractFailures(value: unknown): string[] {
     if (!isRecord(value) || !isRecord(value.agent)) return ['config-agent-map-missing'];
     const agents = value.agent;
-    const orchestrator = agents['naru-orchestrator'];
+    const orchestrator = agents.naru;
     if (!isRecord(orchestrator) || orchestrator.mode !== 'primary' || !isRecord(orchestrator.permission)) return ['orchestrator-contract-invalid'];
     const task = orchestrator.permission.task;
     if (!isRecord(task) || task['*'] !== 'deny') return ['orchestrator-task-boundary-invalid'];
@@ -163,7 +163,7 @@ export function coreConfigContractFailures(value: unknown): string[] {
             continue;
         }
         if (base.permission['*'] !== 'deny' || base.permission.task !== 'deny' || base.permission.edit !== (role === 'naru-writer' ? 'allow' : 'deny')) failures.push(`${role}:native-boundary-changed`);
-        if (role === 'naru-runner' && (base.permission.bash !== 'deny' || base.permission['naru-check'] !== 'allow')) failures.push('naru-runner:bash-boundary-changed');
+        if (role === 'naru-runner' && (!isRecord(base.permission.bash) || base.permission.bash['*'] !== 'allow')) failures.push('naru-runner:bash-boundary-changed');
         if (!isRecord(variant) || variant.model !== 'openai/naru-compat-fixture' || variant.variant !== 'high' || task[`${role}-smoke`] !== 'allow') failures.push(`${role}:variant-contract-invalid`);
     }
     return failures;
@@ -212,7 +212,7 @@ process.stdin.on('data', chunk => {
     await mkdir(path.join(globalRoot, 'plugins'), { recursive: true, mode: 0o700 });
     await writeFile(path.join(globalRoot, 'plugins', 'z-naru-contract-fixture.js'), `export default async () => ({
   config: async config => {
-    for (const name of ['naru-orchestrator', 'naru-writer', 'naru-writer-smoke']) {
+    for (const name of ['naru', 'naru-reader', 'naru-runner', 'naru-writer', 'naru-reader-smoke', 'naru-runner-smoke', 'naru-writer-smoke']) {
       const permission = config.agent?.[name]?.permission;
       if (permission && typeof permission === 'object') permission.safe_tools_delete = 'deny';
     }
@@ -369,27 +369,23 @@ export async function runHostContractProbe({ executable, cwd, env, marker, timeo
             return { status: 'failed', diagnostic: 'host-resolved-agent-contract-missing', observations };
         }
         const rules = new Map<string, unknown[]>();
-        for (const role of ['naru-orchestrator', 'naru-writer', 'naru-writer-smoke', 'naru-reader', 'naru-runner', 'naru-reader-smoke', 'naru-runner-smoke']) {
+        for (const role of ['naru', 'naru-writer', 'naru-writer-smoke', 'naru-reader', 'naru-runner', 'naru-reader-smoke', 'naru-runner-smoke']) {
             const permission = resolvedAgentRules(resolvedAgents, role);
             if (permission === null) return { status: 'failed', diagnostic: `host-agent-permissions-missing:${role}`, observations };
             rules.set(role, permission);
         }
         const hasRule = (role: string, permission: string, action: string) => rules.get(role)?.some(rule => isRecord(rule) && rule.permission === permission && rule.action === action) === true;
-        for (const role of ['naru-orchestrator', 'naru-writer', 'naru-writer-smoke']) {
+        for (const role of ['naru', 'naru-writer', 'naru-writer-smoke', 'naru-reader', 'naru-runner', 'naru-reader-smoke', 'naru-runner-smoke']) {
             if (!hasRule(role, 'safe_tools_*', 'ask') || !hasRule(role, 'codebase_*', 'ask') || hasRule(role, 'override_me_*', 'ask')) return { status: 'failed', diagnostic: `resolved-mcp-rules-invalid:${role}`, observations };
             if (!hasRule(role, 'safe_tools_delete', 'deny')) return { status: 'failed', diagnostic: `resolved-exact-deny-missing:${role}`, observations };
             for (const admin of ['codebase-memory-mcp_delete_project', 'codebase-memory-mcp_index_repository', 'codebase-memory-mcp_ingest_traces']) {
                 if (hasRule(role, admin, 'allow')) return { status: 'failed', diagnostic: `resolved-protected-admin-allowed:${role}:${admin}`, observations };
             }
         }
-        for (const role of ['naru-reader', 'naru-runner', 'naru-reader-smoke', 'naru-runner-smoke']) {
-            if (hasRule(role, 'safe_tools_*', 'ask') || hasRule(role, 'codebase_*', 'ask')) return { status: 'failed', diagnostic: `resolved-read-only-rules-broadened:${role}`, observations };
-        }
-        if (!hasRule('naru-orchestrator', '*', 'deny') || !hasRule('naru-writer', '*', 'deny') || !hasRule('naru-orchestrator', 'codebase-memory-mcp_search_graph', 'allow')) return { status: 'failed', diagnostic: 'resolved-native-or-curated-rules-invalid', observations };
+        if (!hasRule('naru', '*', 'deny') || !hasRule('naru-writer', '*', 'deny') || !hasRule('naru', 'codebase-memory-mcp_search_graph', 'allow')) return { status: 'failed', diagnostic: 'resolved-native-or-curated-rules-invalid', observations };
         const expectations = [
-            ...['naru-orchestrator', 'naru-writer', 'naru-writer-smoke'].flatMap(agent => [{ agent, action: 'safe_tools_read', effect: 'ask' as const }, { agent, action: 'safe_tools_delete', effect: 'deny' as const }]),
-            { agent: 'naru-orchestrator', action: 'codebase_read', effect: 'ask' as const },
-            ...['naru-reader', 'naru-runner', 'naru-reader-smoke', 'naru-runner-smoke'].map(agent => ({ agent, action: 'safe_tools_read', effect: 'deny' as const })),
+            ...['naru', 'naru-writer', 'naru-writer-smoke', 'naru-reader', 'naru-runner', 'naru-reader-smoke', 'naru-runner-smoke'].flatMap(agent => [{ agent, action: 'safe_tools_read', effect: 'ask' as const }, { agent, action: 'safe_tools_delete', effect: 'deny' as const }]),
+            { agent: 'naru', action: 'codebase_read', effect: 'ask' as const },
         ];
         for (const expected of expectations) {
             if (Date.now() >= deadline) return { status: 'failed', diagnostic: 'host-permission-api-timeout', observations };

@@ -200,6 +200,7 @@ export interface LifecyclePlan {
     token: string;
 }
 export const RETIRED_MANAGED_PATHS = new Set([
+    'agents/naru-orchestrator.md',
     'commands/naru-plan.md',
     'commands/naru-impact.md',
     'commands/naru-triage.md',
@@ -1159,7 +1160,7 @@ export async function classifyInstallPlan({ targetRoot, desiredManifest: desired
                     action = 'retire';
                     reason = 'previously-owned-and-unmodified';
                 }
-                else if (replaceConflicts) {
+                else if (replaceConflicts && entry.path !== 'agents/naru-orchestrator.md') {
                     action = 'retire';
                     reason = 'reviewed-conflict-choice';
                 }

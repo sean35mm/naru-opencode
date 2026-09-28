@@ -28,7 +28,7 @@ flowchart TB
 
   subgraph impl["IMPLEMENTATION — the only path to your files"]
     direction TB
-    ORC{{"naru-orchestrator<br/>cannot edit · cannot run bash"}}:::coord
+    ORC{{"naru<br/>cannot edit · cannot run bash"}}:::coord
     ORC --> RD["naru-reader"]:::read
     ORC --> RUN["naru-runner<br/>tests · typecheck · build"]:::shell
     ORC --> WR["naru-writer<br/>the only role that edits"]:::write

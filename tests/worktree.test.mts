@@ -141,7 +141,7 @@ test('isolated writers integrate serially and leave the main branch uncommitted'
   const recoveryOutput = JSON.parse(await worktreeTool.execute({
     input: { operation: 'recover_run', runId: 'run-a' },
   }, {
-    agent: 'naru-orchestrator',
+    agent: 'naru',
     directory: repository,
     runtimeConfig: { implementation: { workspaceMode: 'worktree' } },
     worktreeRoot,
@@ -205,7 +205,7 @@ test('isolated writer mode refuses dirty repositories and tool mode can be disab
   );
 
   const output = JSON.parse(await worktreeTool.execute({ input: { operation: 'prepare_run', runId: 'disabled' } }, {
-    agent: 'naru-orchestrator',
+    agent: 'naru',
     directory: repository,
     runtimeConfig: { implementation: { workspaceMode: 'shared' } },
     spawn: nodeSpawn,
@@ -235,10 +235,10 @@ test('worktree tool denies unauthorized callers and invalid workspace paths befo
 
   const denied = JSON.parse(await worktreeTool.execute(input, context)) as WorktreeToolOutput;
   assert.equal(denied.ok, false);
-  assert.match(denied.error ?? '', /restricted to naru-orchestrator/);
+  assert.match(denied.error ?? '', /restricted to naru/);
   const invalidDirectory = JSON.parse(await worktreeTool.execute(input, {
     ...context,
-    agent: 'naru-orchestrator',
+    agent: 'naru',
     directory: 'relative/repository',
   })) as WorktreeToolOutput;
   assert.equal(invalidDirectory.ok, false);

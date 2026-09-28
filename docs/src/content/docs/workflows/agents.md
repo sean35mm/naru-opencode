@@ -3,13 +3,15 @@ title: Agent workflows
 description: The four Naru agents, their exact permissions, and when the orchestrator picks each.
 ---
 
-Naru installs four OpenCode agents: one visible primary orchestrator and three hidden subagents. The orchestrator plans and delegates; it cannot edit files or run commands. Exactly one subagent — `naru-writer` — can change your workspace.
+This page describes the historical v1 agents installed with `--legacy`. The normal native OpenCode 2.0.15 install uses a visible, explicitly selected worker pool; see [installation](/naru-opencode/getting-started/installation/).
+
+The historical v1 install has four OpenCode agents: one visible primary orchestrator and three hidden subagents. The orchestrator plans and delegates; it cannot edit files or run commands. Exactly one subagent — `naru-writer` — can change your workspace.
 
 The topology is flat. The orchestrator is the only root, the three subagents are leaves, and every subagent has `task: deny`, so nothing can spawn grandchildren. `subagent_depth` of `1` is enough; OpenCode's default is fine.
 
 ```mermaid
 flowchart TB
-  ORC{{"naru-orchestrator — plans, never edits, never runs commands"}}:::coord
+  ORC{{"naru — plans, never edits, never runs commands"}}:::coord
   RD["naru-reader"]:::read
   RUN["naru-runner"]:::shell
   WR["naru-writer"]:::write
@@ -33,12 +35,12 @@ flowchart TB
 
 | Agent | Mode | Role |
 | --- | --- | --- |
-| `naru-orchestrator` | primary, visible | Plans, delegates, integrates, reports |
+| `naru` | primary, visible | Plans, delegates, integrates, reports |
 | `naru-reader` | subagent, hidden | Read-only investigation |
 | `naru-runner` | subagent, hidden | Read-only plus contained verification in a disposable copy |
 | `naru-writer` | subagent, hidden | The only role that can edit |
 
-You select `naru-orchestrator` in the OpenCode agent picker. The three subagents are `hidden: true`; they are dispatch targets for the orchestrator, not things you pick.
+You select `naru` in the OpenCode agent picker. The three subagents are `hidden: true`; they are dispatch targets for the orchestrator, not things you pick.
 
 ## Code intelligence
 
@@ -78,7 +80,7 @@ To give a role its own model — a stronger one for the orchestrator's planning,
 ```json
 {
   "agent": {
-    "naru-orchestrator": { "model": "anthropic/claude-opus-5" },
+    "naru": { "model": "anthropic/claude-opus-5" },
     "naru-reader": { "model": "anthropic/claude-haiku-4-5" }
   }
 }
@@ -106,7 +108,8 @@ Every agent starts from `'*': deny` and allows only what its role needs.
 | `naru-check` | deny | deny | allow | allow |
 | `edit`, `apply_patch` | deny | deny | deny | **allow** |
 | `task` (spawn) | three subagents (plus their generated class variants) | deny | deny | deny |
-| `external_directory` | — | deny | deny | allow |
+| configured MCP namespaces | runtime `off`/`ask`/`allow` | runtime `off`/`ask`/`allow` | runtime `off`/`ask`/`allow` | runtime `off`/`ask`/`allow` |
+| `external_directory` | — | deny | allow | allow |
 | `question` (ask the user) | allow | deny | deny | deny |
 | `naru-git-read`, `naru-github-read` | allow | allow | allow | allow |
 | `naru-github-post-review` | allow | deny | deny | deny |
@@ -116,7 +119,9 @@ When model classes are configured, the generated `naru-reader-<class>`, `naru-ru
 
 Read denials are identical across all four: `.git/**`, `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH and GPG key material, and `**/.ssh/**`, `**/.aws/**`, `**/.kube/**`, `**/.gnupg/**`, `**/credentials/**`, `**/secrets/**`. `*.env.example` and `env.example` stay readable, so templates still work.
 
-The two readers are fail-closed: `bash: deny` and `external_directory: deny` mean a reader cannot escape into a shell or reach outside the workspace even if something in the repository tells it to.
+The two readers are fail-closed for native tools: `bash: deny` and `external_directory: deny` mean a reader cannot escape into a shell or reach outside the workspace even if something in the repository tells it to.
+
+With `mcp.configuredTools: "allow"`, the plugin grants each eligible configured server namespace to all four base roles and all generated variants. MCP tools are trusted integrations and may mutate data, so this opt-in means the native reader/runner “read-only” label does not extend mechanically to MCP. It does not authorize work outside the current request or relax scope, secret, delivery, database, or irreversible-action rules. `off` emits nothing; `ask` prompts; explicit MCP denies remain effective in `allow` mode.
 
 Only the orchestrator holds `question`, so only the orchestrator talks to you. A subagent that hits a wall reports blocked; it does not prompt.
 

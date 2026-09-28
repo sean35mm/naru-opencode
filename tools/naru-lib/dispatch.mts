@@ -11,16 +11,16 @@ export { buildReviewDefaultsAppendix } from './review-defaults.mjs';
 // cycling intact.
 //
 // Safety: variants begin as byte-for-byte clones of the base agents' permission
-// maps. A separate policy pass may add provenance-tracked MCP asks to writer
-// variants only; model selection itself never changes permissions. The names naru-reader-*, naru-runner-*, and
-// naru-writer-* are a reserved, Naru-managed namespace.
+// maps. A separate, provenance-tracked pass may add configured MCP policy to all
+// Naru roles; model selection itself never changes permissions. Variant names
+// are a reserved, Naru-managed namespace.
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { RuntimeMcpConfig, RuntimeReviewConfig } from './runtime-config.mjs';
 
 export const VARIANT_ROLES = Object.freeze(['naru-reader', 'naru-runner', 'naru-writer'] as const);
-export const ORCHESTRATOR = 'naru-orchestrator';
+export const ORCHESTRATOR = 'naru';
 
 type UnknownRecord = Record<string, unknown>;
 export type VariantRole = typeof VARIANT_ROLES[number];
@@ -47,9 +47,10 @@ export interface GeneratedModelClass {
 export interface VariantApplicationSummary {
     variants: string[];
     classes: string[];
+    configuredMcp?: ConfiguredMcpAnalysis;
 }
 
-export type ConfiguredMcpCategory = 'collision' | 'disabled' | 'eligible' | 'malformed' | 'protected';
+export type ConfiguredMcpCategory = 'collision' | 'disabled' | 'eligible' | 'malformed' | 'protected' | 'unsafe';
 export interface ConfiguredMcpDiagnostic {
     serverName: string;
     normalizedName: string | null;
@@ -189,7 +190,7 @@ export function normalizeMcpServerName(name: string): string {
 }
 
 function safeServerName(name: string): boolean {
-    if (name.length === 0 || name.length > 128) return false;
+    if (name.length === 0 || name.length > 128 || /[*?\[\]{}]/.test(name)) return false;
     for (let index = 0; index < name.length; index += 1) {
         const code = name.charCodeAt(index);
         if (code <= 31 || code === 127) return false;
@@ -206,10 +207,9 @@ function overlapsProtectedMcp(normalizedName: string): boolean {
         PROTECTED_MCP_TOOLS.some((tool) => tool.startsWith(generatedPrefix));
 }
 
-// OpenCode 1.18.29 registers MCP tools as
-// `${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${toolName}`. This analysis
-// deliberately uses only server names and `enabled`; connection details never
-// enter Naru policy state or diagnostics.
+// OpenCode 1.18.x registers MCP tools as
+// `${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${toolName}`. Only server IDs
+// and enabled flags are inspected; connection and credential fields stay opaque.
 export function analyzeConfiguredMcp(value: unknown): ConfiguredMcpAnalysis {
     if (value === undefined || value === null) return { diagnostics: [], rules: [] };
     if (!isPlainObject(value)) {
@@ -222,7 +222,7 @@ export function analyzeConfiguredMcp(value: unknown): ConfiguredMcpAnalysis {
         const normalizedName = safeServerName(serverName) ? normalizeMcpServerName(serverName) : null;
         if (!isPlainObject(server) || normalizedName === null || normalizedName.length === 0 ||
             (server.enabled !== undefined && typeof server.enabled !== 'boolean')) {
-            diagnostics.push({ serverName, normalizedName, category: 'malformed', reason: 'server name or enabled state is malformed' });
+            diagnostics.push({ serverName, normalizedName, category: normalizedName === null ? 'unsafe' : 'malformed', reason: 'server name or enabled state is invalid' });
             continue;
         }
         if (overlapsProtectedMcp(normalizedName)) valid.push({ serverName, normalizedName, category: 'protected' });
@@ -394,40 +394,158 @@ export function applyVariantsToConfig(config: unknown, classes: ModelsConfig, au
     return { variants: Object.keys(variants).sort(), classes: generated.map((item) => item.className) };
 }
 
-function ownedMcpRules(options: unknown): Record<string, 'ask'> {
-    if (!isPlainObject(options)) return {};
-    const metadata = options[MCP_POLICY_METADATA];
-    if (!isPlainObject(metadata) || metadata.version !== 1 || !isPlainObject(metadata.rules)) return {};
-    const rules: Record<string, 'ask'> = {};
-    for (const [key, action] of Object.entries(metadata.rules)) {
-        if (action === 'ask') rules[key] = action;
-    }
-    return rules;
+interface OwnedMcpPolicy {
+    rules: Record<string, 'allow' | 'ask'>;
+    overrides: Record<string, 'ask' | Record<string, 'ask'>>;
+    positions: Record<string, { index: number; value: unknown }>;
 }
 
-function applyMcpRulesToAgent(agent: UnknownRecord, rules: readonly string[]): void {
-    if (!isPlainObject(agent.permission) || agent.permission['*'] !== 'deny' || Object.keys(agent.permission)[0] !== '*') {
-        throw new Error('eligible agent permissions must begin with a wildcard deny');
+function ownedMcpPolicy(options: unknown): OwnedMcpPolicy {
+    if (!isPlainObject(options)) return { rules: {}, overrides: {}, positions: {} };
+    const metadata = options[MCP_POLICY_METADATA];
+    if (!isPlainObject(metadata) || metadata.version !== 1) return { rules: {}, overrides: {}, positions: {} };
+    const rules: Record<string, 'allow' | 'ask'> = {};
+    const overrides: Record<string, 'ask' | Record<string, 'ask'>> = {};
+    const positions: Record<string, { index: number; value: unknown }> = {};
+    if (isPlainObject(metadata.rules)) {
+        for (const [key, action] of Object.entries(metadata.rules)) {
+            if (action === 'allow' || action === 'ask') rules[key] = action;
+        }
     }
-    const permission = { ...agent.permission };
-    const options = isPlainObject(agent.options) ? { ...agent.options } : {};
-    for (const [key, action] of Object.entries(ownedMcpRules(options))) {
+    if (isPlainObject(metadata.overrides)) {
+        for (const [key, action] of Object.entries(metadata.overrides)) {
+            if (action === 'ask') overrides[key] = action;
+            else if (isPlainObject(action)) {
+                const leaves: Record<string, 'ask'> = {};
+                for (const [pattern, leaf] of Object.entries(action)) {
+                    if (leaf === 'ask') leaves[pattern] = leaf;
+                }
+                if (Object.keys(leaves).length > 0) overrides[key] = leaves;
+            }
+        }
+    }
+    if (isPlainObject(metadata.positions)) {
+        for (const [key, entry] of Object.entries(metadata.positions)) {
+            if (!isPlainObject(entry) || typeof entry.index !== 'number' || !Number.isSafeInteger(entry.index) || entry.index < 0) continue;
+            const value = entry.value;
+            if (value === 'allow' || value === 'ask' || value === 'deny' || isPlainObject(value)) {
+                positions[key] = { index: entry.index, value };
+            }
+        }
+    }
+    return { rules, overrides, positions };
+}
+
+function appliesToMcpNamespace(pattern: string, rules: readonly string[]): boolean {
+    return rules.some((rule) => pattern.startsWith(rule.slice(0, -1)));
+}
+
+function clonePermissionValue(value: unknown): unknown {
+    return isPlainObject(value) ? { ...value } : value;
+}
+
+function samePermissionValue(left: unknown, right: unknown): boolean {
+    if (left === right) return true;
+    if (!isPlainObject(left) || !isPlainObject(right)) return false;
+    const leftEntries = Object.entries(left);
+    const rightEntries = Object.entries(right);
+    return leftEntries.length === rightEntries.length && leftEntries.every(([key, value], index) => {
+        const other = rightEntries[index];
+        return other !== undefined && other[0] === key && other[1] === value;
+    });
+}
+
+function applyMcpRulesToAgent(agent: UnknownRecord, mode: RuntimeMcpConfig['configuredTools'], rules: readonly string[]): void {
+    if (!isPlainObject(agent.permission) || agent.permission['*'] !== 'deny') {
+        throw new Error('Naru agent permissions must include a wildcard deny');
+    }
+    let permission: UnknownRecord = { ...agent.permission };
+    const options: UnknownRecord = isPlainObject(agent.options) ? { ...agent.options } : {};
+    const previous = ownedMcpPolicy(options);
+    for (const [key, action] of Object.entries(previous.rules)) {
         if (permission[key] === action) delete permission[key];
+    }
+    const positionsToRestore = Object.entries(previous.positions)
+        .filter(([key, entry]) => Object.hasOwn(permission, key) && samePermissionValue(permission[key], entry.value))
+        .sort((left, right) => left[1].index - right[1].index);
+    for (const [key, original] of Object.entries(previous.overrides)) {
+        if (original === 'ask') {
+            if (permission[key] === 'allow') permission[key] = original;
+            continue;
+        }
+        const current = permission[key];
+        if (!isPlainObject(current)) continue;
+        const restored: UnknownRecord = { ...current };
+        for (const [pattern, action] of Object.entries(original)) {
+            if (restored[pattern] === 'allow') restored[pattern] = action;
+        }
+        permission[key] = restored;
+    }
+    if (positionsToRestore.length > 0) {
+        const moving = new Set(positionsToRestore.map(([key]) => key));
+        const entries = Object.entries(permission).filter(([key]) => !moving.has(key));
+        for (const [key, entry] of positionsToRestore) {
+            entries.splice(Math.min(entry.index, entries.length), 0, [key, permission[key]]);
+        }
+        permission = Object.fromEntries(entries);
     }
     delete options[MCP_POLICY_METADATA];
 
-    const generated: Record<string, 'ask'> = {};
+    if (mode === 'off') {
+        agent.permission = permission;
+        if (Object.keys(options).length > 0 || isPlainObject(agent.options)) agent.options = options;
+        return;
+    }
+
+    const generated: Record<string, 'allow' | 'ask'> = {};
+    const overrides: Record<string, 'ask' | Record<string, 'ask'>> = {};
+    const originalEntries = Object.entries(permission);
+    const mcpPositions: Record<string, { index: number; value: unknown }> = {};
+    if (mode === 'allow') {
+        for (const [key, action] of Object.entries(permission)) {
+            if (!appliesToMcpNamespace(key, rules)) continue;
+            if (action === 'ask') {
+                permission[key] = 'allow';
+                overrides[key] = 'ask';
+            }
+            else if (isPlainObject(action)) {
+                const rewritten: UnknownRecord = { ...action };
+                const leaves: Record<string, 'ask'> = {};
+                for (const [pattern, leaf] of Object.entries(action)) {
+                    if (leaf !== 'ask') continue;
+                    rewritten[pattern] = 'allow';
+                    leaves[pattern] = 'ask';
+                }
+                if (Object.keys(leaves).length > 0) {
+                    permission[key] = rewritten;
+                    overrides[key] = leaves;
+                }
+            }
+        }
+    }
     for (const key of rules) {
-        // An existing exact or wildcard policy is user/Naru authored and wins.
-        if (!Object.hasOwn(permission, key)) generated[key] = 'ask';
+        if (!Object.hasOwn(permission, key)) generated[key] = mode;
     }
-    const rebuilt: UnknownRecord = { '*': permission['*'], ...generated };
-    for (const [key, action] of Object.entries(permission)) {
-        if (key !== '*') rebuilt[key] = action;
+    const mcpEntries: Array<[string, unknown]> = [];
+    const rebuilt: UnknownRecord = {};
+    for (let index = 0; index < originalEntries.length; index += 1) {
+        const entry = originalEntries[index];
+        if (!entry) continue;
+        const [key] = entry;
+        const action = permission[key];
+        if (appliesToMcpNamespace(key, rules)) {
+            mcpEntries.push([key, action]);
+            mcpPositions[key] = { index, value: clonePermissionValue(action) };
+        }
+        else {
+            rebuilt[key] = action;
+        }
     }
+    Object.assign(rebuilt, generated);
+    for (const [key, action] of mcpEntries) rebuilt[key] = action;
     agent.permission = rebuilt;
-    if (Object.keys(generated).length > 0) {
-        options[MCP_POLICY_METADATA] = { version: 1, rules: generated };
+    if (Object.keys(generated).length > 0 || Object.keys(overrides).length > 0 || Object.keys(mcpPositions).length > 0) {
+        options[MCP_POLICY_METADATA] = { version: 1, rules: generated, overrides, positions: mcpPositions };
     }
     if (Object.keys(options).length > 0 || isPlainObject(agent.options)) agent.options = options;
 }
@@ -435,12 +553,11 @@ function applyMcpRulesToAgent(agent: UnknownRecord, rules: readonly string[]): v
 export function applyConfiguredMcpPermissionsToConfig(config: unknown, mode: RuntimeMcpConfig['configuredTools'], mcp: unknown): ConfiguredMcpAnalysis {
     if (!isPlainObject(config) || !isPlainObject(config.agent)) throw new Error('OpenCode configuration has no agent map');
     const analysis = analyzeConfiguredMcp(mcp);
-    const rules = mode === 'ask' ? analysis.rules : [];
-    const eligible = [ORCHESTRATOR, 'naru-writer', ...Object.keys(config.agent).filter((name) => /^naru-writer-[a-z][a-z0-9-]{0,31}$/.test(name))];
-    for (const name of eligible) {
+    const names = [ORCHESTRATOR, ...VARIANT_ROLES, ...Object.keys(config.agent).filter((name) => VARIANT_NAME_PATTERN.test(name))];
+    for (const name of names) {
         const candidate = config.agent[name];
         if (!isPlainObject(candidate)) throw new Error(`agent ${name} is not configured`);
-        applyMcpRulesToAgent(candidate, rules);
+        applyMcpRulesToAgent(candidate, mode, analysis.rules);
     }
     return analysis;
 }
@@ -477,14 +594,22 @@ export function applyDispatchToConfigAtomically(config: unknown, classes: Models
     return { ...summary, configuredMcp };
 }
 
-export function applyRuntimeToConfigAtomically(config: unknown, classes: ModelsConfig, authProviders: ReadonlySet<string> | null | undefined, review: RuntimeReviewConfig): VariantApplicationSummary {
+export function applyRuntimeToConfigAtomically(
+    config: unknown,
+    classes: ModelsConfig,
+    authProviders: ReadonlySet<string> | null | undefined,
+    review: RuntimeReviewConfig,
+    mcpMode: RuntimeMcpConfig['configuredTools'] = 'off',
+    mcp: unknown = undefined,
+): VariantApplicationSummary {
     if (!isPlainObject(config) || !isPlainObject(config.agent)) throw new Error('OpenCode configuration has no agent map');
     const draft = configDraft(config);
     const summary = applyVariantsToConfig(draft, classes, authProviders);
+    const configuredMcp = applyConfiguredMcpPermissionsToConfig(draft, mcpMode, mcp);
     applyReviewDefaultsToConfig(draft, review);
     const draftAgents = draft.agent;
     if (!isPlainObject(draftAgents)) throw new Error('draft OpenCode configuration has no agent map');
     for (const name of Object.keys(config.agent)) delete config.agent[name];
     Object.assign(config.agent, draftAgents);
-    return summary;
+    return { ...summary, configuredMcp };
 }

@@ -5,7 +5,7 @@ description: Install Naru, work with the orchestrator, and understand the walls 
 
 # Naru user guide
 
-Naru is a thin layer over OpenCode. You talk to one agent — `naru-orchestrator` — and it decides how to split the work and who does it. There is no workflow engine or scheduler to tune; the optional release-critical review profile changes focus, not coverage.
+Naru is a thin layer over OpenCode. You talk to one agent — `naru` — and it decides how to split the work and who does it. There is no workflow engine or scheduler to tune; the optional release-critical review profile changes focus, not coverage.
 
 What Naru adds is a small set of hard mechanical walls at the places where mistakes are expensive, and near-total freedom inside them. The orchestrator is trusted to plan and fan out on its own judgment; it is not trusted to edit your files, run your code, or push anything anywhere.
 
@@ -100,28 +100,28 @@ Use the same `--project` or `--dir` selector that was used to install; the manif
 
 ## Talk to the orchestrator
 
-`naru-orchestrator` is a visible primary agent, not a slash command. Select it in the OpenCode agent picker, make it the default, or launch OpenCode with it:
+`naru` is a visible primary agent, not a slash command. Select it in the OpenCode agent picker, make it the default, or launch OpenCode with it:
 
 ```json
 {
-  "default_agent": "naru-orchestrator"
+  "default_agent": "naru"
 }
 ```
 
 ```sh
-opencode --agent naru-orchestrator
+opencode --agent naru
 ```
 
 Then describe what you want in plain language: fix this failure, implement this change, review this PR, explain how this subsystem works. You do not choose an analysis mode, a concurrency level, or a workflow. The orchestrator reads the task and decides.
 
-Do not use `naru-orchestrator` as a Task target from a custom agent. Custom agents should allowlist the four skills instead — see the [agent integration guide](/naru-opencode/agent-integration/).
+Do not use `naru` as a Task target from a custom agent. Custom agents should allowlist the four skills instead — see the [agent integration guide](/naru-opencode/agent-integration/).
 
 ## The four agents
 
 ```mermaid
 flowchart TB
   U(["You"]):::actor
-  ORC{{"naru-orchestrator<br/><small>plans and delegates · cannot edit · cannot run bash</small>"}}:::coord
+  ORC{{"naru<br/><small>plans and delegates · cannot edit · cannot run bash</small>"}}:::coord
 
   subgraph leaves["Subagents — hidden, cannot delegate further"]
     direction LR
@@ -160,7 +160,7 @@ flowchart TB
 
 | Agent | Role | Edit | Bash |
 | --- | --- | --- | --- |
-| `naru-orchestrator` | Primary, visible. Plans, delegates, synthesizes, reports. | No | No |
+| `naru` | Primary, visible. Plans, delegates, synthesizes, reports. | No | No |
 | `naru-reader` | Investigation: finding code, tracing behavior, diagnosing, reviewing. | No | No |
 | `naru-runner` | Runs tests, typecheck, lint, build, and reproductions. | No | Yes |
 | `naru-writer` | The only role that can edit files. | Yes | Yes |
@@ -238,7 +238,7 @@ The schema v5 payload accepts no raw event and is the only contract allowed to c
 
 Exact inline findings already present on the current head are not posted again, but they remain decision-relevant—including eligible blockers. Semantic deduplication and reconciliation with differently worded feedback remain the reviewing agent's responsibility. Whole-review idempotency uses a hidden marker. The sole same-head exception is strict limited→complete supersession: one complete v5 review may identify exactly one prior limited v4 or v5 `COMMENT` by review ID and digest, with fresh explicit posting authorization. Supersession is a new submission, never a retry; unversioned legacy predecessors cannot be superseded this way.
 
-The orchestrator runs this fresh review against the current head, never a pasted or cached payload, and confirms the target still matches. Final posting reacquires only the declared bounded file batches, their exact-content recovery, and feedback pages between compact manifests—twice for freshness comparison—and does not rely on the legacy monolithic all-patch snapshot. At most one GitHub POST attempt is allowed, not one tool invocation. A corrected tool invocation is permitted only after `postAttempted: false` and `correctable: true`; wrong-agent, `postAttempted: true`, or `outcomeUnknown: true` results are terminal. An ambiguous outcome is terminal even for a supersession. Never use another posting mechanism. Only `naru-orchestrator` can call the tool, and it cannot merge. If edits or a push land after a review, that review is stale and needs a new explicit request.
+The orchestrator runs this fresh review against the current head, never a pasted or cached payload, and confirms the target still matches. Final posting reacquires only the declared bounded file batches, their exact-content recovery, and feedback pages between compact manifests—twice for freshness comparison—and does not rely on the legacy monolithic all-patch snapshot. At most one GitHub POST attempt is allowed, not one tool invocation. A corrected tool invocation is permitted only after `postAttempted: false` and `correctable: true`; wrong-agent, `postAttempted: true`, or `outcomeUnknown: true` results are terminal. An ambiguous outcome is terminal even for a supersession. Never use another posting mechanism. Only `naru` can call the tool, and it cannot merge. If edits or a push land after a review, that review is stale and needs a new explicit request.
 
 Any PR reference — full URL, `OWNER/REPO#NUMBER`, or a bare number resolved against the current workspace — is normalized to one canonical `(owner, repo, number)`. Owner and repo compare case-insensitively. If a reference resolves to more than one PR or to none, the orchestrator stops and asks.
 
@@ -246,7 +246,7 @@ Any PR reference — full URL, `OWNER/REPO#NUMBER`, or a bare number resolved ag
 
 Writers normally share your workspace. When full isolation is wanted, the orchestrator drives `naru-worktree`: `prepare_run`, then `prepare_item` per writer, `integrate_item` as each returns, `finalize_run` once the result is verified, then `cleanup_run`. `recover_run` picks a run back up after a restart instead of preparing duplicates. `snapshot` reports current state.
 
-The tool is restricted to `naru-orchestrator`. Writers never commit, merge, or remove worktrees — integration belongs to the orchestrator. Isolation requires a clean repository; when the workspace is dirty or isolation is unavailable, the run silently downgrades to shared mode rather than asking you or imitating isolation with directory copies.
+The tool is restricted to `naru`. Writers never commit, merge, or remove worktrees — integration belongs to the orchestrator. Isolation requires a clean repository; when the workspace is dirty or isolation is unavailable, the run silently downgrades to shared mode rather than asking you or imitating isolation with directory copies.
 
 Tool-owned Git operations suppress hooks, serialize mutations per run, contain paths, write recovery metadata atomically, and attempt rollback on failure. They do not protect against unrelated external mutation of your workspace.
 

@@ -185,6 +185,15 @@ test('native preflight rejects v1 collisions, JSONC ambiguity, user agent collis
             await assert.rejects(installNative(root, source, false), /exact OpenCode 2.0.15/);
         }
         await writeFile(host, '#!/bin/sh\nprintf "2.0.15\\n"\n');
+        const manualAgent = join(root, 'agents', 'naru.md');
+        await mkdir(join(root, 'agents'));
+        await writeFile(manualAgent, 'user-owned Naru agent\n');
+        for (const apply of [false, true]) {
+            await assert.rejects(installNative(root, source, apply), /manual cutover: agents\/naru\.md/);
+            assert.equal(await readFile(manualAgent, 'utf8'), 'user-owned Naru agent\n');
+            await assert.rejects(lstat(getNativeInstallPaths(root).state), { code: 'ENOENT' });
+        }
+        await rm(manualAgent);
         await writeFile(join(root, 'opencode.jsonc'), '{ // user comment\n}\n');
         await assert.rejects(installNative(root, source, true), /manual cutover/);
         await rm(join(root, 'opencode.jsonc'));

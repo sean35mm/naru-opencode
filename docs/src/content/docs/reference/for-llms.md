@@ -15,7 +15,7 @@ One primary orchestrator with three leaf subagents at depth 1. Every subagent is
 
 | Agent | Mode | Edit | Bash | Use for |
 | --- | --- | --- | --- | --- |
-| `naru-orchestrator` | primary, visible | no | no | coordination: plan, delegate, report |
+| `naru` | primary, visible | no | no | coordination: plan, delegate, report |
 | `naru-reader` | subagent, hidden | no | no | investigation: finding code, tracing behavior, diagnosing, reviewing |
 | `naru-runner` | subagent, hidden | no | yes | running tests, typecheck, lint, build, reproductions |
 | `naru-writer` | subagent, hidden | yes | yes | the only role that can apply changes |
