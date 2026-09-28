@@ -19,9 +19,11 @@ All notable user-visible changes are recorded here. The canonical semantic produ
 
 ### Upgrade notes
 
-- Native installation requires OpenCode **2.0.15**. `naru upgrade` updates Naru, not OpenCode.
+- Native installation requires **Node.js 24** and OpenCode **2.0.15**. `naru upgrade` updates Naru, not OpenCode or Node.js.
 - Existing native installations can update through `naru upgrade`; review the installation preview before applying changes.
+- `naru configure` previews the selected worker pool; use `naru configure --apply` to save it. Restart OpenCode after installation or model changes.
 - Automatic migration of historical v1 Naru assets is not included. The native installer refuses conflicting legacy assets rather than overwriting them; back up and migrate those assets before applying a native installation, or explicitly retain the historical installation with `--legacy`.
+- Upgrade switches the global CLI before installation confirmation. Declining or failing installation leaves the new CLI available without updating the installed OpenCode integration. Native uninstall and rollback commands are not yet supported.
 - Offline model selection does not verify provider availability or account entitlement. `naru doctor` reports installation health separately from live runtime qualification.
 
 ## [0.7.2] - 2026-09-08
