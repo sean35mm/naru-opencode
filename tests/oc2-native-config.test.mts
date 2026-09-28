@@ -250,6 +250,38 @@ test('lock owner bytes are synced before no-replace publication and dead staging
     } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('live unpublished lock staging is not inspected, while reused and unsafe stale staging remain guarded', async () => {
+    const { root, home, instructions } = await fixture(), paths = oc2NativePaths(root), directory = dirname(paths.lock);
+    const identity = 'current process start', hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 16);
+    const name = (owner: string, nonce: string) => join(directory, `.native-profile.lock.staging-${process.pid}-${hash(owner)}-${nonce}`);
+    const adapters = { home, processIdentity: async (pid: number) => pid === process.pid ? identity : null };
+    try {
+        await updateOc2NativeProfile(root, undefined, adapters);
+        const live = name(identity, '1111111111111111');
+        await writeFile(live, 'publication still in progress', { mode: 0o644 });
+        const before = await lstat(live, { bigint: true });
+        await updateOc2NativeProfile(root, ['fixture/next'], adapters);
+        const after = await lstat(live, { bigint: true });
+        assert.equal(after.ino, before.ino);
+        assert.equal(await readFile(live, 'utf8'), 'publication still in progress');
+
+        const reused = name('previous process start', '2222222222222222');
+        await writeFile(reused, 'stale owner', { mode: 0o600 });
+        await updateOc2NativeProfile(root, ['fixture/reused'], adapters);
+        await assert.rejects(lstat(reused), { code: 'ENOENT' });
+
+        const unsafe = name('previous process start', '3333333333333333');
+        await symlink(instructions, unsafe);
+        await assert.rejects(updateOc2NativeProfile(root, ['fixture/blocked'], adapters), /owned regular file/);
+        assert.equal(await readFile(instructions, 'utf8'), 'Explicit native preferences.\n');
+        await rm(unsafe);
+        const malformed = join(directory, '.native-profile.lock.staging-invalid');
+        await writeFile(malformed, 'keep', { mode: 0o600 });
+        await assert.rejects(updateOc2NativeProfile(root, ['fixture/blocked'], adapters), /staging path is malformed/);
+        assert.equal(await readFile(malformed, 'utf8'), 'keep');
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('crash-safe transaction publication cleans private staging and recovers a published generation', async () => {
     const { root, home } = await fixture(), paths = oc2NativePaths(root), profileDirectory = dirname(paths.transaction);
     try {

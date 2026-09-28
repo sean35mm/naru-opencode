@@ -149,11 +149,14 @@ async function cleanupLockStaging(paths: Oc2NativePaths, identify: (pid: number)
         if (!name.startsWith(lockStagingPrefix)) continue;
         const match = name.match(/^\.native-profile\.lock\.staging-([1-9][0-9]*)-([a-f0-9]{16})-([a-f0-9]{16})$/);
         if (!match) throw new Error('OC2 native profile lock staging path is malformed; refusing to remove it');
-        const path = join(dirname(paths.lock), name), observed = await snapshot(path), pid = Number(match[1]), expectedIdentityHash = match[2]!;
-        if (!observed.exists) continue;
+        const pid = Number(match[1]), expectedIdentityHash = match[2]!;
+        if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error('OC2 native profile lock staging PID is invalid; refusing to remove it');
         const currentIdentity = await identify(pid);
         if (currentIdentity && processIdentityHash(currentIdentity) === expectedIdentityHash) continue;
+        const path = join(dirname(paths.lock), name), observed = await snapshot(path);
+        if (!observed.exists) continue;
         const rechecked = await snapshot(path);
+        if (!rechecked.exists) continue;
         if (!same(observed, rechecked)) throw new Error('OC2 native profile lock staging file changed while stale ownership was being verified');
         await rm(path);
     }
