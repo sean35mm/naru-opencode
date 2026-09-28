@@ -3,7 +3,7 @@ import test from 'node:test';
 import { projectOc2NativeAgents } from '../tools/naru-lib/oc2-native-projection.mjs';
 
 const SKILLS = [{ action: 'skill', effect: 'allow', resource: 'naru-*' }, { action: 'skill', effect: 'allow', resource: 'unslop' }];
-const WORKER_RULES = [...SKILLS, ...['git push*', 'gh pr create*', 'gh pr merge*', 'gh pr review*', 'gh pr comment*', 'gh issue create*', 'gh issue comment*', 'gh release*'].map(resource => ({ action: 'shell', effect: 'deny', resource })), { action: 'shell', effect: 'ask', resource: 'gh api*' }];
+const WORKER_RULES = [...SKILLS, ...['git push*', 'gh pr create*', 'gh pr merge*', 'gh pr review*', 'gh pr comment*', 'gh issue create*', 'gh issue comment*', 'gh release create*', 'gh release delete*', 'gh release edit*', 'gh release upload*'].map(resource => ({ action: 'shell', effect: 'deny', resource })), { action: 'shell', effect: 'ask', resource: 'gh api*' }];
 
 test('native projection creates one reusable worker per exact reference with skill access, worker delivery guardrails, and no parent model override', () => {
     const references = ['fixture/team/alpha#high', 'fixture/team/alpha#low', 'other/model'];

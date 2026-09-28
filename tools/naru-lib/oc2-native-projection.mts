@@ -18,7 +18,7 @@ const rule = (action: string, effect: NativePermissionRule['effect']) => (resour
 // Host rules resolve last-match-wins after global config, so these re-allow Naru skills under a global skill deny.
 const SKILL_RULES = ['naru-*', 'unslop'].map(rule('skill', 'allow'));
 // ponytail: prefix globs over parsed shell commands; `git -C x push` or wrapper commands evade them. Upgrade path: a permission.evaluate hook or a tighter sandbox.
-const WORKER_RULES = [...SKILL_RULES, ...['git push*', 'gh pr create*', 'gh pr merge*', 'gh pr review*', 'gh pr comment*', 'gh issue create*', 'gh issue comment*', 'gh release*'].map(rule('shell', 'deny')), rule('shell', 'ask')('gh api*')];
+const WORKER_RULES = [...SKILL_RULES, ...['git push*', 'gh pr create*', 'gh pr merge*', 'gh pr review*', 'gh pr comment*', 'gh issue create*', 'gh issue comment*', 'gh release create*', 'gh release delete*', 'gh release edit*', 'gh release upload*'].map(rule('shell', 'deny')), rule('shell', 'ask')('gh api*')];
 
 function safeReferences(references: readonly string[]): string[] {
     if (references.length > NATIVE_MODEL_LIMIT) throw new Error(`Native model pool supports at most ${NATIVE_MODEL_LIMIT} exact references`);
