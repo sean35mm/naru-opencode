@@ -187,7 +187,7 @@ case "$command" in
     if [ -f "$boot" ]; then
       sh "$boot" --version "$latest"
     else
-      curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/bootstrap.sh" | sh -s -- --version "$latest"
+      curl -fsSL "https://raw.githubusercontent.com/${REPO}/${latest}/bootstrap.sh" | sh -s -- --version "$latest"
     fi
     echo
     echo "Downloaded. Now installing ${plain} into OpenCode:"

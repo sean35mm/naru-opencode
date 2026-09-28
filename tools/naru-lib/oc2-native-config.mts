@@ -267,7 +267,9 @@ function mergeNativeAssets(config: Record<string, unknown>, root: string, native
     const plugin = nativeAssetRoot ? join(nativeAssetRoot, 'tools', 'oc2-native-plugin') : join(root, 'lib', 'tools', 'oc2-native-plugin'), skills = join(plugin, 'skills');
     for (const [key, required] of [['plugins', plugin], ['skills', skills]] as const) {
         const existing = config[key] === undefined ? [] : config[key];
-        if (!Array.isArray(existing) || !existing.every(value => typeof value === 'string')) throw new Error(`OpenCode profile ${key} must be an array of paths`);
+        // v2 plugins also accept { package, options } entries; preserve them untouched.
+        const entry = (value: unknown) => typeof value === 'string' || key === 'plugins' && value !== null && typeof value === 'object' && !Array.isArray(value) && typeof (value as Record<string, unknown>).package === 'string';
+        if (!Array.isArray(existing) || !existing.every(entry)) throw new Error(`OpenCode profile ${key} must be an array of ${key === 'plugins' ? 'paths or { package, options } entries' : 'paths'}`);
         config[key] = existing.includes(required) ? [...existing] : [...existing, required];
     }
 }

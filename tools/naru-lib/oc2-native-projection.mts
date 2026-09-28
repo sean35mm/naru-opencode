@@ -34,7 +34,7 @@ function safeReferences(references: readonly string[]): string[] {
 function agentName(reference: string): string {
     const parsed = parseCatalogueReference(reference);
     const label = `${parsed.providerID}-${parsed.model}${parsed.variant ? `-${parsed.variant}` : ''}`
-        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(-30) || 'model';
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '').slice(-30).replace(/^-+/, '') || 'model';
     return `naru-worker-${label}-${createHash('sha256').update(reference).digest('hex').slice(0, 10)}`;
 }
 

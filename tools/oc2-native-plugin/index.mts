@@ -16,9 +16,7 @@ interface LegacyTool {
 }
 interface NativeExecutionContext {
     agent?: unknown;
-    directory?: unknown;
     sessionID?: unknown;
-    worktree?: unknown;
 }
 interface NativeToolDefinition {
     name: string;
@@ -70,13 +68,6 @@ function commandArguments(text: string): string {
     return args;
 }
 
-function absoluteDirectory(value: unknown, field: string): string {
-    if (typeof value !== 'string' || !isAbsolute(value) || value.includes('\0')) {
-        throw new Error(`OC2 native tool context.${field} must be an absolute per-session directory`);
-    }
-    return value;
-}
-
 function record(value: unknown): Record<string, unknown> | undefined {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, unknown>
@@ -100,21 +91,14 @@ async function nativeContext(context: NativeExecutionContext, plugin: NativePlug
     if (typeof context.sessionID !== 'string' || context.sessionID.length === 0) {
         throw new Error('OC2 native tool context.sessionID is required');
     }
-    let directory: string;
-    if (context.directory !== undefined) directory = absoluteDirectory(context.directory, 'directory');
-    else {
-        if (!plugin.session) throw new Error('OC2 native host does not expose a per-session directory resolver');
-        const resolved = sessionDirectory(await plugin.session.get({ sessionID: context.sessionID }));
-        if (!resolved) throw new Error('OC2 native host session did not provide an absolute per-session directory');
-        directory = resolved;
-    }
-    const worktree = context.worktree === undefined
-        ? directory
-        : absoluteDirectory(context.worktree, 'worktree');
+    // v2 Tool.Context carries no directory; resolve it from the trusted session record.
+    if (!plugin.session) throw new Error('OC2 native host does not expose a per-session directory resolver');
+    const directory = sessionDirectory(await plugin.session.get({ sessionID: context.sessionID }));
+    if (!directory) throw new Error('OC2 native host session did not provide an absolute per-session directory');
     return {
         agent: context.agent,
         directory,
-        worktree,
+        worktree: directory,
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
         worktreeRegistry: adapters.worktreeRegistry ?? new Map(),
         ...(adapters.spawn ? { spawn: adapters.spawn } : {}),
@@ -156,7 +140,7 @@ export function createOc2NativePlugin(adapters: NativePluginAdapters = {}) {
             const existing = await context.command.list?.();
             const commands = Array.isArray(existing) ? existing : record(existing)?.data;
             if (Array.isArray(commands) && commands.some(entry => record(entry)?.name === 'naru')) return;
-            const template = await readFile(new URL(import.meta.url.endsWith('.mjs') ? './command.md' : '../../commands/naru.md', import.meta.url), 'utf8');
+            const template = (await readFile(new URL(import.meta.url.endsWith('.mjs') ? './command.md' : '../../commands/naru.md', import.meta.url), 'utf8')).replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n)+/, '');
             await context.command.transform(editor => editor.add({
                 name: 'naru',
                 description: 'Naru ship-review command',
