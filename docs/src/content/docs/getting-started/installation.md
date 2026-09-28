@@ -1,9 +1,9 @@
 ---
 title: Installation
-description: Install Naru globally, into a project, or into any OpenCode configuration directory.
+description: Install native Naru into an OpenCode 2.0.15 configuration directory; historical v1 setup is explicit.
 ---
 
-Naru requires OpenCode 1.18.4 or later and Node 24 for the installer and doctor (the installer falls back to Bun when Node is absent). Pull-request workflows also need authenticated `gh`.
+The normal native install requires **exactly OpenCode 2.0.15** on `PATH` and Node 24. Install OpenCode separately: Naru does not manage its binary or a broker. Pull-request workflows also need authenticated `gh`. Recognizing 2.0.15 does not establish provider entitlement or a qualified cross-platform release.
 
 ## Quick install
 
@@ -14,15 +14,16 @@ naru install
 
 The bootstrap downloads a checksum-verified release into `~/.naru` and installs exactly one file, the `naru` command. It does not read or modify your OpenCode configuration, and it will not edit a shell profile unless you pass `--modify-path` — otherwise it prints the `PATH` line and leaves the decision to you.
 
-Everything that changes your OpenCode configuration still goes through the preview-first flow below. `naru install` shows the full change summary and asks before applying; pass `--apply` to skip the prompt in non-interactive use.
+Everything that changes your OpenCode configuration goes through preview first. `naru install` shows the change summary and asks before applying in a terminal; pass `--apply` for an explicit non-interactive install. The default target is `~/.config/opencode`; `--dir PATH` selects an exact custom config directory, which you must ensure OpenCode loads.
 
 | Command | Effect |
 | --- | --- |
-| `naru install` | Install into OpenCode; previews, then asks |
-| `naru upgrade` | Fetch the latest release, then install it |
-| `naru doctor` | Report local install and configuration health |
-| `naru uninstall` | Preview removal and print the exact confirm command |
-| `naru rollback ID` | Restore a previous install transaction |
+| `naru install [--dir PATH]` | Preview native install, then ask in a terminal |
+| `naru upgrade [--dir PATH]` | Fetch the latest release, then preview native install |
+| `naru doctor [--dir PATH] [--json]` | Read-only local native package and registration health |
+| `naru configure [--dir PATH] [--apply]` | Select native worker models interactively; preview unless applied |
+| `naru models --list [--dir PATH]` | List native worker references without changing them |
+| `naru models --set REF[,REF] [--dir PATH] [--apply]` | Preview or save exact worker references offline; checks syntax, duplicates, and the 32-reference limit, not availability |
 | `naru version` | Show installed and latest available versions |
 
 Releases live under `~/.naru/versions/<version>` with `~/.naru/current` pointing at the active one, so an upgrade keeps the previous release on disk. To install an exact version, pass `--version` to the bootstrap:
@@ -33,7 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstr
 
 ## Install from a clone
 
-Contributors and anyone who prefers to read the source first can skip the bootstrap entirely and run the installer directly. Every flag below works the same way.
+Contributors and anyone who prefers to read the source first can skip the bootstrap and run the native installer directly.
 
 ```sh
 git clone https://github.com/sean35mm/naru-opencode.git
@@ -47,17 +48,16 @@ sh install.sh --apply
 ```mermaid
 flowchart LR
   A["Clone repository"]:::read
-  B["Install dependencies, build, and preview install.sh options"]:::read
+  B["Install dependencies, build, and preview native install"]:::read
   C{"Review the preview"}:::gate
-  D["Transactional install"]:::write
-  I["Write ownership manifest"]:::write
+  D["Apply native install"]:::write
+  I["Copy package and register native profile"]:::write
   J["Restart OpenCode"]:::gate
-  K["Select naru and ask"]:::entry
+  K["Choose parent model; configure workers; select naru"]:::entry
 
   subgraph targets["INSTALL TARGET"]
     direction TB
     F["~/.config/opencode<br/><small>default</small>"]:::write
-    G["Current .opencode<br/><small>--project</small>"]:::write
     H["Custom directory<br/><small>--dir PATH</small>"]:::write
   end
 
@@ -79,47 +79,41 @@ flowchart LR
   <li data-kind="write">Writes to disk</li>
 </ul>
 
-Everything left of `--apply` is read-only. `--apply` is the single mutation boundary: nothing is written to disk until you pass it.
+The direct `install.sh` preview does not write the target. Review it before passing `--apply`; the `naru` front door can instead ask for confirmation in a terminal.
 
-**Walkthrough:** `install.sh` previews by default and does not create the target. After reviewing the bounded change summary, repeat the command with `--apply` and the same options. The installer stages changed assets, preserves conflicts unless you explicitly replace them, writes `.naru-install.json`, and skips unchanged paths. Restart OpenCode after an applied change, select `naru`, and ask for something in plain language.
+**Walkthrough:** `install.sh` previews by default and does not create the target. Repeat with `--apply` and the same options after review. The normal install copies the compiled package to `.naru-native/package`, writes `.naru-native/profile.json`, `ownership.json`, and `manifest.json`, and registers the plugin, skills, and primary `naru` agent in `opencode.json`. It preserves unrelated config and does not override your parent model or variant. Restart OpenCode after applying, choose your parent model in OpenCode, then select workers explicitly with `naru configure --apply` or `naru models --set provider/model#variant[,REF] --apply`. Without a selected worker pool, the primary can still be present, but delegated model-specific workers are not configured.
 
-Clone, preview, explicit apply — the same transactional flow the curl path drives through the naru CLI.
+The native installer requires strict JSON in `opencode.json`. It refuses `opencode.jsonc`, ambiguous or unsafe config, historical v1 command/plugin collisions, and an existing `.naru-install.json`; it does not automatically cut over or delete v1 data. Inspect collisions and plan any cleanup separately. Do not print configuration or authentication content while diagnosing them. No historical OC2 model pool is imported by the normal installer.
 
 ## What gets installed
 
-- **Skills** — `naru-plan`, `naru-impact`, `naru-triage`, `naru-review`.
-- **Tools** — `naru-git-read`, `naru-github-read`, `naru-github-post-review`, `naru-worktree`, `naru-doctor`, plus their shared helper library.
-- **`naru-runtime.example.json`** — an example only. The installer never creates or enables `naru-runtime.json`.
+- **Native package** — copied compiled tools, the Naru plugin and seven skills, including `naru-coordinate`, `naru-select-workers`, and `naru-evaluate`.
+- **OpenCode registration** — `naru` primary agent, Naru plugin and skills paths, and worker definitions only for explicitly selected models.
+- **Ownership** — private `.naru-native` profile, manifest, and managed-agent record.
 
-Agent and skill Markdown is symlinked by default so a `git pull` in the checkout keeps it current; `--copy` pins copies instead. Executable tools, their helper library, and the one plugin (`naru-dispatch`) are always copied.
+The native package is copied, not symlinked. A checkout update does not change installed code until another reviewed apply.
 
 Skill content is advisory guidance. It cannot change role, tools, scope, safety, or action authorization, and it never grants a tool or makes an agent read-only. OpenCode controls skill origins and duplicate-name precedence, so check which source is selected when global and project copies overlap. The installer does not modify non-Naru agents.
 
-## Install targets
+## Native install targets
 
 ```sh
 # Global preview, then apply
 sh install.sh --preview
 sh install.sh --apply
 
-# Current project's .opencode
-sh install.sh --project
-
 # Another configuration directory
 sh install.sh --dir /path/to/opencode-config
-
-# Copy Markdown instead of symlinking it
-sh install.sh --copy
-
-# Replace reviewed unowned/modified managed conflicts exactly once
-sh install.sh --apply --replace-conflicts
+sh install.sh --dir /path/to/opencode-config --apply
 ```
 
 A custom `--dir` must be a path OpenCode actually loads. Restart OpenCode after applying an update.
 
-Naru's topology — one orchestrator over leaf subagents — works at OpenCode's default `subagent_depth` of `1`. `--configure-subagent-depth` and `--with-dashboard` are accepted as deprecated no-ops for migration compatibility; do not use them in new setup commands.
+`--project`, `--copy`, `--replace-conflicts`, and `--only` belong to the historical v1 installer, not normal native installation. Interactive `naru configure` uses OpenCode's normal catalogue to offer choices. Explicit `naru models --set` validates reference syntax, duplicates, and the 32-reference limit offline, then previews or saves the exact references; availability is not checked. Neither command enables a paid provider or guarantees account access.
 
-## Lifecycle and rollback
+## Historical v1 lifecycle and rollback (`--legacy`)
+
+The remaining lifecycle commands operate **only** on the historical v1 installation. Invoke `sh install.sh --legacy ...` (or `naru install --legacy`); native uninstall and rollback are not implemented. Do not use v1 lifecycle commands as an automatic native migration or remove old user data to make a native install pass.
 
 The versioned ownership manifest records the selected options, source fingerprint, location/mode, and the exact managed roots. A repeated matching apply is a no-op and creates no backup. Replaced paths are stored under timestamped `.naru-backups/`; a successful replacement also records a bounded `.naru-transaction.json` receipt in that backup. Backups are retained indefinitely and are never pruned automatically.
 
@@ -127,13 +121,13 @@ Rollback always names one receipt-backed backup; there is no implicit latest sel
 
 ```sh
 # Preview, then restore one successful manifest-owned transaction
-sh install.sh --rollback 20260722123456-12345
-sh install.sh --rollback 20260722123456-12345 --apply \
+sh install.sh --legacy --rollback 20260722123456-12345
+sh install.sh --legacy --rollback 20260722123456-12345 --apply \
   --confirm-rollback 'sha256:copy-the-current-preview-token'
 
 # Preview, then uninstall exactly the healthy manifest-owned paths shown
-sh install.sh --uninstall
-sh install.sh --uninstall --apply \
+sh install.sh --legacy --uninstall
+sh install.sh --legacy --uninstall --apply \
   --confirm-uninstall 'sha256:copy-the-current-preview-token'
 ```
 
@@ -145,23 +139,17 @@ If a managed path is unowned or differs from its recorded installed fingerprint,
 
 ## Doctor
 
-Run the installed doctor for a local health report. It loads no OpenCode plugins and contacts no provider:
+Run the normal native doctor for local inspection. It does not load plugins, contact a provider, test live agent invocation, or establish account entitlement:
 
 ```sh
-# Global
-node ~/.config/opencode/tools/naru-doctor.js
-
-# Project
-node .opencode/tools/naru-doctor.js --project-root .
-
-# Custom path (loading remains your responsibility)
-node /path/to/opencode-config/tools/naru-doctor.js --dir /path/to/opencode-config
+naru doctor
+naru doctor --dir /path/to/opencode-config --json
 ```
 
-The report is read-only, bounded, and path-sanitized. It covers OpenCode and runtime compatibility, effective `subagent_depth`, each manifest-backed scope with its location/install mode and source version, asset health, runtime-config state including the effective workspace mode, and any issue paths. `--source PATH` enables stale-copy comparison when no symlink identifies the source checkout; `--json` emits the same sanitized report as JSON. Custom scopes are reported as explicit but unconfirmed, because the doctor cannot prove that OpenCode loads an arbitrary path.
+The native report checks the exact host version, local package inventory, managed agents, registration, and worker count. `runtimeEvidence: not-run` is intentional. For the historical v1 manifest, depth and runtime checks, run `naru doctor --legacy` instead.
 
-## Optional runtime configuration
+## Historical v1 optional runtime configuration
 
-`naru-runtime.json` is optional and never created for you. Copy `naru-runtime.example.json` next to it in the same configuration directory if you want to change the defaults; see the [runtime configuration reference](/naru-opencode/reference/runtime-config/) for the full schema.
+The v1 `naru-runtime.json` is optional and not part of normal native setup. See the [runtime configuration reference](/naru-opencode/reference/runtime-config/) for the historical schema.
 
 For operational detail and recovery procedures, see the canonical [user guide](/naru-opencode/user-guide/).

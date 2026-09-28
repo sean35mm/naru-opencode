@@ -3,7 +3,9 @@ title: Agent workflows
 description: The four Naru agents, their exact permissions, and when the orchestrator picks each.
 ---
 
-Naru installs four OpenCode agents: one visible primary orchestrator and three hidden subagents. The orchestrator plans and delegates; it cannot edit files or run commands. Exactly one subagent — `naru-writer` — can change your workspace.
+This page describes the historical v1 agents installed with `--legacy`. The normal native OpenCode 2.0.15 install uses a visible, explicitly selected worker pool; see [installation](/naru-opencode/getting-started/installation/).
+
+The historical v1 install has four OpenCode agents: one visible primary orchestrator and three hidden subagents. The orchestrator plans and delegates; it cannot edit files or run commands. Exactly one subagent — `naru-writer` — can change your workspace.
 
 The topology is flat. The orchestrator is the only root, the three subagents are leaves, and every subagent has `task: deny`, so nothing can spawn grandchildren. `subagent_depth` of `1` is enough; OpenCode's default is fine.
 
@@ -35,7 +37,7 @@ flowchart TB
 | --- | --- | --- |
 | `naru` | primary, visible | Plans, delegates, integrates, reports |
 | `naru-reader` | subagent, hidden | Read-only investigation |
-| `naru-runner` | subagent, hidden | Read-only plus a shell |
+| `naru-runner` | subagent, hidden | Read-only plus contained verification in a disposable copy |
 | `naru-writer` | subagent, hidden | The only role that can edit |
 
 You select `naru` in the OpenCode agent picker. The three subagents are `hidden: true`; they are dispatch targets for the orchestrator, not things you pick.
@@ -102,7 +104,8 @@ Every agent starts from `'*': deny` and allows only what its role needs.
 | --- | --- | --- | --- | --- |
 | `read` | allow | allow | allow | allow |
 | `glob`, `grep`, `lsp` | allow | allow | allow | allow |
-| `bash` | deny | deny | allow | allow |
+| `bash` | deny | deny | deny | allow |
+| `naru-check` | deny | deny | allow | allow |
 | `edit`, `apply_patch` | deny | deny | deny | **allow** |
 | `task` (spawn) | three subagents (plus their generated class variants) | deny | deny | deny |
 | configured MCP namespaces | runtime `off`/`ask`/`allow` | runtime `off`/`ask`/`allow` | runtime `off`/`ask`/`allow` | runtime `off`/`ask`/`allow` |

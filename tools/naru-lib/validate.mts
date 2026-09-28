@@ -23,12 +23,19 @@ const FORBIDDEN_PATH_SEGMENTS = new Set([
     '.ssh',
     '.kube',
     '.gnupg',
+    '.credentials',
+    '.keys',
+    '.secrets',
+    'credential',
+    'credentials',
+    'creds',
+    'key',
+    'keys',
+    'secret',
+    'secrets',
 ]);
 const ALLOWED_SECRET_TEMPLATE_NAMES = new Set([
-    'env.example',
     '.env.example',
-    'env.template',
-    '.env.template',
 ]);
 function hasControl(s: string): boolean {
     for (let i = 0; i < s.length; i += 1) {
@@ -79,11 +86,14 @@ export function isSafeRepo(v: unknown): v is string {
     return /^[a-zA-Z0-9._-]+$/.test(v);
 }
 function looksLikeSecretFile(name: string): boolean {
-    if (FORBIDDEN_PATH_SEGMENTS.has(name.toLowerCase()))
+    const normalized = name.toLowerCase();
+    if (FORBIDDEN_PATH_SEGMENTS.has(normalized))
         return true;
-    if (/^\.env(?:\.\w+)?$/.test(name) && !ALLOWED_SECRET_TEMPLATE_NAMES.has(name.toLowerCase())) {
+    if (/^\.env(?:\..*)?$/i.test(name) && !ALLOWED_SECRET_TEMPLATE_NAMES.has(normalized)) {
         return true;
     }
+    if (/^(?:credentials?|secrets?)(?:\..*)?$/i.test(name))
+        return true;
     if (/^(id_rsa|id_dsa|id_ecdsa|id_ed25519|.*\.pem|.*\.key|.*\.p12|.*\.pfx|.*\.keystore)$/i.test(name)) {
         return true;
     }
@@ -118,8 +128,11 @@ export function isSafeRelativePath(v: unknown, { allowEmpty = false }: { allowEm
         return false;
     if (looksLikeSecretFile(fileName))
         return false;
-    for (const part of parts) {
-        if (FORBIDDEN_PATH_SEGMENTS.has(part.toLowerCase()))
+    for (let index = 0; index < parts.length; index += 1) {
+        const part = parts[index]!;
+        if (part.toLowerCase() === '.env.example' && index !== parts.length - 1)
+            return false;
+        if (looksLikeSecretFile(part))
             return false;
     }
     return true;
@@ -261,7 +274,8 @@ export function isSafeScope(value: unknown, { allowGlob = true }: { allowGlob?: 
     const parts = normalized.split('/');
     if (parts.some((part) => part === '' || part === '.' || part === '..'))
         return false;
-    return !parts.some((part) => /^(?:\.env(?:\..*)?|\.git|\.ssh|\.aws|\.kube|\.gnupg)$/i.test(part));
+    return !parts.some((part) => looksLikeSecretFile(part)
+        || /^(?:credentials?|secrets?)(?:[.*?_-]|$)/i.test(part));
 }
 function wildcardRegex(pattern: string): RegExp {
     let source = '';

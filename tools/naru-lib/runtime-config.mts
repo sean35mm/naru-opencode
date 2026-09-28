@@ -3,7 +3,8 @@
 // model dispatch, and explicitly opted-in configured MCP policy.
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 const MAX_CONFIG_BYTES = 64 * 1024;
 const WORKSPACE_MODES = Object.freeze(['auto', 'shared', 'worktree'] as const);
 const REVIEW_PROFILES = Object.freeze(['standard', 'release-critical'] as const);
@@ -127,6 +128,27 @@ export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
         },
     };
 }
+function mergeRawRuntimeValue(base: unknown, overlay: unknown): unknown {
+    if (!isPlainObject(base) || !isPlainObject(overlay)) return overlay;
+    const result: UnknownRecord = {};
+    const set = (key: string, value: unknown) => Object.defineProperty(result, key, { configurable: true, enumerable: true, value, writable: true });
+    for (const [key, value] of Object.entries(base)) set(key, value);
+    for (const [key, value] of Object.entries(overlay)) {
+        if (key === 'models' && isPlainObject(value) && Object.keys(value).length === 0) set(key, {});
+        else set(key, mergeRawRuntimeValue(result[key], value));
+    }
+    return result;
+}
+export function mergeRuntimeConfigLayers(layers: readonly unknown[]): RuntimeConfig {
+    let merged: unknown = {};
+    for (const layer of layers) {
+        if (layer === undefined || layer === null) continue;
+        // Validate every layer before it can be hidden by a later override.
+        parseRuntimeConfig(layer);
+        merged = mergeRawRuntimeValue(merged, layer);
+    }
+    return parseRuntimeConfig(merged);
+}
 function hasControl(value: string): boolean {
     for (let index = 0; index < value.length; index += 1) {
         const code = value.charCodeAt(index);
@@ -148,8 +170,19 @@ function assertSafeConfigPath(path: unknown): asserts path is string {
     }
 }
 export async function loadRuntimeConfigFile(path: string): Promise<RuntimeConfig> {
+    const value = await loadRawRuntimeConfigFile(path, false);
+    return parseRuntimeConfig(value);
+}
+async function loadRawRuntimeConfigFile(path: string, optional: boolean): Promise<unknown | undefined> {
     assertSafeConfigPath(path);
-    const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    let handle;
+    try {
+        handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    }
+    catch (error) {
+        if (optional && error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+        throw error;
+    }
     try {
         const stats = await handle.stat();
         if (!stats.isFile())
@@ -167,10 +200,26 @@ export async function loadRuntimeConfigFile(path: string): Promise<RuntimeConfig
         catch {
             throw new Error('runtime config contains invalid JSON');
         }
-        return parseRuntimeConfig(value);
+        return value;
     }
     finally {
         await handle.close();
     }
+}
+export async function loadRuntimeConfigLayers(paths: readonly string[]): Promise<RuntimeConfig> {
+    const values: unknown[] = [];
+    const seen = new Set<string>();
+    for (const path of paths) {
+        const canonical = resolve(path);
+        if (seen.has(canonical)) continue;
+        seen.add(canonical);
+        const value = await loadRawRuntimeConfigFile(canonical, true);
+        if (value !== undefined) values.push(value);
+    }
+    return mergeRuntimeConfigLayers(values);
+}
+export function globalRuntimeConfigPath(env: Readonly<Record<string, string | undefined>> = process.env, home = homedir()): string {
+    const configHome = env.XDG_CONFIG_HOME;
+    return join(configHome && configHome.length > 0 ? resolve(configHome) : join(resolve(home), '.config'), 'opencode', 'naru-runtime.json');
 }
 export const IMPLEMENTATION_WORKSPACE_MODES = WORKSPACE_MODES;

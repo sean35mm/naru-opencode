@@ -5,11 +5,13 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -22,6 +24,7 @@ jobs:
           node-version: 24
 
       - name: Verify tag matches VERSION
+        id: version
         shell: bash
         run: |
           set -euo pipefail
@@ -32,6 +35,7 @@ jobs:
             exit 1
           fi
           echo "version=${version}" >> "$GITHUB_ENV"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Install root dependencies
         run: npm ci
@@ -52,7 +56,7 @@ jobs:
           stage="naru-${version}"
           mkdir -p "dist/${stage}"
           cp -R agents commands skills bin install.sh bootstrap.sh \
-                naru-runtime.example.json VERSION LICENSE README.md "dist/${stage}/"
+                naru-runtime.example.json VERSION LICENSE README.md THIRD_PARTY_NOTICES "dist/${stage}/"
           cp -R .naru-build/tools .naru-build/plugins "dist/${stage}/"
           chmod 755 "dist/${stage}/bin/naru" "dist/${stage}/install.sh" "dist/${stage}/bootstrap.sh"
           tar -czf "dist/naru-${version}.tar.gz" -C dist "${stage}"
@@ -67,52 +71,98 @@ jobs:
           # A broad `git add` once committed build output; refuse to ship junk.
           if tar -tzf "dist/naru-${version}.tar.gz" \
              | grep -Ev "^naru-${version}/(agents|commands|skills|tools|plugins|bin)/" \
-             | grep -Ev "^naru-${version}/(install\.sh|bootstrap\.sh|naru-runtime\.example\.json|VERSION|LICENSE|README\.md)$" \
+             | grep -Ev "^naru-${version}/(install\.sh|bootstrap\.sh|naru-runtime\.example\.json|VERSION|LICENSE|README\.md|THIRD_PARTY_NOTICES)$" \
              | grep -Ev "^naru-${version}/$" \
              | grep -q .; then
             echo "tarball contains unexpected entries:" >&2
             tar -tzf "dist/naru-${version}.tar.gz" \
               | grep -Ev "^naru-${version}/(agents|commands|skills|tools|plugins|bin)/" \
-              | grep -Ev "^naru-${version}/(install\.sh|bootstrap\.sh|naru-runtime\.example\.json|VERSION|LICENSE|README\.md)$" \
+              | grep -Ev "^naru-${version}/(install\.sh|bootstrap\.sh|naru-runtime\.example\.json|VERSION|LICENSE|README\.md|THIRD_PARTY_NOTICES)$" \
               | grep -Ev "^naru-${version}/$" >&2
             exit 1
           fi
           echo "tarball contents are clean"
 
-      - name: Verify the tarball installs cleanly
+      - name: Save immutable candidate and its compiled qualification runner
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-candidate
+          path: |
+            dist/
+            .naru-build/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  qualify-native:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            host: darwin-arm64
+            integrity: sha512-qIFmkv6f01Deih/DH+OvblNQEZrAUal54PjUHLu61zS5OYCpXnRjkYWHV3RiEZhP5DtfQZsJeitmMW5v6f2NTw==
+          - runner: ubuntu-latest
+            host: linux-x64
+            integrity: sha512-PGVHuIb6uDgCx19zbD3wGwDYBZLeZnZY89c28SCcB87ckAgfOp+L2o7rra1TMbyQVLhZAqccbymWDeqrynfOCA==
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - name: Download exact release candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-candidate
+      - name: Qualify extracted release candidate with native OpenCode 2.0.15
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          HOST_PACKAGE: ${{ matrix.host }}
+          HOST_INTEGRITY: ${{ matrix.integrity }}
         run: |
           set -euo pipefail
           work="$(mktemp -d)"
-          tar -xzf "dist/naru-${version}.tar.gz" -C "$work"
-          root="${work}/naru-${version}"
+          trap 'rm -rf "$work"' EXIT
+          if [ "$HOST_PACKAGE" = darwin-arm64 ]; then test "$(uname -m)" = arm64; else test "$(uname -m)" = x86_64; fi
+          node -e 'const fs=require("node:fs"),crypto=require("node:crypto"),archive=process.argv[1],line=fs.readFileSync(archive+".sha256","utf8").trim(),expected=line.match(/^([a-f0-9]{64})  (.+)$/);if(!expected||expected[2]!==archive.split("/").at(-1)||crypto.createHash("sha256").update(fs.readFileSync(archive)).digest("hex")!==expected[1])process.exit(1)' "dist/naru-${RELEASE_VERSION}.tar.gz"
+          curl --fail --location --silent --show-error --max-filesize 268435456 --max-time 300 --output "$work/host.tgz" "https://registry.npmjs.org/@opencode/cli-${HOST_PACKAGE}/-/cli-${HOST_PACKAGE}-2.0.15.tgz"
+          node -e 'const { createHash } = require("node:crypto"); const { readFileSync } = require("node:fs"); const actual = "sha512-" + createHash("sha512").update(readFileSync(process.argv[1])).digest("base64"); if (actual !== process.argv[2]) process.exit(1)' "$work/host.tgz" "$HOST_INTEGRITY"
+          test "$(tar -tzf "$work/host.tgz")" = $'package/package.json\npackage/bin/opencode'
+          mkdir "$work/host"
+          tar -xzf "$work/host.tgz" -C "$work/host" --no-same-owner --no-same-permissions
+          node -e 'const p=require(process.argv[1]);if(p.name!=="@opencode/cli-"+process.argv[2]||p.version!=="2.0.15")process.exit(1)' "$work/host/package/package.json" "$HOST_PACKAGE"
+          test -x "$work/host/package/bin/opencode"
+          tar -xzf "dist/naru-${RELEASE_VERSION}.tar.gz" -C "$work" --no-same-owner --no-same-permissions
+          root="${work}/naru-${RELEASE_VERSION}"
           test -x "${root}/bin/naru"
           test -f "${root}/install.sh"
-          # Preview must not create the target directory.
-          HOME="${work}/home" sh "${root}/install.sh" --preview
-          if [ -e "${work}/home/.config/opencode" ]; then
-            echo "preview mutated the target" >&2
-            exit 1
-          fi
-          # Install through the CLI, which is the path real users take.
-          HOME="${work}/home" "${root}/bin/naru" install --apply
-          test -f "${work}/home/.config/opencode/agents/naru.md"
-          test -f "${work}/home/.config/opencode/commands/naru.md"
-          test -f "${work}/home/.config/opencode/tools/naru-doctor.js"
-          # Release installs must be pinned copies, never symlinks into
-          # ~/.naru/versions, which upgrades supersede and users may prune.
-          if find "${work}/home/.config/opencode/agents" -type l | grep -q .; then
-            echo "release install left symlinks in the OpenCode config" >&2
-            exit 1
-          fi
-          HOME="${work}/home" "${root}/bin/naru" version
+          node .naru-build/scripts/naru-compat-smoke.mjs --profile native-v2 --opencode "$(realpath "$work/host/package/bin/opencode")" --source "$root" --json
 
+  release:
+    needs: [build, qualify-native]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - name: Download qualified release candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-candidate
       - name: Publish release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
+          version="$RELEASE_VERSION"
+          node -e 'const fs=require("node:fs"),crypto=require("node:crypto"),archive=process.argv[1],line=fs.readFileSync(archive+".sha256","utf8").trim(),expected=line.match(/^([a-f0-9]{64})  (.+)$/);if(!expected||expected[2]!==archive.split("/").at(-1)||crypto.createHash("sha256").update(fs.readFileSync(archive)).digest("hex")!==expected[1])process.exit(1)' "dist/naru-${version}.tar.gz"
           # Idempotent: a re-run after an infrastructure failure, or a retag,
           # must update the existing release rather than collapsing on it.
           if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then

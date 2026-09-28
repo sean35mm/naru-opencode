@@ -1,21 +1,29 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import { chmod, lstat, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { projectOc2NativeAgents } from '../tools/naru-lib/oc2-native-projection.mjs';
 
 import {
   classifyDashboardEvidence,
   compareSemver,
   COMPATIBILITY_POLICY,
+  REQUIRED_COMPATIBILITY_CHECKS,
   createCompatibilityEvidence,
+  evaluateOpenCodeVersion,
   evaluateObservedVersion,
   evaluatePlatformTarget,
   sanitizeObservedVersion,
 } from '../tools/naru-lib/compatibility.mjs';
 import {
   OPENCODE_SAFE_COMMANDS,
+  OPENCODE_V2_EXPLORATORY_COMMANDS,
+  checkNativeHostRoutes,
+  nativeWorkerPoolValid,
   runBoundedProcess,
   runCompatibilitySmoke,
 } from '../scripts/naru-compat-smoke.mjs';
@@ -28,10 +36,16 @@ interface FakeOpenCodeOptions {
   agentListOutputBytes?: number;
   debugConfigOutputBytes?: number;
   failDebugConfig?: boolean;
+  disablePlugin?: boolean;
+  version?: string;
 }
 
 test('compatibility policy fixes approved targets without inventing Git or gh floors', () => {
-  assert.deepEqual(COMPATIBILITY_POLICY.release.opencode, { floor: '1.18.4', current: '1.18.4' });
+  assert.deepEqual(COMPATIBILITY_POLICY.release.opencode, {
+    floor: '1.18.4', current: '1.18.28', testedBuilds: ['1.18.4', '1.18.28'], recognizedBuilds: ['1.18.4', '1.18.28'],
+  });
+  assert.deepEqual(COMPATIBILITY_POLICY.profiles.stable.recognizedBuilds, ['1.18.4', '1.18.28']);
+  assert.deepEqual(COMPATIBILITY_POLICY.profiles['v2-beta-exploratory'].recognizedBuilds, ['2.0.15']);
   assert.deepEqual(COMPATIBILITY_POLICY.targets.platforms.map(target => target.id), ['macos-arm64', 'ubuntu-x64']);
   assert.equal(COMPATIBILITY_POLICY.targets.runtimes.node.major, 24);
   assert.equal(COMPATIBILITY_POLICY.targets.runtimes.bun.exact, '1.3.9');
@@ -42,11 +56,22 @@ test('compatibility policy fixes approved targets without inventing Git or gh fl
   assert.equal(COMPATIBILITY_POLICY.features.core.minimumSubagentDepth, 1);
 });
 
-test('semantic versions and sanitized observations enforce floor versus exact-current evidence', () => {
+test('semantic versions distinguish tested history from stable probe candidates', () => {
   assert.equal(compareSemver('1.18.4', '1.18.4'), 0);
   assert.equal(compareSemver('1.18.5', '1.18.4'), 1);
   assert.equal(compareSemver('1.18.4-rc.1', '1.18.4'), -1);
-  assert.equal(sanitizeObservedVersion('opencode version v1.18.4\nTOKEN=do-not-copy'), '1.18.4');
+  assert.equal(sanitizeObservedVersion(' \t1.18.28\n'), '1.18.28');
+  assert.equal(sanitizeObservedVersion('\nopencode2 v0.0.0-beta-19086 \t'), '0.0.0-beta-19086');
+  assert.equal(sanitizeObservedVersion('v24.4.0'), '24.4.0');
+  for (const output of [
+    'opencode version v1.18.4',
+    'release 1.18.28',
+    '1.18.28 release',
+    '1.18.28\n0.0.0-beta-19086',
+    'opencode2 v0.0.0-beta-19086 (beta)',
+    '1.18.28+',
+    '1.18.28 banner v1.18.28',
+  ]) assert.equal(sanitizeObservedVersion(output), null, output);
   assert.equal(sanitizeObservedVersion('TOKEN=do-not-copy'), null);
   assert.deepEqual(
     evaluateObservedVersion('opencode', '1.18.3'),
@@ -54,12 +79,24 @@ test('semantic versions and sanitized observations enforce floor versus exact-cu
       component: 'opencode',
       observed: '1.18.3',
       status: 'unsupported',
-      requirement: { kind: 'minimum', version: '1.18.4' },
+      requirement: { kind: 'stable-floor-probe', version: '1.18.4', builds: ['1.18.4', '1.18.28'] },
       exactCurrent: false,
     },
   );
-  assert.equal(evaluateObservedVersion('opencode', '1.18.5').status, 'supported');
+  assert.equal(evaluateObservedVersion('opencode', '1.18.4').status, 'supported');
+  assert.equal(evaluateObservedVersion('opencode', '1.18.28').status, 'supported');
+  assert.equal(evaluateObservedVersion('opencode', '1.18.5').status, 'candidate');
   assert.equal(evaluateObservedVersion('opencode', '1.18.5').exactCurrent, false);
+  assert.equal(evaluateObservedVersion('opencode', '1.18.29').status, 'candidate');
+  assert.equal(evaluateObservedVersion('opencode', '1.99.0').status, 'candidate');
+  assert.equal(evaluateObservedVersion('opencode', '2.0.0').status, 'candidate');
+  assert.equal(evaluateObservedVersion('opencode', '2.0.0-beta.1').status, 'unsupported');
+  assert.equal(evaluateObservedVersion('opencode', 'not-a-version').status, 'unrecognized');
+  assert.equal(sanitizeObservedVersion('opencode v2.0.15\n'), '2.0.15');
+  assert.equal(evaluateOpenCodeVersion('v2-beta-exploratory', ' \nopencode v2.0.15\t').status, 'supported');
+  assert.equal(evaluateOpenCodeVersion('v2-beta-exploratory', 'opencode2 v0.0.0-beta-19425').status, 'unsupported');
+  assert.equal(evaluateOpenCodeVersion('v2-beta-exploratory', '0.0.0-beta-19086').status, 'unsupported');
+  assert.throws(() => evaluateOpenCodeVersion('unknown-profile', '1.18.28'), /unknown compatibility profile/);
   assert.equal(evaluateObservedVersion('node', 'v24.4.0').status, 'targeted');
   assert.equal(evaluateObservedVersion('bun', '1.3.8').status, 'non-target');
 });
@@ -69,6 +106,7 @@ test('unsupported and unverified hosts cannot become successful local evidence',
   assert.equal(evaluatePlatformTarget({ platform: 'linux', arch: 'x64', osId: 'debian' }).status, 'unverified');
   assert.equal(evaluatePlatformTarget({ platform: 'linux', arch: 'x64', osId: 'ubuntu', wsl: true }).reason, 'wsl-unclaimed');
   const evidence = createCompatibilityEvidence({
+    profile: 'stable',
     platform: evaluatePlatformTarget({ platform: 'freebsd', arch: 'x64' }),
     versions: { node: '24.0.0', opencode: '1.18.4' },
     checks: [],
@@ -76,6 +114,109 @@ test('unsupported and unverified hosts cannot become successful local evidence',
   });
   assert.equal(evidence.status, 'failed-local-smoke');
   assert.equal(evidence.releaseQualification, 'not-established');
+  assert.equal(evidence.versionEvidence.localProbe, 'failed');
+});
+
+test('exploratory evidence is visibly distinct and never release-qualified', () => {
+  const evidence = createCompatibilityEvidence({
+    profile: 'v2-beta-exploratory',
+    platform: evaluatePlatformTarget({ platform: 'darwin', arch: 'arm64' }),
+    versions: { node: '24.0.0', opencode: 'opencode v2.0.15' },
+    checks: REQUIRED_COMPATIBILITY_CHECKS['v2-beta-exploratory'].map(id => ({ id, status: 'passed', durationMs: 0, diagnostic: null })),
+  });
+  assert.equal(evidence.status, 'passed-exploratory-smoke');
+  assert.equal(evidence.profile, 'v2-beta-exploratory');
+  assert.equal(evidence.qualification, 'exploratory');
+  assert.equal(evidence.releaseQualification, 'ineligible-exploratory');
+  assert.equal(evidence.versionEvidence.classification, 'exploratory-exact');
+});
+
+test('native-v2 qualification requires exact 2.0.15 and all packaged checks', () => {
+  const required = REQUIRED_COMPATIBILITY_CHECKS['native-v2'].map(id => ({ id, status: 'passed' as const, durationMs: 0, diagnostic: null }));
+  const base = { profile: 'native-v2' as const, platform: evaluatePlatformTarget({ platform: 'darwin', arch: 'arm64' }), versions: { node: '24.0.0', opencode: '2.0.15' } };
+  assert.equal(createCompatibilityEvidence({ ...base, checks: required }).status, 'passed-local-smoke');
+  assert.equal(createCompatibilityEvidence({ ...base, checks: required }).releaseQualification, 'not-established');
+  for (const id of REQUIRED_COMPATIBILITY_CHECKS['native-v2']) {
+    assert.equal(createCompatibilityEvidence({ ...base, checks: required.filter(check => check.id !== id) }).status, 'failed-local-smoke', id);
+  }
+  for (const version of ['2.0.16', '2.0.15-beta.1', '1.18.28', 'unknown']) {
+    assert.equal(createCompatibilityEvidence({ ...base, versions: { node: '24.0.0', opencode: version }, checks: required }).status, 'failed-local-smoke', version);
+  }
+});
+
+test('native worker pool cannot pass empty, unowned, or mismatched model and effort', () => {
+  const worker = { mode: 'subagent', model: { providerID: 'fixture', model: 'worker', variant: 'high' } };
+  const name = 'naru-worker-fixture-worker-high-';
+  const projected = projectOc2NativeAgents(['fixture/worker#high']).workers[0]!.name;
+  assert.ok(projected.startsWith(name));
+  assert.equal(nativeWorkerPoolValid([], { [projected]: worker }, { [projected]: worker }), false);
+  assert.equal(nativeWorkerPoolValid(['fixture/worker#high'], {}, {}), false);
+  assert.equal(nativeWorkerPoolValid(['fixture/worker#high'], { [projected]: worker }, {}), false);
+  assert.equal(nativeWorkerPoolValid(['fixture/worker#high'], { [projected]: { ...worker, model: { ...worker.model, variant: 'low' } } }, { [projected]: worker }), false);
+  assert.equal(nativeWorkerPoolValid(['fixture/worker#high'], { [projected]: worker }, { [projected]: worker }), true);
+});
+
+test('native qualification reads the private 2.0.15 API response shapes and fails closed on missing registration', async () => {
+  const configPath = '/fixture/config/opencode.json', plugin = '/fixture/config/.naru-native/package/tools/oc2-native-plugin';
+  const responses: Record<string, unknown> = {
+    '/api/config': [{ path: configPath }],
+    '/api/agent': { data: [{ id: 'naru', mode: 'primary' }, { id: 'naru-worker-fixture', mode: 'subagent', model: { providerID: 'fixture', id: 'worker', variant: 'high' } }] },
+    '/api/plugin': { data: [{ id: 'naru.oc2-native', source: { type: 'local', path: `${plugin}/index.mjs` }, state: { status: 'active' } }] },
+    '/api/skill': { data: [{ name: 'naru-coordinate' }] },
+    '/api/command': { data: [{ name: 'naru' }] },
+  };
+  const requests: string[] = [];
+  const server = createServer((request, response) => {
+    requests.push(request.url ?? '');
+    const route = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+    if (route === '/api/plugin' && request.headers.authorization !== 'Basic isolated') { response.writeHead(401).end(); return; }
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify(responses[route] ?? {}));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address(); assert.ok(address && typeof address !== 'string');
+    const url = `http://127.0.0.1:${address.port}`;
+    const worker = { name: 'naru-worker-fixture', model: { providerID: 'fixture', id: 'worker', variant: 'high' } };
+    const run = () => checkNativeHostRoutes(url, { authorization: 'Basic isolated' }, '/fixture/project', configPath, plugin, [worker], 1000);
+    assert.deepEqual((await run()).map(check => [check.id, check.status]), [
+      ['native-config-source', 'passed'], ['native-host-agents', 'passed'], ['native-host-plugin', 'passed'], ['native-host-skills', 'passed'], ['native-host-command', 'passed'],
+    ]);
+    assert.deepEqual(requests, ['/api/config', '/api/agent', '/api/plugin', '/api/skill', '/api/command'].map(route => `${route}?location%5Bdirectory%5D=%2Ffixture%2Fproject`));
+    assert.equal((await checkNativeHostRoutes(url, { authorization: 'Basic isolated' }, '/fixture/project', configPath, plugin, [], 1000)).find(check => check.id === 'native-host-agents')?.status, 'failed');
+    responses['/api/agent'] = { data: [{ id: 'naru' }, { id: worker.name, model: { ...worker.model, variant: 'low' } }] };
+    assert.equal((await run()).find(check => check.id === 'native-host-agents')?.diagnostic, 'native-host-agents-missing-registration');
+    responses['/api/config'] = { data: [{ path: configPath }] };
+    responses['/api/agent'] = { data: [{ id: 'naru' }] };
+    responses['/api/plugin'] = { data: [{ source: { type: 'local', path: `${plugin}/index.mjs` }, status: 'active' }] };
+    responses['/api/skill'] = { data: [] };
+    responses['/api/command'] = { data: [] };
+    assert.deepEqual((await run()).map(check => check.diagnostic), [
+      'native-config-source-missing-registration', 'native-host-agents-missing-registration', 'native-host-plugin-missing-registration', 'native-host-skills-missing-registration', 'native-host-command-missing-registration',
+    ]);
+    responses['/api/plugin'] = { data: [{ source: { type: 'local', path: `${plugin}/other.mjs` }, state: { status: 'active' } }] };
+    assert.equal((await run()).find(check => check.id === 'native-host-plugin')?.diagnostic, 'native-host-plugin-missing-registration');
+    assert.equal((await checkNativeHostRoutes(url, {}, '/fixture/project', configPath, plugin, [], 1000)).find(check => check.id === 'native-host-plugin')?.diagnostic, 'native-host-plugin-http-401');
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('missing, omitted, failed, and duplicate required checks cannot produce passing evidence', () => {
+  for (const profile of ['stable', 'v2-beta-exploratory'] as const) {
+    const required = REQUIRED_COMPATIBILITY_CHECKS[profile].map(id => ({ id, status: 'passed', durationMs: 0, diagnostic: null }));
+    const base = { profile, platform: evaluatePlatformTarget({ platform: 'darwin', arch: 'arm64' }), versions: { node: '24.0.0', opencode: profile === 'stable' ? '1.18.28' : 'opencode v2.0.15' } };
+    for (const checks of [[], required.slice(1), required.map(check => ({ ...check, status: 'omitted' })), required.map(check => ({ ...check, status: 'failed' }))]) {
+      assert.match(createCompatibilityEvidence({ ...base, checks }).status, /^failed-/);
+    }
+    assert.throws(() => createCompatibilityEvidence({ ...base, checks: [...required, required[0]] }), /unique/);
+  }
+});
+
+test('smoke API rejects an unknown profile before inspecting paths', async () => {
+  await assert.rejects(runCompatibilitySmoke({
+    opencodePath: '/not/inspected',
+    profile: 'unknown' as never,
+    sourcePath: '/not/inspected',
+  }), /unknown compatibility profile/);
 });
 
 test('OpenCode command allowlist contains only provider-free inspection and localhost startup surfaces', () => {
@@ -89,39 +230,87 @@ test('OpenCode command allowlist contains only provider-free inspection and loca
   ]);
   const serialized = JSON.stringify(OPENCODE_SAFE_COMMANDS);
   for (const forbidden of ['auth', 'model', 'run', 'prompt']) assert.doesNotMatch(serialized, new RegExp(`"${forbidden}"`));
+  assert.deepEqual(OPENCODE_V2_EXPLORATORY_COMMANDS.map(command => command.args), [['--version'], ['--help']]);
 });
 
 async function fakeOpenCode(directory: string, {
   agentListOutputBytes = 0,
   debugConfigOutputBytes = 0,
   failDebugConfig = false,
+  disablePlugin = false,
+  version = '1.18.4',
 }: FakeOpenCodeOptions = {}): Promise<string> {
   const executable = path.join(directory, 'fake-opencode.mjs');
   const source = `#!${process.execPath}
 import http from 'node:http';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 const args = process.argv.slice(2);
 const agentListOutputBytes = ${agentListOutputBytes};
 const agentListOutputMarker = ${JSON.stringify(AGENT_LIST_OUTPUT_MARKER)};
 const debugConfigOutputBytes = ${debugConfigOutputBytes};
 const debugConfigOutputMarker = ${JSON.stringify(DEBUG_CONFIG_OUTPUT_MARKER)};
+const agent = { 'naru': { mode: 'primary', permission: { '*': 'deny', 'safe_tools_*': 'ask', 'codebase_*': 'ask', 'codebase-memory-mcp_search_graph': 'allow', safe_tools_delete: 'deny', task: { '*': 'deny' } }, prompt: ${disablePlugin ? "'Plugin disabled'" : "'Effective defaults: profile=release-critical; decision=comment-only; output=concise.'"} } };
+for (const role of ['naru-reader', 'naru-runner', 'naru-writer']) {
+  agent[role] = { mode: 'subagent', permission: { '*': 'deny', 'safe_tools_*': 'ask', 'codebase_*': 'ask', 'codebase-memory-mcp_search_graph': 'allow', task: 'deny', edit: role === 'naru-writer' ? 'allow' : 'deny', ...(role === 'naru-runner' ? { bash: { '*': 'allow' } } : {}), safe_tools_delete: 'deny' } };
+  agent['naru'].permission.task[role] = 'allow';
+  if (!${disablePlugin}) {
+    agent[role + '-smoke'] = { ...agent[role], model: 'openai/naru-compat-fixture', variant: 'high' };
+    agent['naru'].permission.task[role + '-smoke'] = 'allow';
+  }
+}
 const required = ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'TMPDIR', 'GH_CONFIG_DIR'];
 const boundary = path.dirname(process.env.HOME || '');
 if (!boundary || required.some(key => !process.env[key]?.startsWith(boundary + path.sep))) process.exit(70);
 if (Object.keys(process.env).some(key => /(?:API_KEY|TOKEN|SECRET|PASSWORD|AUTH)$/i.test(key))) process.exit(71);
-if (args.length === 1 && args[0] === '--version') console.log('opencode 1.18.4');
+if (args.length === 1 && args[0] === '--version') console.log(${JSON.stringify(version)}.startsWith('0.0.0-beta-') ? 'opencode2 v' + ${JSON.stringify(version)} : ${JSON.stringify(version)});
 else if (args.length === 1 && args[0] === '--help') console.log('safe help');
 else if (args.join(' ') === 'debug paths') console.log('isolated paths');
 else if (args.join(' ') === 'debug config') {
-  ${failDebugConfig ? "console.error('SUPER_SECRET_VALUE'); process.exit(9);" : "if (debugConfigOutputBytes === 0) console.log('{}'); else process.stdout.write(debugConfigOutputMarker.repeat(Math.ceil(debugConfigOutputBytes / debugConfigOutputMarker.length)).slice(0, debugConfigOutputBytes));"}
+  ${failDebugConfig ? "console.error('SUPER_SECRET_VALUE'); process.exit(9);" : "console.log(JSON.stringify({agent, padding: debugConfigOutputMarker.repeat(Math.ceil(debugConfigOutputBytes / debugConfigOutputMarker.length)).slice(0, debugConfigOutputBytes)}));"}
 } else if (args.join(' ') === 'agent list') {
   if (agentListOutputBytes === 0) console.log('naru');
   else process.stdout.write(agentListOutputMarker.repeat(Math.ceil(agentListOutputBytes / agentListOutputMarker.length)).slice(0, agentListOutputBytes));
 }
 else if (args[0] === 'serve' && args[1] === '--hostname' && args[2] === '127.0.0.1' && args[3] === '--port') {
-  const server = http.createServer((request, response) => {
-    if (request.url === '/global/health') { response.writeHead(200); response.end('{}'); }
-    else { response.writeHead(404); response.end(); }
+  let sequence = 0;
+  const sessions = new Map();
+  const pending = new Map();
+  const attempted = new Map();
+  const body = request => new Promise(resolve => { let value=''; request.on('data', chunk => value += chunk); request.on('end', () => resolve(value ? JSON.parse(value) : {})); });
+  const send = (response, value) => { response.writeHead(200, {'content-type':'application/json'}); response.end(JSON.stringify(value)); };
+  const rules = name => [{permission:'*',pattern:'*',action:'deny'},{permission:'edit',pattern:'*',action:'deny'},{permission:'task',pattern:'*',action:'deny'},...(['naru','naru-reader','naru-runner','naru-writer','naru-reader-smoke','naru-runner-smoke','naru-writer-smoke'].includes(name)?[{permission:'safe_tools_*',pattern:'*',action:'ask'},{permission:'codebase_*',pattern:'*',action:'ask'},{permission:'safe_tools_delete',pattern:'*',action:'deny'}]:[]),...(name==='naru'?[{permission:'codebase-memory-mcp_search_graph',pattern:'*',action:'allow'}]:[])];
+  const hostAgents = ['naru','naru-reader','naru-runner','naru-writer'].flatMap(name => [{name,permission:rules(name),options:{}},...(name==='naru'?[]:[{name,permission:rules(name+'-smoke'),variant:'high',options:{naruVariant:true}}])]);
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    if (url.pathname === '/global/health') send(response, {healthy:true});
+    else if (url.pathname === '/doc') send(response, {paths:{'/api/session/{sessionID}/permission':{post:{operationId:'v2.session.permission.create'}}}});
+    else if (url.pathname === '/agent') send(response, hostAgents);
+    else if ((url.pathname === '/api/session' || url.pathname === '/session') && request.method === 'POST') {
+      const input = await body(request); const id = 'ses_' + (++sequence); sessions.set(id, input.agent); pending.set(id, []); send(response, url.pathname === '/session' ? {id} : {data:{id}});
+    } else if (url.pathname === '/permission' && request.method === 'GET') send(response, [...pending.values()].flat());
+    else {
+      const promptParts = url.pathname.split('/'); const prompt = promptParts.length === 4 && promptParts[1] === 'session' && promptParts[3] === 'prompt_async' ? [url.pathname, promptParts[2]] : null;
+      const messageParts = url.pathname.split('/'); const messages = messageParts.length === 4 && messageParts[1] === 'session' && messageParts[3] === 'message' ? messageParts[2] : null;
+      if (messages && request.method === 'GET') { send(response, [{parts:[{type:'tool',tool:attempted.get(messages),state:{status:'error'}}]}]); return; }
+      if (prompt && request.method === 'POST') {
+        const input = await body(request); const agentName = sessions.get(prompt[1]); const action = String(input.parts?.[0]?.text || '').split(':').at(-1); attempted.set(prompt[1], action);
+        const config = JSON.parse(readFileSync(path.join(process.cwd(), 'opencode.json'), 'utf8'));
+        await fetch(config.provider.openai.options.baseURL + '/responses', {method:'POST', body:'{}'});
+        if (['naru','naru-reader','naru-runner','naru-writer','naru-reader-smoke','naru-runner-smoke','naru-writer-smoke'].includes(agentName) && ['safe_tools_read','codebase_read'].includes(action)) pending.get(prompt[1]).push({sessionID:prompt[1],permission:action});
+        response.writeHead(204); response.end(); return;
+      }
+      const parts = url.pathname.split('/'); const match = parts.length === 5 && parts[1] === 'api' && parts[2] === 'session' && parts[4] === 'permission' ? [url.pathname, parts[3]] : null;
+      if (!match) { response.writeHead(404); response.end('{}'); return; }
+      const sessionID = match[1];
+      if (request.method === 'GET') { send(response, {data:pending.get(sessionID) || []}); return; }
+      const input = await body(request); const agentName = sessions.get(sessionID); const eligible = ['naru','naru-reader','naru-runner','naru-writer','naru-reader-smoke','naru-runner-smoke','naru-writer-smoke'].includes(agentName);
+      const effect = eligible && ['safe_tools_read','codebase_read'].includes(input.action) ? 'ask'
+        : agentName === 'naru' && input.action === 'codebase-memory-mcp_search_graph' ? 'allow' : 'deny';
+      const item = {id:'per_' + (++sequence), action:input.action, effect};
+      if (effect === 'ask') pending.get(sessionID).push(item);
+      send(response, {data:item});
+    }
   });
   server.listen(Number(args[4]), '127.0.0.1');
   process.on('SIGTERM', () => server.close(() => process.exit(0)));
@@ -129,6 +318,8 @@ else if (args[0] === 'serve' && args[1] === '--hostname' && args[2] === '127.0.0
 `;
   await writeFile(executable, source);
   await chmod(executable, 0o755);
+  const syntax = spawnSync(process.execPath, ['--check', executable], { encoding: 'utf8' });
+  assert.equal(syntax.status, 0, syntax.stderr);
   return executable;
 }
 
@@ -145,12 +336,16 @@ test('provider-free fake OpenCode smoke isolates environment, checks depth/defau
       : { platform: 'linux', arch: 'x64', osId: 'ubuntu', wsl: false };
     const report = await runCompatibilitySmoke({
       opencodePath: fake,
+      profile: 'stable',
       sourcePath: root,
       platformEvidence,
     }, { onDisposableRoot: value => { disposable = value; } });
-    assert.equal(report.status, 'passed-local-smoke');
+    assert.equal(report.status, 'passed-local-smoke', JSON.stringify(report));
     assert.equal(report.providerFree, true);
     assert.equal(report.candidateIdentity, 'unverified');
+    assert.equal(report.versionEvidence.classification, 'historical-tested');
+    assert.equal(report.capabilities.hostContract.coreConfig, 'passed');
+    assert.equal(report.capabilities.hostContract.mcpPermissions, 'passed');
     assert.ok(report.checks.every(check => check.status !== 'failed'));
     assert.equal(report.capabilities.dashboard.nativeTuiLoad, 'omitted');
     assert.doesNotMatch(JSON.stringify(report), new RegExp(AGENT_LIST_OUTPUT_MARKER));
@@ -164,18 +359,101 @@ test('provider-free fake OpenCode smoke isolates environment, checks depth/defau
   }
 });
 
+test('an unlisted stable version runs the full probe without becoming release-qualified', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-compat-candidate-'));
+  try {
+    const report = await runCompatibilitySmoke({
+      opencodePath: await fakeOpenCode(temporary, { version: '1.18.29' }),
+      profile: 'stable', sourcePath: root,
+      platformEvidence: { platform: 'darwin', arch: 'arm64' },
+    });
+    assert.equal(report.status, 'passed-local-smoke', JSON.stringify(report));
+    assert.equal(report.versions.opencode.status, 'candidate');
+    assert.equal(report.versionEvidence.classification, 'candidate-probe-required');
+    assert.equal(report.versionEvidence.localProbe, 'passed');
+    assert.equal(report.releaseQualification, 'not-established');
+    assert.ok(REQUIRED_COMPATIBILITY_CHECKS.stable.every(id => report.checks.some(check => check.id === id && check.status === 'passed')));
+
+    const noProbe = createCompatibilityEvidence({
+      profile: 'stable',
+      platform: evaluatePlatformTarget({ platform: 'darwin', arch: 'arm64' }),
+      versions: { node: '24.0.0', opencode: '9.0.0' },
+      checks: [],
+    });
+    assert.equal(noProbe.status, 'failed-local-smoke');
+    assert.equal(noProbe.versions.opencode.status, 'candidate');
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test('stable profile rejects prerelease and invalid version output before host probing', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-compat-rejected-'));
+  try {
+    for (const version of ['2.0.0-beta.1', 'invalid'] as const) {
+      const report = await runCompatibilitySmoke({
+        opencodePath: await fakeOpenCode(temporary, { version }),
+        profile: 'stable', sourcePath: root,
+        platformEvidence: { platform: 'darwin', arch: 'arm64' },
+      });
+      assert.equal(report.status, 'failed-local-smoke');
+      assert.deepEqual(report.checks.map(check => check.id), ['target-platform', 'opencode-version', 'cleanup']);
+      assert.equal(report.versionEvidence.classification, 'rejected');
+    }
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
 test('failed tool output is redacted from bounded evidence', async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-compat-redact-'));
   try {
     const fake = await fakeOpenCode(temporary, { failDebugConfig: true });
     const report = await runCompatibilitySmoke({
       opencodePath: fake,
+      profile: 'stable',
       sourcePath: root,
       platformEvidence: { platform: 'darwin', arch: 'arm64', osId: null, wsl: false },
     });
     assert.equal(report.status, 'failed-local-smoke');
     assert.equal(report.checks.find(check => check.id === 'opencode-debug-config')?.status, 'failed');
     assert.doesNotMatch(JSON.stringify(report), /SUPER_SECRET_VALUE/);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('successful host commands cannot hide a disabled dispatch plugin', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-compat-no-plugin-'));
+  try {
+    const report = await runCompatibilitySmoke({
+      opencodePath: await fakeOpenCode(temporary, { disablePlugin: true }),
+      profile: 'stable', sourcePath: root,
+      platformEvidence: { platform: 'darwin', arch: 'arm64' },
+    });
+    assert.equal(report.status, 'failed-local-smoke');
+    assert.equal(report.checks.find(check => check.id === 'core-config')?.diagnostic, 'review-defaults-missing');
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test('isolated v2 smoke is exact-build exploratory and runs only confirmed commands', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-compat-v2-'));
+  try {
+    const fake = await fakeOpenCode(temporary, { version: '2.0.15' });
+    const report = await runCompatibilitySmoke({
+      opencodePath: fake,
+      profile: 'v2-beta-exploratory',
+      sourcePath: root,
+      platformEvidence: { platform: 'darwin', arch: 'arm64', osId: null, wsl: false },
+    });
+    assert.equal(report.status, 'passed-exploratory-smoke');
+    assert.deepEqual(report.checks.map(check => check.id), ['target-platform', 'opencode-version', 'opencode-help', 'cleanup']);
+
+    const drift = await fakeOpenCode(temporary, { version: '0.0.0-beta-19425' });
+    const failed = await runCompatibilitySmoke({
+      opencodePath: drift,
+      profile: 'v2-beta-exploratory',
+      sourcePath: root,
+      platformEvidence: { platform: 'darwin', arch: 'arm64', osId: null, wsl: false },
+    });
+    assert.equal(failed.status, 'failed-exploratory-smoke');
+    assert.deepEqual(failed.checks.map(check => check.id), ['target-platform', 'opencode-version', 'cleanup']);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
