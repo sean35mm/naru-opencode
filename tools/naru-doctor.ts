@@ -726,13 +726,13 @@ async function buildNativeDoctorReport(options: DoctorOptions): Promise<DoctorRe
     const native: NonNullable<DoctorReport['native']> = { installed: false, package: 'absent', agents: 'absent', registration: 'absent', workers: 0, runtimeEvidence: 'not-run' };
     const host = spawnSync('opencode', ['--version'], { encoding: 'utf8', timeout: 2_000, maxBuffer: 4096, stdio: ['ignore', 'pipe', 'pipe'] });
     const evaluation = evaluateOpenCodeVersion('native-v2', host.status === 0 ? `${host.stdout ?? ''}\n${host.stderr ?? ''}` : '');
-    const exact = evaluation.status === 'supported';
+    const exact = evaluation.status === 'supported', accepted = exact || evaluation.status === 'candidate';
     const probe: HostContractProbe = { status: 'not-run', checks: [], actions: [], limitation: 'Native runtime, platform, provider entitlement and live agent invocation were not tested by this read-only doctor.' };
     const compatibility: DoctorReport['compatibility'] = {
-        opencode: { status: exact ? 'probe-required' : host.error && 'code' in host.error && host.error.code === 'ENOENT' ? 'not-found' : 'unsupported', version: evaluation.observed, profile: 'native-v2', testedBuilds: [], recognizedBuilds: ['2.0.15'], versionPolicy: exact ? 'current-target' : 'unsupported', probe },
+        opencode: { status: accepted ? 'probe-required' : host.error && 'code' in host.error && host.error.code === 'ENOENT' ? 'not-found' : 'unsupported', version: evaluation.observed, profile: 'native-v2', testedBuilds: [], recognizedBuilds: ['2.0.15'], versionPolicy: exact ? 'current-target' : accepted ? 'candidate' : 'unsupported', probe },
         runtime: { name: Reflect.get(globalThis, 'Bun') ? 'bun' : 'node', version: process.versions.node },
     };
-    if (!exact) addIssue(issues, 'opencode-compatibility', 'host', 'native install requires observed exact OpenCode 2.0.15; no runtime qualification was inferred');
+    if (!accepted) addIssue(issues, 'opencode-compatibility', 'host', 'native install requires observed OpenCode 2.0.15 or a newer 2.0.x patch release; no runtime qualification was inferred');
     if (await statOrNull(path.join(root, 'agents', 'naru.md')) !== null) addIssue(issues, 'native-agent-collision', 'global', 'filesystem agents/naru.md is ambiguous with the native naru definition; manual cutover required');
     try {
         const inspected = await inspectNativeInstall(root);
@@ -793,7 +793,7 @@ export async function buildStaticDoctorReport(options: DoctorOptions): Promise<D
     return buildDoctorReport({ ...options, hostContractRoot: null });
 }
 function renderPlain(report: DoctorReport): string {
-    if (report.native) return `Naru native doctor: ${report.status}\nOpenCode: ${report.compatibility.opencode.version ?? 'unknown'} (exact 2.0.15 required)\nNative package: ${report.native.package}; agents: ${report.native.agents}; registration: ${report.native.registration}; workers: ${report.native.workers}\nRuntime evidence: not run; platform, live invocation and account entitlement are not qualified\n${report.issues.map(issue => `${issue.code}: ${issue.detail}\n`).join('')}`;
+    if (report.native) return `Naru native doctor: ${report.status}\nOpenCode: ${report.compatibility.opencode.version ?? 'unknown'} (2.0.15 tested; 2.0.x patch accepted)\nNative package: ${report.native.package}; agents: ${report.native.agents}; registration: ${report.native.registration}; workers: ${report.native.workers}\nRuntime evidence: not run; platform, live invocation and account entitlement are not qualified\n${report.issues.map(issue => `${issue.code}: ${issue.detail}\n`).join('')}`;
     const lines = [
         `Naru doctor: ${report.status}`,
         `OpenCode: ${report.compatibility.opencode.status}${report.compatibility.opencode.version ? ` (${report.compatibility.opencode.version})` : ''}; version evidence ${report.compatibility.opencode.versionPolicy}; tested history ${report.compatibility.opencode.testedBuilds.join(', ')}`,

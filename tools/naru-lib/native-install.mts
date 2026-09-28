@@ -91,7 +91,7 @@ export async function verifyNativeHostVersion(executable = 'opencode'): Promise<
         catch { throw new Error(`Native install requires OpenCode 2.0.15 at ${selected}; no host binary is installed by Naru`); }
     } finally { await rm(temporary, { recursive: true, force: true }); }
     const version = evaluateOpenCodeVersion('native-v2', output);
-    if (version.status !== 'supported') throw new Error(`Native install requires exact OpenCode 2.0.15; found ${version.observed ?? 'unknown'}. Use --legacy for historical v1 assets.`);
+    if (version.status !== 'supported' && version.status !== 'candidate') throw new Error(`Native install requires OpenCode 2.0.15 or a newer 2.0.x patch release; found ${version.observed ?? 'unknown'}. Use --legacy for historical v1 assets.`);
 }
 export async function inspectNativeInstall(configRoot: string): Promise<{ installed: boolean; models: string[] }> {
     const paths = getNativeInstallPaths(configRoot);

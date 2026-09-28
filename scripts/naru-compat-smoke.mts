@@ -430,7 +430,7 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
                 }
                 checks.push(commandCheck('install-preview', mutated ? { ...result, status: 'failed', reason: 'preview-mutated-native-assets' } : result));
                 if (result.status === 'failed') {
-                    const known = ['Native install requires exact OpenCode 2.0.15', 'Unsafe native install directory', 'Native agent name', 'Native install requires the compiled release', 'Normal OpenCode config must be strict JSON', 'OC2 native setup requires HOME', 'Missing compiled Naru tools'];
+                    const known = ['Native install requires OpenCode 2.0.15', 'Unsafe native install directory', 'Native agent name', 'Native install requires the compiled release', 'Normal OpenCode config must be strict JSON', 'OC2 native setup requires HOME', 'Missing compiled Naru tools'];
                     checks.at(-1)!.diagnostic = known.find(message => result.output.includes(message)) ?? checks.at(-1)!.diagnostic;
                 }
                 if (result.status === 'passed' && !mutated) {

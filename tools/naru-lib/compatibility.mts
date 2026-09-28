@@ -147,6 +147,8 @@ export const COMPATIBILITY_POLICY = deepFreeze({
         'native-v2': {
             qualification: 'native-v2',
             recognizedBuilds: ['2.0.15'],
+            // Install and doctor accept stable patch releases in [floor, below) as candidates; smoke qualification stays exact.
+            candidateRange: { floor: '2.0.15', below: '2.1.0' },
         },
     },
     targets: {
@@ -283,7 +285,9 @@ export function evaluateOpenCodeVersion(profile: unknown, output: unknown): Obse
         requirement = { kind: 'stable-floor-probe', version: COMPATIBILITY_POLICY.release.opencode.floor, builds: testedBuilds };
     }
     else {
-        status = observed !== null && selected.recognizedBuilds.some(build => build === observed) ? 'supported' : observed === null ? 'unrecognized' : 'unsupported';
+        const range = 'candidateRange' in selected ? selected.candidateRange : null;
+        status = observed !== null && selected.recognizedBuilds.some(build => build === observed) ? 'supported' : observed === null ? 'unrecognized'
+            : range && parsed && parsed.prerelease.length === 0 && compareSemver(parsed, range.floor) >= 0 && compareSemver(parsed, range.below) < 0 ? 'candidate' : 'unsupported';
         requirement = { kind: 'explicit-builds', version: null, builds: selected.recognizedBuilds };
     }
     return {
