@@ -45,7 +45,8 @@ test('native profile imports only validated global models and preserves config, 
         assert.deepEqual(config.agents.custom, original.agents.custom); assert.notDeepEqual(config.agents.naru, LEGACY_STANDALONE_NARU_AGENT);
         assert.equal(Object.keys(config.agents).filter(name => name.startsWith('naru-worker-')).length, 1);
         for (const agent of Object.values(config.agents) as Array<{ system?: string }>) if (agent.system?.includes('native Naru') || agent.system?.includes('primary native OpenCode')) assert.match(agent.system, /Explicit native preferences/);
-        assert.equal('permissions' in config.agents.naru, false);
+        assert.deepEqual(config.agents.naru.permissions, [{ action: 'skill', effect: 'allow', resource: 'naru-*' }, { action: 'skill', effect: 'allow', resource: 'unslop' }]);
+        for (const [name, agent] of Object.entries(config.agents) as Array<[string, { permissions: Array<{ action: string; effect: string; resource: string }> }]>) if (name.startsWith('naru-worker-')) assert.deepEqual(agent.permissions.filter(rule => rule.resource === 'git push*' || rule.resource === 'gh api*').map(rule => rule.effect), ['deny', 'ask']);
         assert.deepEqual(await readFile(join(root, 'state.json')), stateBefore); assert.deepEqual(await readFile(paths.database), databaseBefore);
         assert.equal(await readFile(join(root, 'worktrees', 'old', 'keep'), 'utf8'), 'history');
 
