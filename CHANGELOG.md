@@ -2,6 +2,14 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.8.1](https://github.com/sean35mm/naru-opencode/compare/v0.8.0...v0.8.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* improve coordinator model selection and explicit delegation ([0619293](https://github.com/sean35mm/naru-opencode/commit/06192936e20f311995de9c58791099ca765f5820))
+* improve coordinator model selection and explicit delegation ([ac98ccf](https://github.com/sean35mm/naru-opencode/commit/ac98ccff9d0fd890791f93f80382b261fde485c3))
+
 ## [0.8.0] - 2026-09-28
 
 ### Changed
