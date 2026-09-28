@@ -23,7 +23,7 @@ Everything that changes your OpenCode configuration goes through preview first. 
 | `naru doctor [--dir PATH] [--json]` | Read-only local native package and registration health |
 | `naru configure [--dir PATH] [--apply]` | Select native worker models interactively; preview unless applied |
 | `naru models --list [--dir PATH]` | List native worker references without changing them |
-| `naru models --set REF[,REF] [--dir PATH] [--apply]` | Preview or apply exact catalogue-backed worker references |
+| `naru models --set REF[,REF] [--dir PATH] [--apply]` | Preview or save exact worker references offline; checks syntax, duplicates, and the 32-reference limit, not availability |
 | `naru version` | Show installed and latest available versions |
 
 Releases live under `~/.naru/versions/<version>` with `~/.naru/current` pointing at the active one, so an upgrade keeps the previous release on disk. To install an exact version, pass `--version` to the bootstrap:
@@ -109,7 +109,7 @@ sh install.sh --dir /path/to/opencode-config --apply
 
 A custom `--dir` must be a path OpenCode actually loads. Restart OpenCode after applying an update.
 
-`--project`, `--copy`, `--replace-conflicts`, and `--only` belong to the historical v1 installer, not normal native installation. Native model selection uses OpenCode's normal catalogue and does not enable a paid provider or guarantee account access.
+`--project`, `--copy`, `--replace-conflicts`, and `--only` belong to the historical v1 installer, not normal native installation. Interactive `naru configure` uses OpenCode's normal catalogue to offer choices. Explicit `naru models --set` validates reference syntax, duplicates, and the 32-reference limit offline, then previews or saves the exact references; availability is not checked. Neither command enables a paid provider or guarantees account access.
 
 ## Historical v1 lifecycle and rollback (`--legacy`)
 

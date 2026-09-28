@@ -112,7 +112,7 @@ console.log('opencode v2.0.15');
     } finally { await rm(tmp, { recursive: true, force: true }); }
 });
 
-test('real 2.0.15 preview leaves fixture target and probe scratch absent', { skip: !process.env.NARU_NATIVE_TEST_REAL_OPENCODE }, async () => {
+test('real 2.0.15 previews without fixture writes and saves explicit references offline', { skip: !process.env.NARU_NATIVE_TEST_REAL_OPENCODE }, async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'naru-native-real-preview-'));
     const home = join(tmp, 'home'), probes = join(tmp, 'probes'), root = join(home, '.config', 'opencode');
     try {
@@ -122,29 +122,29 @@ test('real 2.0.15 preview leaves fixture target and probe scratch absent', { ski
         assert.match(stdout, /Preview only; no files changed/);
         await assert.rejects(lstat(root), { code: 'ENOENT' });
         assert.deepEqual(await readdir(probes), []);
+        await run(join(source, 'bin', 'naru'), ['install', '--dir', root, '--apply', '--opencode', process.env.NARU_NATIVE_TEST_REAL_OPENCODE!], { env });
+        const refs = 'fixture/previously-working,fixture/other#fast', cli = join(source, 'bin', 'naru');
+        const before = await Promise.all([getNativeInstallPaths(root).configPath, getNativeInstallPaths(root).profilePath].map(path => readFile(path)));
+        const preview = await run(cli, ['models', '--dir', root, '--set', refs, '--preview', '--opencode', process.env.NARU_NATIVE_TEST_REAL_OPENCODE!], { env });
+        assert.match(preview.stdout, /Availability not checked/);
+        for (const [index, path] of [getNativeInstallPaths(root).configPath, getNativeInstallPaths(root).profilePath].entries()) assert.deepEqual(await readFile(path), before[index]);
+        await run(cli, ['models', '--dir', root, '--set', refs, '--apply', '--opencode', process.env.NARU_NATIVE_TEST_REAL_OPENCODE!], { env });
+        assert.deepEqual(await nativeModels(root), refs.split(','));
     } finally { await rm(tmp, { recursive: true, force: true }); }
 });
 
-test('normal CLI models --list and --set use observed host references without a paid model call', async () => {
+test('normal CLI explicit models --set previews and saves exact references offline', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'naru-native-model-cli-'));
-    const bin = join(tmp, 'bin'), root = join(tmp, 'config');
+    const bin = join(tmp, 'bin'), root = join(tmp, 'config'), serveMarker = join(tmp, 'serve-invoked');
     try {
         await mkdir(bin);
         const host = join(bin, 'opencode2');
         await writeFile(join(bin, 'opencode'), '#!/bin/sh\nprintf "1.18.32\\n"\n'); await chmod(join(bin, 'opencode'), 0o700);
         await writeFile(host, `#!/usr/bin/env node
 if (process.argv[2] === '--version') { console.log('2.0.15'); process.exit(0); }
-const { createServer } = await import('node:http');
-const server = createServer((req, res) => {
-  if (req.url.startsWith('/api/plugin/await-activation')) { res.writeHead(204); res.end(); return; }
-  res.setHeader('content-type', 'application/json');
-  const data = req.url.startsWith('/api/provider')
-    ? [{ id: 'fixture', name: 'Fixture', activation: 'enabled', package: 'fixture' }]
-    : [{ id: 'model', modelID: 'model', providerID: 'fixture', name: 'Fixture Model', capabilities: { tools: true, input: ['text'], output: ['text'] }, variants: [{ id: 'fast' }], time: { released: 1 }, cost: [], status: 'active', enabled: true, limit: { context: 1000 } }];
-  res.end(JSON.stringify({ location: {}, data }));
-});
-server.listen(0, '127.0.0.1', () => console.log(JSON.stringify({ url: 'http://127.0.0.1:' + server.address().port })));
-process.stdin.resume();
+const { writeFileSync } = await import('node:fs');
+writeFileSync(${JSON.stringify(serveMarker)}, process.argv.slice(2).join(' '));
+process.exit(1);
 `); await chmod(host, 0o700);
         const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: tmp };
         const command = join(source, 'bin', 'naru');
@@ -152,13 +152,23 @@ process.stdin.resume();
         const before = await run(command, ['models', '--dir', root, '--list'], { env });
         assert.match(before.stdout, /No native workers selected/);
         await assert.rejects(run(command, ['models', '--dir', root, '--set', 'fixture/model#fast', '--preview'], { env }), /exact OpenCode 2.0.15/);
-        const preview = await run(command, ['models', '--dir', root, '--set', 'fixture/model#fast', '--opencode', host], { env });
-        assert.match(preview.stdout, /Preview only/);
+        const paths = getNativeInstallPaths(root), original = await Promise.all([paths.configPath, paths.profilePath].map(path => readFile(path)));
+        const refs = 'fixture/model#fast,absent/previously-working';
+        const preview = await run(command, ['models', '--dir', root, '--set', refs, '--opencode', host], { env });
+        assert.match(preview.stdout, /Preview only.*Availability not checked/s);
         assert.deepEqual(await nativeModels(root), []);
-        await run(command, ['models', '--dir', root, '--set', 'fixture/model#fast', '--apply', '--opencode', host], { env });
+        for (const [index, path] of [paths.configPath, paths.profilePath].entries()) assert.deepEqual(await readFile(path), original[index]);
+        const saved = await run(command, ['models', '--dir', root, '--set', refs, '--apply', '--opencode', host], { env });
+        assert.match(saved.stdout, /Saved native worker configuration:.*Availability not checked/s);
         const after = await run(command, ['models', '--dir', root, '--list'], { env });
-        assert.equal(after.stdout.trim(), 'fixture/model#fast');
-        await assert.rejects(run(command, ['models', '--dir', root, '--set', 'fixture/other', '--apply', '--opencode', host], { env }), /distinct exact references offered/);
+        assert.equal(after.stdout.trim(), refs.replace(',', '\n'));
+        assert.deepEqual(JSON.parse(await readFile(paths.profilePath, 'utf8')).models, refs.split(','));
+        const stable = await Promise.all([paths.configPath, paths.profilePath].map(path => readFile(path)));
+        for (const invalid of ['fixture/one,fixture/one', 'fixture/one,', 'fixture/../unsafe', 'fixture/one, fixture/two', Array.from({ length: 33 }, (_, index) => `fixture/model${index}`).join(',')]) {
+            await assert.rejects(run(command, ['models', '--dir', root, '--set', invalid, '--apply', '--opencode', host], { env }), /Duplicate native model reference|exact comma-separated|Invalid enrolled catalogue reference|at most 32/);
+            for (const [index, path] of [paths.configPath, paths.profilePath].entries()) assert.deepEqual(await readFile(path), stable[index]);
+        }
+        await assert.rejects(lstat(serveMarker), { code: 'ENOENT' });
     } finally { await rm(tmp, { recursive: true, force: true }); }
 });
 

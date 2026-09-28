@@ -213,6 +213,41 @@ test('catalogue readiness waits for plugin activation when v2 omits the old endp
     } finally { await new Promise<void>(resolvePromise => server.close(() => resolvePromise())); }
 });
 
+test('catalogue fallback retries stalled requests within its deadline, including stalled response bodies', async () => {
+    let polls = 0;
+    const server = (await import('node:http')).createServer((request, response) => {
+        if (request.method === 'POST') { response.writeHead(404).end(); return; }
+        polls++;
+        if (polls === 1) return; // No headers until the per-request timeout.
+        if (polls === 2) { response.writeHead(200, { 'content-type': 'application/json' }); response.write('{'); return; }
+        response.setHeader('content-type', 'application/json'); response.end(JSON.stringify({ data: [{ id: 'fixture' }] }));
+    });
+    await new Promise<void>(resolvePromise => server.listen(0, '127.0.0.1', resolvePromise));
+    const address = server.address(); assert.ok(address && typeof address === 'object');
+    try {
+        await waitForPreviewReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', { deadlineMs: 1000, requestTimeoutMs: 50, pollIntervalMs: 1 });
+        assert.equal(polls, 3);
+    } finally { server.closeAllConnections(); await new Promise<void>(resolvePromise => server.close(() => resolvePromise())); }
+});
+
+test('catalogue fallback labels permanent timeouts and rejects auth failures without retries', async () => {
+    for (const status of ['stall', '401']) {
+        let polls = 0;
+        const server = (await import('node:http')).createServer((request, response) => {
+            if (request.method === 'POST') { response.writeHead(404).end(); return; }
+            polls++;
+            if (status === '401') response.writeHead(401).end();
+        });
+        await new Promise<void>(resolvePromise => server.listen(0, '127.0.0.1', resolvePromise));
+        const address = server.address(); assert.ok(address && typeof address === 'object');
+        try {
+            await assert.rejects(waitForPreviewReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', { deadlineMs: 120, requestTimeoutMs: 25, pollIntervalMs: 1 }), status === '401' ? /activation failed \(401\)/ : /catalogue activation timed out/);
+            if (status === '401') assert.equal(polls, 1);
+            else assert.ok(polls > 1);
+        } finally { server.closeAllConnections(); await new Promise<void>(resolvePromise => server.close(() => resolvePromise())); }
+    }
+});
+
 test('catalogue readiness bounds stalled requests by per-request and overall timeouts', async () => {
     for (const timing of [{ deadlineMs: 100, requestTimeoutMs: 20 }, { deadlineMs: 20, requestTimeoutMs: 100 }]) {
         const server = (await import('node:http')).createServer((_request, response) => { setTimeout(() => response.writeHead(204).end(), 60); });

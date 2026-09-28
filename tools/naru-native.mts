@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { defaultNativeConfigRoot, installNative, nativeModels, validateNativeExecutable, verifyNativeHostVersion } from './naru-lib/native-install.mjs';
 import { fetchPreviewCatalogue, startPreviewServer } from './naru-lib/preview-process.mjs';
 import { selectValidModels, TerminalWizardPrompt, WizardCancelled } from './naru-lib/preview-wizard.mjs';
-import { parseCatalogueReference } from './naru-lib/native-reader-projection.mjs';
+import { projectOc2NativeAgents } from './naru-lib/oc2-native-projection.mjs';
 
 export async function runNative(argv: string[], sourceRoot: string): Promise<void> {
     let root = defaultNativeConfigRoot(), apply = false, preview = false, executable = 'opencode';
@@ -38,15 +38,9 @@ export async function runNative(argv: string[], sourceRoot: string): Promise<voi
         const existing = await nativeModels(root);
         await verifyNativeHostVersion(executable);
         if (command === 'models' && args.length === 2 && args[0] === '--set') {
-            selected = args[1]!.split(',').map(value => value.trim());
+            selected = args[1]!.split(',');
             if (!selected.length || selected.some(value => !value)) throw new Error('models --set requires exact comma-separated references');
-            for (const model of selected) parseCatalogueReference(model);
-            const server = await startPreviewServer(executable, process.cwd(), catalogueEnv, 'catalogue');
-            try {
-                const catalogue = await fetchPreviewCatalogue(server.url, process.cwd(), server.headers);
-                const offered = new Set(catalogue.models.flatMap(model => [model.reference, ...model.variantIDs.map(variant => `${model.reference}#${variant}`)]));
-                if (selected.some(model => !offered.has(model)) || new Set(selected).size !== selected.length) throw new Error('Worker references must be distinct exact references offered by the normal OpenCode catalogue');
-            } finally { server.stop(); }
+            projectOc2NativeAgents(selected);
         } else if (!args.length && process.stdin.isTTY && process.stdout.isTTY) {
             const server = await startPreviewServer(executable, process.cwd(), catalogueEnv, 'catalogue');
             try {
@@ -56,8 +50,8 @@ export async function runNative(argv: string[], sourceRoot: string): Promise<voi
                 if (!await prompt.confirm('Save these native worker models?')) throw new WizardCancelled();
             } finally { server.stop(); }
         } else throw new Error('Use naru configure in a terminal, or naru models --set REF[,REF] / --list');
-        if (!apply) { process.stdout.write(`Native worker pool preview: ${selected.join(', ')}\nPreview only; rerun with --apply.\n`); return; }
-        process.stdout.write(`Saved native workers: ${(await nativeModels(root, selected, existing, executable)).join(', ')}\nRestart OpenCode to load changes.\n`);
+        if (!apply) { process.stdout.write(`Native worker pool preview: ${selected.join(', ')}\nPreview only; rerun with --apply.${command === 'models' ? ' Availability not checked.' : ''}\n`); return; }
+        process.stdout.write(`Saved native worker configuration: ${(await nativeModels(root, selected, existing, executable)).join(', ')}\n${command === 'models' ? 'Availability not checked. ' : ''}Restart OpenCode to load changes.\n`);
     } else throw new Error(`Unknown native command: ${command}`);
 }
 

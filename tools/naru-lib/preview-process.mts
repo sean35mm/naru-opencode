@@ -99,7 +99,10 @@ function requestSignal(deadline: number, requestTimeoutMs: number): AbortSignal 
 }
 async function responseJson(response: Response, message: string): Promise<unknown> {
     if (!response.ok) throw new Error(`${message} (${response.status})`);
-    try { return await response.json(); } catch { throw new Error(`${message}: malformed response`); }
+    try { return await response.json(); } catch (error) {
+        if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) throw error;
+        throw new Error(`${message}: malformed response`);
+    }
 }
 async function boundedResponseJson(response: Response, message: string, maxBytes = 1024 * 1024): Promise<unknown> {
     if (!response.ok) throw new Error(`${message} (${response.status})`);
@@ -283,10 +286,14 @@ export async function waitForPreviewReadiness(url: string, cwd: string, headers:
         if (response.status === 404) {
             await response.body?.cancel();
             while (Date.now() < deadline) {
-                const plugins = await fetch(readinessUrl(url, '/api/plugin', cwd), { headers, signal: requestSignal(deadline, requestTimeoutMs) });
-                const value = await responseJson(plugins, 'OpenCode catalogue activation failed') as { data?: unknown };
-                if (!Array.isArray(value?.data)) throw new Error('OpenCode catalogue activation failed: malformed plugin response');
-                if (value.data.length) return;
+                try {
+                    const plugins = await fetch(readinessUrl(url, '/api/plugin', cwd), { headers, signal: requestSignal(deadline, requestTimeoutMs) });
+                    const value = await responseJson(plugins, 'OpenCode catalogue activation failed') as { data?: unknown };
+                    if (!Array.isArray(value?.data)) throw new Error('OpenCode catalogue activation failed: malformed plugin response');
+                    if (value.data.length) return;
+                } catch (error) {
+                    if (!(error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError'))) throw error;
+                }
                 await new Promise(resolve => setTimeout(resolve, Math.min(pollIntervalMs, Math.max(0, deadline - Date.now()))));
             }
             throw new Error('OpenCode catalogue activation timed out');
