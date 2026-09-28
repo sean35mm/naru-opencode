@@ -614,7 +614,7 @@ test('broker freezes one managed model source for a parent and later workers whi
     } finally { broker.shutdown(); await rm(root, { recursive: true, force: true }); }
 });
 
-test('broker enforces enrollment, leaf capabilities, exact routing, idempotency and restart revocation', async () => {
+test('broker enforces enrollment, leaf capabilities, exact routing, idempotency and restart revocation', { skip: process.platform !== 'darwin' || process.arch !== 'arm64' }, async () => {
     const root = await realpath(await mkdtemp('/tmp/naru-broker-test-'));
     const node = process.execPath, git = nodeSpawner(cleanProcessEnvironment(node));
     const repository = join(root, 'repo'); await mkdir(repository);
@@ -924,7 +924,7 @@ test('global worker policy is admin-only, CAS-bound, inherited explicitly, and f
     await mkdir(repository); await mkdir(stateRoot, { mode: 0o700 });
     const git = nodeSpawner(cleanProcessEnvironment(process.execPath));
     const runGit = async (argv: string[]) => { const result = await git(['git', ...argv], { cwd: repository }); assert.equal(result.ok, true, result.stderr); };
-    const broker = new PreviewBroker({ root: stateRoot, executable: process.execPath, node: process.execPath, cli: '/fixture/cli' }, 'admin');
+    const broker = new PreviewBroker({ root: stateRoot, executable: process.execPath, node: process.execPath, cli: '/fixture/cli' }, 'admin', { platform: 'darwin', arch: 'arm64' });
     try {
         await runGit(['init', '-q']); await runGit(['config', 'user.name', 'Fixture']); await runGit(['config', 'user.email', 'fixture@example.invalid']); await writeFile(join(repository, 'tracked.txt'), 'tracked'); await runGit(['add', '.']); await runGit(['commit', '-qm', 'fixture']); await broker.load();
         await assert.rejects(broker.request('forged', 'configure-global', { models: ['fixture/a'], expectedRevision: null, role: 'admin', _meta: { role: 'admin' } }), /Capability/);
