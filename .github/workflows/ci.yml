@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Release PRs are created with GITHUB_TOKEN, which suppresses pull_request runs.
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -41,4 +41,20 @@ The three test commands build first and execute only the generated tree. CI can 
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) such as `feat: ...`, `fix: ...`, or `docs: ...`. `VERSION` is the sole semantic product-version source; release notes and any proposed artifact or tag must agree with it. Update [`CHANGELOG.md`](CHANGELOG.md) only with user-visible, evidence-backed claims.
 
+### Automated release PRs
+
+Squash-merge changes with a Conventional Commit PR title: `fix:` proposes a patch release and `feat:` a minor release. With `bump-minor-pre-major: true`, breaking changes before 1.0 also propose a minor release. Non-release `chore:` and `docs:` changes do not require an otherwise unnecessary release.
+
+Release Please maintains a release PR for `main` using the `simple` strategy and the plain `VERSION` file, not a package.json version. Its manifest starts at the already published `0.8.0`; installing this automation does not bump the runtime version. Subsequent release PRs update `VERSION`, `.release-please-manifest.json`, and `CHANGELOG.md` together. Review the proposed version and notes before merging. The bot neither approves nor auto-merges PRs: the human release-PR merge is the publication checkpoint.
+
+After that merge, Release Please creates a `vX.Y.Z` tag and a **draft** release, then calls the existing Release workflow directly. That workflow binds the tag to the approved commit and `VERSION`, builds one archive, and qualifies that same archive on macOS arm64 and Linux x64 with the pinned native OpenCode host. Only after both qualification jobs succeed does it upload the qualified archive and checksum and publish the draft. Published releases are immutable; recovery must not retag a version or replace its public assets.
+
+The built-in `GITHUB_TOKEN` suppresses workflow runs from bot-created PR and tag events. The Release PR workflow therefore explicitly dispatches CI on the bot branch (so checks attach to that head) and invokes the reusable Release workflow rather than relying on a tag-push event. No PAT is required. Default token permissions remain read-only; write permissions are scoped to the jobs that need them.
+
+**One-time setup:** repository **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** must be enabled. This setting was disabled when the automation was prepared; changing it requires explicit maintainer approval and is not part of a local code change. Enabling the capability does not make this workflow approve PRs. Live automation remains unverified until the workflows are merged and this setting is enabled.
+
+If qualification or publication fails, rerun the failed jobs. Alternatively, manually dispatch the **Release** workflow on `main` with `tag=vX.Y.Z` for the existing draft/tag; do not create a replacement tag. A published release is not a recovery target.
+
+Workflow contract tests read configuration from the source checkout using `process.cwd()`, because `.naru-build/` does not copy those files. Run them from the repository root after building: `node --test .naru-build/tests/release-workflow.test.mjs`. These local checks do not exercise GitHub settings, token behavior, or live publication.
+
 Do not claim OpenCode, operating-system, runtime, or compatibility support from an untested combination. Record exact versions and immutable candidate evidence for support claims, distinguish deterministic local evaluation from paid or live evaluation, and never imply benchmark or compatibility results that were not actually produced.

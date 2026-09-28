@@ -1,0 +1,56 @@
+name: Release PR
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - name: Maintain release PR and prepare merged releases as drafts
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      # GITHUB_TOKEN-created PRs do not emit another workflow-triggering event.
+      - name: Run CI on the release PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Also recover a dispatch failure when the PR itself is unchanged on retry.
+          RELEASE_PR_BRANCH="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --base main --head release-please--branches--main --limit 1 --json headRefName --jq '.[0].headRefName // empty')"
+          if [ -z "$RELEASE_PR_BRANCH" ]; then exit 0; fi
+          test "$RELEASE_PR_BRANCH" = release-please--branches--main
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_PR_BRANCH"
+
+  publish:
+    needs: propose
+    if: needs.propose.outputs.release_created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.propose.outputs.tag }}
+      sha: ${{ needs.propose.outputs.sha }}

@@ -3,19 +3,46 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      sha:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to qualify and publish (also recovers a failed draft)
+        required: true
+        type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ steps.version.outputs.sha }}
     steps:
+      - name: Validate requested release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
 
       - name: Set up Node.js
@@ -26,16 +53,22 @@ jobs:
       - name: Verify tag matches VERSION
         id: version
         shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          EXPECTED_SHA: ${{ inputs.sha || (github.ref_type == 'tag' && github.sha) || '' }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME#v}"
-          version="$(tr -d ' \n' < VERSION)"
-          if [ "$tag" != "$version" ]; then
-            echo "Tag ${GITHUB_REF_NAME} does not match VERSION (${version})" >&2
-            exit 1
-          fi
-          echo "version=${version}" >> "$GITHUB_ENV"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const version = readFileSync('VERSION', 'utf8').trim();
+          const tag = process.env.RELEASE_TAG;
+          const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version) || tag !== `v${version}`) throw new Error('Release tag does not match VERSION');
+          if (!/^[0-9a-f]{40}$/.test(sha) || (process.env.EXPECTED_SHA && sha !== process.env.EXPECTED_SHA)) throw new Error('Release tag does not match the approved commit');
+          appendFileSync(process.env.GITHUB_ENV, `version=${version}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\ntag=${tag}\nsha=${sha}\n`);
+          NODE
 
       - name: Install root dependencies
         run: npm ci
@@ -158,25 +191,8 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_SHA: ${{ needs.build.outputs.sha }}
         run: |
           set -euo pipefail
-          version="$RELEASE_VERSION"
-          node -e 'const fs=require("node:fs"),crypto=require("node:crypto"),archive=process.argv[1],line=fs.readFileSync(archive+".sha256","utf8").trim(),expected=line.match(/^([a-f0-9]{64})  (.+)$/);if(!expected||expected[2]!==archive.split("/").at(-1)||crypto.createHash("sha256").update(fs.readFileSync(archive)).digest("hex")!==expected[1])process.exit(1)' "dist/naru-${version}.tar.gz"
-          # Idempotent: a re-run after an infrastructure failure, or a retag,
-          # must update the existing release rather than collapsing on it.
-          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "Release ${GITHUB_REF_NAME} already exists; replacing its assets."
-            gh release upload "${GITHUB_REF_NAME}" \
-              "dist/naru-${version}.tar.gz" \
-              "dist/naru-${version}.tar.gz.sha256" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --clobber
-          else
-            gh release create "${GITHUB_REF_NAME}" \
-              "dist/naru-${version}.tar.gz" \
-              "dist/naru-${version}.tar.gz.sha256" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --title "${GITHUB_REF_NAME}" \
-              --generate-notes
-          fi
+          node .naru-build/scripts/naru-release-publish.mjs
