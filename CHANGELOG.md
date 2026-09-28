@@ -2,6 +2,28 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.8.0] - 2026-09-28
+
+### Changed
+
+- Made native OpenCode v2 integration the default installation. OpenCode owns sessions, providers, permissions, background work, and persistence; the historical v1 installation is available only with `--legacy`.
+- Replaced fixed worker roles with reusable native subagents for exact model/effort references. The parent model and thinking level remain user-selected in OpenCode.
+- Added `naru configure`, `naru models --list`, and offline `naru models --set` for the global worker pool, including selection of all advertised effort variants.
+- Added native installation diagnostics and gated release publication on qualification of the same packaged archive on macOS arm64 and Linux x64.
+
+### Fixed
+
+- Made configured workers visible to native delegation and clarified background-task outcome handling.
+- Allowed explicit worker-pool restoration without requiring live catalogue discovery.
+- Prevented concurrent first launches from reading another live process's lock staging file during profile initialization.
+
+### Upgrade notes
+
+- Native installation requires OpenCode **2.0.15**. `naru upgrade` updates Naru, not OpenCode.
+- Existing native installations can update through `naru upgrade`; review the installation preview before applying changes.
+- Automatic migration of historical v1 Naru assets is not included. The native installer refuses conflicting legacy assets rather than overwriting them; back up and migrate those assets before applying a native installation, or explicitly retain the historical installation with `--legacy`.
+- Offline model selection does not verify provider availability or account entitlement. `naru doctor` reports installation health separately from live runtime qualification.
+
 ## [0.7.2] - 2026-09-08
 
 ### Changed
