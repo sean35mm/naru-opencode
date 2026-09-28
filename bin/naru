@@ -27,6 +27,8 @@ Naru — thin hard walls, free interior.
 Usage: naru <command> [options]
 
   install [opts]     Install Naru into OpenCode (previews, then asks)
+  configure          Select normal native worker models interactively
+  models --list|--set REF[,REF]  Inspect or change native worker pool
   upgrade [opts]     Fetch the latest release, then install it
   doctor             Report local install and configuration health
   uninstall [opts]   Remove Naru's managed assets
@@ -36,11 +38,14 @@ Usage: naru <command> [options]
 
 Install/upgrade options are passed through to the installer:
   --apply            Skip the confirmation prompt (for non-interactive use)
-  --copy             Copy assets instead of symlinking them
-  --only PATH        Update an installed, manifest-owned path using its prior mode
-  --project          Install into ./.opencode instead of the global config
+  --preview          Print the plan and exit without prompting or applying
+  --opencode PATH    Native only: use this absolute OpenCode executable
+  --copy             Legacy v1 only: copy assets instead of symlinking
+  --only PATH        Legacy v1 only: update a manifest-owned path
+  --project          Legacy v1 only: install into ./.opencode
   --dir PATH         Install into an exact directory
-  --replace-conflicts  Replace conflicting managed files (reviewed in preview)
+  --replace-conflicts  Legacy v1 only: replace conflicting files
+  --legacy           Use historical v1 installer explicitly
 
 Everything that changes your machine previews first. Nothing is written
 until you confirm, or pass --apply.
@@ -76,19 +81,29 @@ latest_version() {
 run_installer() {
   mode=$1
   shift
+  apply=false
+  preview=false
+  for arg in "$@"; do
+    [ "$arg" = --apply ] && apply=true
+    [ "$arg" = --preview ] && preview=true
+  done
+  if [ "$apply" = true ] && [ "$preview" = true ]; then
+    echo "naru: --preview and --apply cannot be combined" >&2
+    exit 2
+  fi
   case "$mode" in
     --uninstall|--rollback)
       [ -f "$INSTALLER" ] || { echo "naru: installer not found at ${INSTALLER}" >&2; exit 1; }
-      sh "$INSTALLER" "$mode" "$@"
+      [ "${1:-}" = --legacy ] || { echo "naru: historical v1 lifecycle requires --legacy before its arguments; native uninstall is not yet available" >&2; exit 2; }
+      shift
+      sh "$INSTALLER" --legacy "$mode" "$@"
       return
       ;;
   esac
   [ -f "$INSTALLER" ] || { echo "naru: installer not found at ${INSTALLER}" >&2; exit 1; }
 
-  apply=false
-  for arg in "$@"; do
-    [ "$arg" = "--apply" ] && apply=true
-  done
+  legacy=false
+  for arg in "$@"; do [ "$arg" = --legacy ] && legacy=true; done
 
   # Release installs are pinned copies, not symlinks. A symlinked install would
   # point into ~/.naru/versions/<v>, which upgrades supersede and users may
@@ -100,7 +115,7 @@ run_installer() {
     [ "$arg" = "--copy" ] && copy=true
     [ "$arg" = "--only" ] && selective=true
   done
-  [ "$copy" = true ] || [ "$selective" = true ] || set -- "$@" --copy
+  [ "$legacy" = false ] || [ "$copy" = true ] || [ "$selective" = true ] || set -- "$@" --copy
 
   if [ "$apply" = true ]; then
     # Caller already opted in; pass through untouched.
@@ -112,6 +127,7 @@ run_installer() {
   else
     sh "$INSTALLER" --preview "$@"
   fi
+  [ "$preview" = false ] || return 0
 
   if [ ! -t 0 ]; then
     echo
@@ -138,6 +154,11 @@ command=${1:-help}
 [ $# -gt 0 ] && shift
 
 case "$command" in
+  configure|models)
+    need node
+    [ -f "${ROOT}/tools/naru-native.mjs" ] || { echo "naru: compiled native installer is unavailable" >&2; exit 1; }
+    exec node "${ROOT}/tools/naru-native.mjs" "$command" "$@"
+    ;;
   install)
     run_installer "" "$@"
     ;;
@@ -185,10 +206,12 @@ case "$command" in
     ;;
 
   rollback)
+    [ "${1:-}" = --legacy ] || { echo "naru: historical rollback requires --legacy before its transaction id" >&2; exit 2; }
+    shift
     [ $# -ge 1 ] || { echo "naru: rollback requires a transaction id" >&2; exit 2; }
     id=$1
     shift
-    run_installer "--rollback" "$id" "$@"
+    run_installer "--rollback" --legacy "$id" "$@"
     ;;
 
   version|--version|-v)

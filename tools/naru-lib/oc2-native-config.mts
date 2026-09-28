@@ -12,11 +12,21 @@ import { parseCatalogueReference } from './native-reader-projection.mjs';
 
 export interface Oc2NativeInstructionMetadata { sourcePath: string; canonicalPath: string; sha256: string; byteLength: number }
 export interface Oc2NativeModelProfile { schemaVersion: 2; models: string[]; preferences: Record<string, unknown>; instructions: Oc2NativeInstructionMetadata | null }
+export class NativeProfileRecoveryRequiredError extends Error {
+    constructor(path: string, cause: unknown, message = `OC2 native profile update failed and automatic rollback preserved a newer edit; transaction recovery remains at ${path}${cause instanceof Error ? `: ${cause.message}` : ''}`) {
+        super(message, { cause });
+        this.name = 'NativeProfileRecoveryRequiredError';
+    }
+}
 interface ManagedProjection { schemaVersion: 1; agents: Record<string, NativeAgent> }
 interface Snapshot { exists: boolean; bytes?: Buffer; dev?: bigint; ino?: bigint; size?: bigint; mtimeNs?: bigint; ctimeNs?: bigint }
+function isNormalConfig(paths: Oc2NativePaths): boolean { return paths.configRoot === paths.root; }
 interface TransactionEntry { key: 'config' | 'ownership' | 'profile'; oldExists: boolean }
 interface TransactionManifest { schemaVersion: 1; entries: TransactionEntry[] }
 export interface NativeConfigAdapters {
+    nativePaths?: Oc2NativePaths;
+    nativeAssetRoot?: string;
+    preview?: boolean;
     expectedModels?: readonly string[] | null;
     beforeConfigCommit?: () => Promise<void>;
     afterLockStaged?: () => Promise<void>;
@@ -61,10 +71,10 @@ function instructionMetadata(value: unknown): Oc2NativeInstructionMetadata | nul
     return record as unknown as Oc2NativeInstructionMetadata;
 }
 
-async function snapshot(path: string): Promise<Snapshot> {
+async function snapshot(path: string, publicConfig = false): Promise<Snapshot> {
     try {
         const info = await lstat(path, { bigint: true });
-        if (!info.isFile() || info.isSymbolicLink() || (process.getuid && info.uid !== BigInt(process.getuid())) || (info.mode & 0o077n) !== 0n) throw new Error(`${basename(path)} must be an owned private regular file, not a symlink`);
+        if (!info.isFile() || info.isSymbolicLink() || (process.getuid && info.uid !== BigInt(process.getuid())) || (!publicConfig && (info.mode & 0o077n) !== 0n) || (info.mode & 0o022n) !== 0n) throw new Error(`${basename(path)} must be an owned regular file, not a symlink or group/world writable`);
         const bytes = await readFile(path), after = await lstat(path, { bigint: true });
         if (after.dev !== info.dev || after.ino !== info.ino || after.size !== info.size || after.mtimeNs !== info.mtimeNs || after.ctimeNs !== info.ctimeNs) throw new Error(`${basename(path)} changed while it was being read`);
         return { exists: true, bytes, dev: info.dev, ino: info.ino, size: info.size, mtimeNs: info.mtimeNs, ctimeNs: info.ctimeNs };
@@ -77,15 +87,15 @@ function same(left: Snapshot, right: Snapshot): boolean {
     return left.exists === right.exists && (!left.exists || left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs && left.bytes!.equals(right.bytes!));
 }
 function bytesMatch(current: Snapshot, exists: boolean, bytes?: Buffer): boolean { return current.exists === exists && (!exists || current.bytes!.equals(bytes!)); }
-async function writeAtomic(path: string, bytes: Buffer, expected?: Snapshot, renameFile: typeof rename = rename): Promise<Snapshot> {
+async function writeAtomic(path: string, bytes: Buffer, expected?: Snapshot, renameFile: typeof rename = rename, publicConfig = false): Promise<Snapshot> {
     const temporary = join(dirname(path), `.${basename(path)}.oc2-${process.pid}-${randomBytes(8).toString('hex')}`);
     let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
-        handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+        handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, expected?.exists && publicConfig ? Number((await lstat(path)).mode & 0o777) : 0o600);
         await handle.writeFile(bytes); await handle.sync(); await handle.close(); handle = undefined;
-        if (expected && !same(expected, await snapshot(path))) throw new Error(`${basename(path)} changed concurrently; refusing to overwrite it`);
+        if (expected && !same(expected, await snapshot(path, publicConfig))) throw new Error(`${basename(path)} changed concurrently; refusing to overwrite it`);
         await renameFile(temporary, path);
-        return snapshot(path);
+        return snapshot(path, publicConfig);
     } finally { await handle?.close().catch(() => undefined); await rm(temporary, { force: true }).catch(() => undefined); }
 }
 const execFileAsync = promisify(execFile);
@@ -223,9 +233,9 @@ function metadata(snapshotValue: GlobalInstructionsSnapshot | null): Oc2NativeIn
     return value;
 }
 
-export async function loadOc2NativeModelProfile(root: string): Promise<Oc2NativeModelProfile | null> {
-    const paths = oc2NativePaths(root);
-    if (!await inspectOc2NativeDirectories(paths)) return null;
+export async function loadOc2NativeModelProfile(root: string, nativePaths?: Oc2NativePaths): Promise<Oc2NativeModelProfile | null> {
+    const paths = nativePaths ?? oc2NativePaths(root);
+    if (!nativePaths && !await inspectOc2NativeDirectories(paths)) return null;
     try { await lstat(paths.transaction); throw new Error('OC2 native profile has an interrupted transaction; run explicit native setup recovery before launching Naru'); }
     catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error; }
     const current = await snapshot(paths.profileState);
@@ -250,8 +260,8 @@ async function mergeProjection(configSnapshot: Snapshot, managedSnapshot: Snapsh
     return { config, managed: { schemaVersion: 1, agents: projection.agents } };
 }
 
-function mergeNativeAssets(config: Record<string, unknown>, root: string): void {
-    const plugin = join(root, 'lib', 'tools', 'oc2-native-plugin'), skills = join(plugin, 'skills');
+function mergeNativeAssets(config: Record<string, unknown>, root: string, nativeAssetRoot?: string): void {
+    const plugin = nativeAssetRoot ? join(nativeAssetRoot, 'tools', 'oc2-native-plugin') : join(root, 'lib', 'tools', 'oc2-native-plugin'), skills = join(plugin, 'skills');
     for (const [key, required] of [['plugins', plugin], ['skills', skills]] as const) {
         const existing = config[key] === undefined ? [] : config[key];
         if (!Array.isArray(existing) || !existing.every(value => typeof value === 'string')) throw new Error(`OpenCode profile ${key} must be an array of paths`);
@@ -298,17 +308,17 @@ async function recoverTransaction(paths: Oc2NativePaths): Promise<'none' | 'roll
         const oldSnapshot = entry.oldExists ? await snapshot(join(paths.transaction, `${entry.key}.old`)) : null;
         const nextSnapshot = await snapshot(join(paths.transaction, `${entry.key}.new`));
         if (entry.oldExists && !oldSnapshot!.exists || !nextSnapshot.exists) throw new Error('OC2 native transaction recovery files are incomplete');
-        return { entry, target: targetFor(paths, entry.key), old: oldSnapshot?.bytes, next: nextSnapshot.bytes!, current: await snapshot(targetFor(paths, entry.key)) };
+        return { entry, target: targetFor(paths, entry.key), old: oldSnapshot?.bytes, next: nextSnapshot.bytes!, current: await snapshot(targetFor(paths, entry.key), entry.key === 'config' && isNormalConfig(paths)) };
     }));
     for (const record of records) if (!bytesMatch(record.current, record.entry.oldExists, record.old) && !bytesMatch(record.current, true, record.next)) throw new Error(`OC2 native transaction recovery found a newer ${record.entry.key} edit; it was preserved and manual recovery is required`);
     if (records.every(record => bytesMatch(record.current, true, record.next))) { await rm(paths.transaction, { recursive: true }); return 'committed'; }
     for (const record of [...records].reverse()) {
-        const current = await snapshot(record.target);
+        const current = await snapshot(record.target, record.entry.key === 'config' && isNormalConfig(paths));
         if (!bytesMatch(current, record.entry.oldExists, record.old) && !bytesMatch(current, true, record.next)) throw new Error(`OC2 native transaction rollback found a newer ${record.entry.key} edit; it was preserved and manual recovery is required`);
         if (bytesMatch(current, record.entry.oldExists, record.old)) continue;
-        if (record.entry.oldExists) await writeAtomic(record.target, record.old!, current);
+        if (record.entry.oldExists) await writeAtomic(record.target, record.old!, current, rename, record.entry.key === 'config' && isNormalConfig(paths));
         else {
-            const beforeRemove = await snapshot(record.target);
+            const beforeRemove = await snapshot(record.target, record.entry.key === 'config' && isNormalConfig(paths));
             if (!same(current, beforeRemove)) throw new Error(`OC2 native transaction rollback found a newer ${record.entry.key} edit; it was preserved and manual recovery is required`);
             await rm(record.target);
         }
@@ -342,13 +352,24 @@ async function prepareTransaction(paths: Oc2NativePaths, originals: Record<Trans
 
 export async function updateOc2NativeProfile(root: string, models?: readonly string[], adapters: NativeConfigAdapters = {}): Promise<Oc2NativeModelProfile> {
     if (!isAbsolute(root)) throw new Error('OC2 preview root must be absolute');
-    const paths = oc2NativePaths(root); await ensureOc2NativeDirectories(paths);
+    const paths = adapters.nativePaths ?? oc2NativePaths(root);
+    if (!adapters.nativePaths) await ensureOc2NativeDirectories(paths);
+    if (adapters.preview) {
+        const profile = await snapshot(paths.profileState), config = await snapshot(paths.configFile, !!adapters.nativePaths), owned = await snapshot(paths.ownership);
+        if (profile.exists) readProfile(parseJson(profile.bytes!, 'Native model profile'));
+        const selected = models === undefined ? (profile.exists ? readProfile(parseJson(profile.bytes!, 'Native model profile')).models : []) : validModels([...models], false);
+        const next = projectOc2NativeAgents(selected);
+        const merged = await mergeProjection(config, owned, next);
+        mergeNativeAssets(merged.config, root, adapters.nativeAssetRoot);
+        return profile.exists ? { ...readProfile(parseJson(profile.bytes!, 'Native model profile')), models: selected } : { schemaVersion: 2, models: selected, preferences: {}, instructions: null };
+    }
     const release = await acquire(paths, adapters.processIdentity ?? nativeProcessIdentity, adapters);
+    let committed = false;
     try {
         await adapters.afterLockAcquired?.();
         await cleanupTransactionStaging(paths);
         await recoverTransaction(paths);
-        const profileSnapshot = await snapshot(paths.profileState), configSnapshot = await snapshot(paths.configFile), managedSnapshot = await snapshot(paths.ownership);
+        const profileSnapshot = await snapshot(paths.profileState), configSnapshot = await snapshot(paths.configFile, !!adapters.nativePaths), managedSnapshot = await snapshot(paths.ownership);
         if (adapters.expectedModels !== undefined) {
             const observed = profileSnapshot.exists ? readProfile(parseJson(profileSnapshot.bytes!, 'OC2 native model profile')).models : null;
             if (!isDeepStrictEqual(observed, adapters.expectedModels)) throw new Error('Global native worker models changed while configuring; rerun model selection before saving');
@@ -360,14 +381,14 @@ export async function updateOc2NativeProfile(root: string, models?: readonly str
             current = readProfile(parseJson(profileSnapshot.bytes!, 'OC2 native model profile'));
             instructions = await currentInstructions(current, home);
         } else {
-            const imported = await importedProfile(root, home);
+            const imported = adapters.nativePaths ? { models: [], instructions: null } : await importedProfile(root, home);
             instructions = imported.instructions;
             current = { schemaVersion: 2, models: imported.models, preferences: {}, instructions: metadata(instructions) };
         }
         const next: Oc2NativeModelProfile = { ...current, schemaVersion: 2, models: models === undefined ? current.models : validModels([...models], false), instructions: metadata(instructions) };
         const projection = projectOc2NativeAgents(next.models, instructions);
         const merged = await mergeProjection(configSnapshot, managedSnapshot, projection);
-        mergeNativeAssets(merged.config, root);
+        mergeNativeAssets(merged.config, root, adapters.nativeAssetRoot);
         const values = {
             config: Buffer.from(JSON.stringify(merged.config, null, 2) + '\n'),
             ownership: Buffer.from(JSON.stringify(merged.managed, null, 2) + '\n'),
@@ -376,22 +397,38 @@ export async function updateOc2NativeProfile(root: string, models?: readonly str
         if (configSnapshot.exists && configSnapshot.bytes!.equals(values.config) && managedSnapshot.exists && managedSnapshot.bytes!.equals(values.ownership) && profileSnapshot.exists && profileSnapshot.bytes!.equals(values.profile)) return next;
         await adapters.beforeConfigCommit?.();
         const originals = { config: configSnapshot, ownership: managedSnapshot, profile: profileSnapshot };
-        for (const key of transactionKeys) if (!same(originals[key], await snapshot(targetFor(paths, key)))) throw new Error(`${basename(targetFor(paths, key))} changed concurrently; refusing to start the transaction`);
+        for (const key of transactionKeys) if (!same(originals[key], await snapshot(targetFor(paths, key), key === 'config' && !!adapters.nativePaths))) throw new Error(`${basename(targetFor(paths, key))} changed concurrently; refusing to start the transaction`);
         await prepareTransaction(paths, originals, values, adapters);
         await adapters.afterTransactionPublished?.();
         try {
             for (const [index, key] of transactionKeys.entries()) {
-                await writeAtomic(targetFor(paths, key), values[key], originals[key], adapters.rename ?? rename);
+                await writeAtomic(targetFor(paths, key), values[key], originals[key], adapters.rename ?? rename, key === 'config' && !!adapters.nativePaths);
                 await adapters.afterCommitFile?.(index + 1, targetFor(paths, key));
             }
             await rm(paths.transaction, { recursive: true });
+            committed = true;
         } catch (error) {
             let recovery: Awaited<ReturnType<typeof recoverTransaction>>;
             try { recovery = await recoverTransaction(paths); }
-            catch (recoveryError) { throw new Error(`OC2 native profile update failed and automatic rollback preserved a newer edit; transaction recovery remains at ${paths.transaction}`, { cause: recoveryError }); }
-            if (recovery === 'committed') return next;
+            catch (recoveryError) { throw new NativeProfileRecoveryRequiredError(paths.transaction, recoveryError); }
+            if (recovery === 'committed') { committed = true; return next; }
             throw error;
         }
         return next;
-    } finally { await release(); }
+    } catch (error) {
+        if (error instanceof NativeProfileRecoveryRequiredError) throw error;
+        try { await lstat(paths.transaction); }
+        catch (statError) {
+            if (statError instanceof Error && 'code' in statError && statError.code === 'ENOENT') throw error;
+        }
+        throw new NativeProfileRecoveryRequiredError(paths.transaction, error);
+    } finally {
+        try { await release(); }
+        catch (error) {
+            if (committed) throw new NativeProfileRecoveryRequiredError(paths.transaction, error, 'Native profile committed but lock release failed; inspect the profile and lock before retrying');
+            try { await lstat(paths.transaction); }
+            catch (statError) { if (statError instanceof Error && 'code' in statError && statError.code === 'ENOENT') throw error; }
+            throw new NativeProfileRecoveryRequiredError(paths.transaction, error);
+        }
+    }
 }

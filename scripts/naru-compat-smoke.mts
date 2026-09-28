@@ -9,6 +9,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { classifyDashboardEvidence, COMPATIBILITY_POLICY, createCompatibilityEvidence, evaluateOpenCodeVersion, evaluatePlatformTarget, isCompatibilityProfile, sanitizeObservedVersion, } from '../tools/naru-lib/compatibility.mjs';
 import type { CompatibilityCheck, CompatibilityEvidence, CompatibilityCheckStatus, CompatibilityProfile } from '../tools/naru-lib/compatibility.mjs';
 import { coreConfigContractFailures, guardedRemoveDisposableRoot, HOST_CONTRACT_TIMEOUT_MS, runBoundedProcess, runHostContractProbe, signalProcessGroup, stopProcessGroup, validateCoreConfigContract, writeHostContractFixtures, } from '../tools/naru-lib/host-contract-probe.mjs';
+import { startPreviewServer } from '../tools/naru-lib/preview-process.mjs';
+import { projectOc2NativeAgents } from '../tools/naru-lib/oc2-native-projection.mjs';
 export { runBoundedProcess } from '../tools/naru-lib/host-contract-probe.mjs';
 
 interface CompatibilityCliOptions {
@@ -77,7 +79,7 @@ export const OPENCODE_V2_EXPLORATORY_COMMANDS: readonly SafeCommand[] = Object.f
     Object.freeze({ id: 'opencode-help', args: Object.freeze(['--help']) }),
 ]);
 function usage() {
-    return 'Usage: node scripts/naru-compat-smoke.mjs --profile stable|v2-beta-exploratory --opencode PATH --source PATH [--json] [--output PATH] [--dashboard --bun PATH]\n';
+    return 'Usage: node scripts/naru-compat-smoke.mjs --profile stable|v2-beta-exploratory|native-v2 --opencode PATH --source PATH [--json] [--output PATH] [--dashboard --bun PATH]\n';
 }
 function parseArgs(argv: string[]): CompatibilityCliOptions {
     const options: CompatibilityCliOptions = { bunPath: null, dashboard: false, json: false, opencodePath: null, output: null, profile: null, sourcePath: null };
@@ -115,8 +117,8 @@ function parseArgs(argv: string[]): CompatibilityCliOptions {
     }
     if (!options.help && (!options.profile || !options.opencodePath || !options.sourcePath))
         throw new Error('--profile, --opencode, and --source are required');
-    if (options.profile === 'v2-beta-exploratory' && options.dashboard)
-        throw new Error('--dashboard is unavailable for the v2 beta exploratory profile');
+    if (options.profile !== 'stable' && options.dashboard)
+        throw new Error('--dashboard is available only for historical stable v1');
     if (options.dashboard !== Boolean(options.bunPath))
         throw new Error('--dashboard and --bun PATH must be supplied together');
     return options;
@@ -287,6 +289,80 @@ async function linuxIdentity(): Promise<{ osId: string | null; wsl: boolean }> {
         return { osId: null, wsl: /microsoft/i.test(os.release()) };
     }
 }
+type NativeApiRoute = '/api/config' | '/api/agent' | '/api/plugin' | '/api/skill' | '/api/command';
+const NATIVE_FIXTURE_WORKER = 'fixture/worker#high';
+const NATIVE_FIXTURE_MODEL = { providerID: 'fixture', model: 'worker', variant: 'high' };
+const NATIVE_HOST_MODEL = { providerID: 'fixture', id: 'worker', variant: 'high' };
+const NATIVE_WORKER_NAME = projectOc2NativeAgents([NATIVE_FIXTURE_WORKER]).workers[0]!.name;
+export function nativeWorkerPoolValid(models: readonly string[], agents: Record<string, unknown>, owned: Record<string, unknown>): boolean {
+    const worker = agents[NATIVE_WORKER_NAME];
+    return models.length === 1 && models[0] === NATIVE_FIXTURE_WORKER && isRecord(worker) && worker.mode === 'subagent'
+        && JSON.stringify(worker.model) === JSON.stringify(NATIVE_FIXTURE_MODEL) && JSON.stringify(worker) === JSON.stringify(owned[NATIVE_WORKER_NAME]);
+}
+export async function checkNativeHostRoutes(url: string, headers: Record<string, string>, cwd: string, configPath: string, pluginPath: string, workers: readonly { name: string; model: { providerID: string; id: string; variant: string } }[], timeoutMs: number): Promise<CompatibilityCheck[]> {
+    const routes: Array<{ id: string; route: NativeApiRoute; validate: (body: unknown) => boolean }> = [
+        { id: 'native-config-source', route: '/api/config', validate: body => Array.isArray(body) && body.some(entry => isRecord(entry) && entry.path === configPath) },
+        { id: 'native-host-agents', route: '/api/agent', validate: body => {
+            const data = isRecord(body) ? body.data : undefined;
+            return workers.length > 0 && Array.isArray(data) && workers.every(worker => data.some((entry: unknown) => isRecord(entry) && entry.id === worker.name && isRecord(entry.model)
+                && entry.model.providerID === worker.model.providerID && entry.model.id === worker.model.id && entry.model.variant === worker.model.variant))
+                && data.some((entry: unknown) => isRecord(entry) && entry.id === 'naru' && !Object.hasOwn(entry, 'model'));
+        } },
+        { id: 'native-host-plugin', route: '/api/plugin', validate: body => isRecord(body) && Array.isArray(body.data) && body.data.some((entry: unknown) => {
+            if (!isRecord(entry)) return false;
+            return isRecord(entry.source) && entry.source.type === 'local' && entry.source.path === path.join(pluginPath, 'index.mjs')
+                && isRecord(entry.state) && entry.state.status === 'active';
+        }) },
+        { id: 'native-host-skills', route: '/api/skill', validate: body => isRecord(body) && Array.isArray(body.data) && body.data.some((entry: unknown) => isRecord(entry) && (entry.name === 'naru-coordinate' || entry.id === 'naru-coordinate')) },
+        { id: 'native-host-command', route: '/api/command', validate: body => isRecord(body) && Array.isArray(body.data) && body.data.some((entry: unknown) => isRecord(entry) && entry.name === 'naru') },
+    ];
+    const checks: CompatibilityCheck[] = [];
+    for (const { id, route, validate } of routes) {
+        const started = Date.now();
+        let diagnostic: string | null = null;
+        try {
+            const response = await fetch(`${url}${route}?location%5Bdirectory%5D=${encodeURIComponent(cwd)}`, { headers, signal: AbortSignal.timeout(timeoutMs) });
+            if (response.status !== 200) { diagnostic = `${id}-http-${response.status}`; await response.body?.cancel(); }
+            else {
+                const reader = response.body?.getReader();
+                const chunks: Uint8Array[] = [];
+                let total = 0;
+                if (!reader) diagnostic = `${id}-invalid-json`;
+                else for (;;) {
+                    const part = await reader.read();
+                    if (part.done) break;
+                    total += part.value.byteLength;
+                    if (total > MAX_AGENT_LIST_OUTPUT_BYTES) { diagnostic = `${id}-response-too-large`; await reader.cancel(); break; }
+                    chunks.push(part.value);
+                }
+                if (!diagnostic) {
+                    const bytes = Buffer.concat(chunks);
+                    let parsed: unknown;
+                    try { parsed = JSON.parse(bytes.toString('utf8')); } catch { diagnostic = `${id}-invalid-json`; }
+                    if (!diagnostic && !validate(parsed)) diagnostic = `${id}-missing-registration`;
+                }
+            }
+        } catch (error) {
+            diagnostic = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError') ? `${id}-timeout` : `${id}-request-failed`;
+        }
+        checks.push({ id, status: diagnostic ? 'failed' : 'passed', durationMs: Date.now() - started, diagnostic });
+    }
+    return checks;
+}
+async function checkNativeInstalledHost(opencode: string, project: string, env: NodeJS.ProcessEnv, root: string, configPath: string, pluginPath: string, models: readonly string[], timeoutMs: number): Promise<CompatibilityCheck[]> {
+    const started = Date.now();
+    let server: Awaited<ReturnType<typeof startPreviewServer>> | undefined;
+    try {
+        const source = path.join(root, 'native-models.json');
+        server = await startPreviewServer(opencode, project, { ...env, OPENCODE_DISABLE_MODELS_FETCH: 'true', OPENCODE_MODELS_PATH: source }, 'catalogue');
+        const startup: CompatibilityCheck = { id: 'native-host-startup', status: 'passed', durationMs: Date.now() - started, diagnostic: null };
+        return [startup, ...await checkNativeHostRoutes(server.url, server.headers, project, configPath, pluginPath,
+            models.length === 1 && models[0] === NATIVE_FIXTURE_WORKER ? [{ name: NATIVE_WORKER_NAME, model: NATIVE_HOST_MODEL }] : [], timeoutMs)];
+    } catch (error) {
+        const diagnostic = error instanceof Error && /timed out/i.test(error.message) ? 'native-host-startup-timeout' : 'native-host-startup-failed';
+        return [{ id: 'native-host-startup', status: 'failed', durationMs: Date.now() - started, diagnostic }];
+    } finally { server?.stop(); }
+}
 export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, hooks: CompatibilitySmokeHooks = {}): Promise<CompatibilityEvidence> {
     if (!isCompatibilityProfile(options.profile))
         throw new Error(`unknown compatibility profile: ${String(options.profile)}`);
@@ -344,9 +420,68 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
                 result = await runBoundedProcess(opencode, helpCommand.args, { cwd: project, env: versionEnv, timeoutMs });
                 checks.push(commandCheck(helpCommand.id, result));
             }
+            if (result.status === 'passed' && versionEvaluation.status === 'supported' && options.profile === 'native-v2') {
+                const cli = path.join(source, 'bin', 'naru');
+                const invoke = (args: string[]) => runBoundedProcess('/bin/sh', [cli, ...args], { cwd: project, env, timeoutMs });
+                result = await invoke(['install', '--preview']);
+                let mutated = false;
+                for (const name of ['.naru-native', 'opencode.json']) {
+                    try { await lstat(path.join(target, name)); mutated = true; } catch (error) { if (errorCode(error) !== 'ENOENT') throw error; }
+                }
+                checks.push(commandCheck('install-preview', mutated ? { ...result, status: 'failed', reason: 'preview-mutated-native-assets' } : result));
+                if (result.status === 'failed') {
+                    const known = ['Native install requires exact OpenCode 2.0.15', 'Unsafe native install directory', 'Native agent name', 'Native install requires the compiled release', 'Normal OpenCode config must be strict JSON', 'OC2 native setup requires HOME', 'Missing compiled Naru tools'];
+                    checks.at(-1)!.diagnostic = known.find(message => result.output.includes(message)) ?? checks.at(-1)!.diagnostic;
+                }
+                if (result.status === 'passed' && !mutated) {
+                    result = await invoke(['install', '--apply']);
+                    checks.push(commandCheck('install-apply', result));
+                    if (result.status === 'passed') {
+                        const native = await import('../tools/naru-lib/native-install.mjs');
+                        const paths = native.getNativeInstallPaths(target);
+                        const sourceFile = path.join(root, 'native-models.json');
+                        await writeFile(sourceFile, JSON.stringify({ fixture: { id: 'fixture', name: 'Fixture', env: [], npm: '@ai-sdk/openai-compatible', models: {
+                            worker: { id: 'worker', name: 'Synthetic worker', release_date: '2026-09-13', attachment: false, reasoning: true, tool_call: true, modalities: { input: ['text'], output: ['text'] }, limit: { context: 200000, output: 8000 }, provider: { npm: '@ai-sdk/openai' } },
+                        } } }), { mode: 0o600 });
+                        const configBefore = await boundedJson(paths.configPath);
+                        if (!isRecord(configBefore)) throw new Error('native fixture config missing');
+                        configBefore.providers = { fixture: { canonical: 'openai', settings: { baseURL: 'http://127.0.0.1:9/v1', apiKey: 'local-fixture-only' }, models: {
+                            worker: { modelID: 'synthetic-worker', capabilities: { tools: true, input: ['text'], output: ['text'] }, limit: { context: 200000, output: 8000 }, variants: [{ id: 'high', settings: { reasoningEffort: 'high' } }] },
+                        } } };
+                        await writeFile(paths.configPath, JSON.stringify(configBefore, null, 2) + '\n', { mode: 0o600 });
+                        const modelEnv = { ...env, OPENCODE_DISABLE_MODELS_FETCH: 'true', OPENCODE_MODELS_PATH: sourceFile };
+                        const configure = (args: string[]) => runBoundedProcess('/bin/sh', [cli, ...args], { cwd: project, env: modelEnv, timeoutMs });
+                        result = await configure(['models', '--set', NATIVE_FIXTURE_WORKER]);
+                        checks.push(commandCheck('models-preview', result));
+                        if (result.status === 'passed') {
+                            result = await configure(['models', '--set', NATIVE_FIXTURE_WORKER, '--apply']);
+                            checks.push(commandCheck('models-apply', result));
+                        }
+                        const inspected = await native.inspectNativeInstall(target);
+                        const packageValid = inspected.installed && (await lstat(path.join(paths.packageRoot, 'tools', 'oc2-native-plugin', 'index.mjs'))).isFile();
+                        checks.push({ id: 'native-package', status: packageValid ? 'passed' : 'failed', durationMs: 0, diagnostic: packageValid ? null : 'native-package-missing' });
+                        const config = await boundedJson(paths.configPath);
+                        const agents = isRecord(config) && isRecord(config.agents) ? config.agents : {};
+                        const owned = await boundedJson(paths.ownershipPath);
+                        const ownedAgents = isRecord(owned) && isRecord(owned.agents) ? owned.agents : {};
+                        const workersValid = nativeWorkerPoolValid(inspected.models, agents, ownedAgents) && result.status === 'passed';
+                        checks.push({ id: 'native-worker-pool', status: workersValid ? 'passed' : 'failed', durationMs: 0, diagnostic: workersValid ? null : 'native-worker-pool-missing-or-mismatched' });
+                        const agentsValid = workersValid && isRecord(agents.naru) && agents.naru.mode === 'primary' && !Object.hasOwn(agents.naru, 'model') && JSON.stringify(agents.naru) === JSON.stringify(ownedAgents.naru);
+                        checks.push({ id: 'native-agents', status: agentsValid ? 'passed' : 'failed', durationMs: 0, diagnostic: agentsValid ? null : 'native-agent-projection-invalid' });
+                        const plugin = path.join(paths.packageRoot, 'tools', 'oc2-native-plugin');
+                        const registered = isRecord(config) && Array.isArray(config.plugins) && config.plugins.includes(plugin) && Array.isArray(config.skills) && config.skills.includes(path.join(plugin, 'skills'));
+                        checks.push({ id: 'native-registration', status: registered ? 'passed' : 'failed', durationMs: 0, diagnostic: registered ? null : 'native-registration-invalid' });
+                        result = await invoke(['doctor', '--json']);
+                        let doctorValid = false;
+                        try { const report = JSON.parse(result.stdout); doctorValid = report.native?.package === 'valid' && report.native?.agents === 'valid' && report.native?.registration === 'valid' && report.native?.runtimeEvidence === 'not-run' && report.compatibility?.opencode?.version === '2.0.15'; } catch {}
+                        checks.push({ id: 'naru-doctor', status: doctorValid && result.status === 'passed' ? 'passed' : 'failed', durationMs: result.durationMs, diagnostic: doctorValid && result.status === 'passed' ? null : 'normal-doctor-failed' });
+                        checks.push(...await checkNativeInstalledHost(opencode, project, env, root, paths.configPath, plugin, inspected.models, timeoutMs));
+                    }
+                }
+            }
             let hostContractMarker = '';
             if (result.status === 'passed' && (versionEvaluation.status === 'supported' || versionEvaluation.status === 'candidate') && options.profile === 'stable') {
-                const installArgs = [path.join(source, 'install.sh'), '--copy'];
+                const installArgs = [path.join(source, 'install.sh'), '--legacy', '--copy'];
                 if (options.dashboard)
                     installArgs.push('--with-dashboard');
                 result = await runBoundedProcess('/bin/sh', [...installArgs, '--preview'], { cwd: project, env, timeoutMs });
@@ -379,7 +514,7 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
             }
             const doctorPath = path.join(target, 'tools', 'naru-doctor.js');
             const doctorEntry = path.join(root, 'doctor-static.mjs');
-            await writeFile(doctorEntry, `import { buildStaticDoctorReport } from ${JSON.stringify(pathToFileURL(doctorPath).href)};\nconst report = await buildStaticDoctorReport({ customDir: null, projectRoot: process.argv[2], sourceRoot: process.argv[3], json: true });\nprocess.stdout.write(JSON.stringify(report));\n`, { mode: 0o600 });
+            await writeFile(doctorEntry, `import { buildStaticDoctorReport } from ${JSON.stringify(pathToFileURL(doctorPath).href)};\nconst report = await buildStaticDoctorReport({ customDir: null, projectRoot: process.argv[2], sourceRoot: process.argv[3], json: true, legacy: true });\nprocess.stdout.write(JSON.stringify(report));\n`, { mode: 0o600 });
             result = await runBoundedProcess(process.execPath, [doctorEntry, project, source], {
                 cwd: project,
                 env,

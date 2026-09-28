@@ -5,7 +5,7 @@ description: Use when selecting reusable native workers for tasks from exact pro
 
 # Naru Select Workers
 
-Use only the worker inventory and capabilities the host actually exposes. Do not call a nonexistent router. Each configured worker is reusable across independent sessions and has an exact model/variant reference; assign by task and scoped ownership, not by a fixed reader/runner/writer tier. The parent may handle small work directly. Full tool and MCP availability is a permission fact, not evidence of model quality.
+Use only the worker inventory and capabilities the host actually exposes. Do not call a nonexistent router. Each configured worker is reusable across independent sessions and has an exact model/variant reference; assign by task and scoped ownership, not by a fixed reader/runner/writer tier. Choose the model and effort together before dispatch. The parent may handle small work directly. Full tool and MCP availability is a permission fact, not evidence of model quality.
 
 For each candidate, keep three evidence classes separate:
 
@@ -13,6 +13,6 @@ For each candidate, keep three evidence classes separate:
 - manual hypotheses: plausible suitability that has not been measured; and
 - measured evidence: relevant observed task results or capability reports available in the current context.
 
-Honor a current user override first, then prefer relevant measured evidence and task suitability. State uncertainty when evidence is absent. Do not rank providers, select every model from one provider by identity, enforce provider quotas or default speed levels, or invent strengths from a model name. Record the exact agent selected and the brief factual reason.
+Honor a current user override first, then prefer relevant measured evidence and task suitability. Consider bounded/mechanical versus ambiguous or consequential work, context needs, and time/cost only where known. Effort labels across models are not equivalent quality guarantees; neither the highest effort nor a particular provider is a default. State uncertainty when evidence is absent. Do not rank providers, select every model from one provider by identity, enforce provider quotas or default speed levels, or invent strengths from a model name. The native `general` subagent is unpinned and may inherit the parent's model and effort: use it when that is intentional, not as the default substitute for a configured worker. State the chosen agent, actual model/effort reference (or inherited parent selection for `general`), and a short reason; no verbose chain of thought.
 
 Use subscription-backed or otherwise authorized configured routes only. If the requested work has no available authorized route, stop and report the gap; do not silently switch to a billed fallback. Parallelize genuinely independent assignments and avoid low-value fan-out.

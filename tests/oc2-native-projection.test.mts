@@ -15,7 +15,7 @@ test('native projection creates one reusable worker per exact reference without 
         assert.ok(name.length <= 64);
         assert.equal(reference, references[index]);
         assert.equal(agent.mode, 'subagent');
-        assert.equal(agent.hidden, true);
+        assert.equal('hidden' in agent, false);
         assert.deepEqual(agent.model, index === 2 ? { providerID: 'other', model: 'model' } : { providerID: 'fixture', model: 'team/alpha', variant: index === 0 ? 'high' : 'low' });
         assert.equal('permissions' in agent, false);
         assert.match(agent.system, /assignment.*determines whether you investigate, check, edit, or review/);
@@ -29,6 +29,11 @@ test('native projection creates one reusable worker per exact reference without 
     assert.match(projection.agents.naru!.system, /fresh independent session for an independent review/);
     assert.match(projection.agents.naru!.system, /one owner per file or contract/);
     assert.match(projection.agents.naru!.system, /fixture\/team\/alpha#high/);
+    assert.match(projection.agents.naru!.system, /native general subagent is also valid/);
+    assert.match(projection.agents.naru!.system, /model and effort together/);
+    assert.match(projection.agents.naru!.system, /receipt marked running is not a child outcome/);
+    assert.match(projection.agents.naru!.system, /native child session ID/);
+    assert.match(projection.agents.naru!.system, /state what remains pending/);
     assert.match(projection.agents.naru!.system, /never bypass a host permission denial/i);
 });
 

@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { evaluateDoctorOpenCodeOutput } from '../tools/naru-doctor.js';
 import { runHostContractProbe } from '../tools/naru-lib/host-contract-probe.mjs';
 import { parseRuntimeConfig } from '../tools/naru-lib/runtime-config.mjs';
+import { nativeModels } from '../tools/naru-lib/native-install.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -97,6 +98,7 @@ async function copyInstallSource(destination: string): Promise<void> {
 function runDoctor(doctor: string, { home, project, source }: DoctorPaths, options: { hostContractRoot?: string; path?: string } = {}): DoctorReport {
   const args = [
     doctor,
+    '--legacy',
     '--json',
     '--project-root', project,
     '--source', source,
@@ -151,7 +153,7 @@ test('CLI-mode doctor probes candidates without caching command failures, timeou
     assert.equal(report.compatibility.opencode.probe.status, 'passed');
     assert.deepEqual(report.compatibility.opencode.probe.checks.map(check => [check.id, check.status]), [['mcp-contract', 'passed']]);
     assert.ok(report.compatibility.opencode.probe.actions.includes('naru-writer-smoke:safe_tools_read:ask'));
-    const cli = spawnSync('sh', [path.join(root, 'bin', 'naru'), 'doctor', '--json', '--project-root', project, '--source', root], {
+    const cli = spawnSync('sh', [path.join(root, 'bin', 'naru'), 'doctor', '--legacy', '--json', '--project-root', project, '--source', root], {
       cwd: project, env: { ...process.env, HOME: home, PATH: pathValue }, encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024,
     });
     assert.ok(cli.status === 0 || cli.status === 1, cli.stderr || cli.stdout);
@@ -223,6 +225,7 @@ test('doctor is read-only and diagnoses scope, default depth, and source generat
 
     const install = spawnSync('sh', [
       path.join(source, 'install.sh'),
+      '--legacy',
       '--apply',
     ], {
       cwd: source,
@@ -304,4 +307,47 @@ test('doctor is read-only and diagnoses scope, default depth, and source generat
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
+});
+
+test('normal CLI doctor inspects a packaged native install, not historical v1 assets', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-normal-doctor-'));
+  try {
+    const home = path.join(temporary, 'home'), bin = path.join(temporary, 'bin');
+    await mkdir(home); await mkdir(bin);
+    await writeFile(path.join(bin, 'opencode'), '#!/bin/sh\nprintf "2.0.15\\n"\n', { mode: 0o755 });
+    const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin` };
+    const cli = path.join(root, 'bin', 'naru');
+    const invoke = (args: string[]) => spawnSync('sh', [cli, ...args], { cwd: temporary, env, encoding: 'utf8', timeout: 30_000 });
+    const preview = invoke(['install', '--preview']);
+    assert.equal(preview.status, 0, preview.stderr);
+    const install = invoke(['install', '--apply']);
+    assert.equal(install.status, 0, install.stderr);
+    let doctor = invoke(['doctor', '--json']);
+    assert.equal(doctor.status, 0, doctor.stderr + doctor.stdout);
+    const report = JSON.parse(doctor.stdout);
+    assert.equal(report.native.package, 'valid');
+    assert.equal(report.native.agents, 'valid');
+    assert.equal(report.native.registration, 'valid');
+    assert.equal(report.native.runtimeEvidence, 'not-run');
+    assert.equal(report.compatibility.opencode.version, '2.0.15');
+    assert.equal(report.compatibility.opencode.status, 'probe-required');
+    const configRoot = path.join(home, '.config', 'opencode');
+    const previousPath = process.env.PATH, previousHome = process.env.HOME;
+    try {
+      process.env.PATH = env.PATH;
+      process.env.HOME = home;
+      await nativeModels(configRoot, ['fixture/worker#high'], []);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+      if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    }
+    doctor = invoke(['doctor', '--json']);
+    assert.equal(doctor.status, 0, doctor.stderr + doctor.stdout);
+    assert.equal(JSON.parse(doctor.stdout).native.workers, 1);
+    const packageFile = path.join(home, '.config/opencode/.naru-native/package/tools/oc2-native-plugin/command.md');
+    await appendFile(packageFile, '\nmodified\n');
+    doctor = invoke(['doctor', '--json']);
+    assert.equal(doctor.status, 1);
+    assert.equal(JSON.parse(doctor.stdout).native.package, 'invalid');
+  } finally { await rm(temporary, { recursive: true, force: true }); }
 });

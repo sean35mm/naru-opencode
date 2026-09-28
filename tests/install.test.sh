@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 # Dependency-free installer tests. Never touches real ~/.config/opencode.
 set -eu
+NARU_INSTALL_LEGACY=1
+export NARU_INSTALL_LEGACY
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TMP=$(mktemp -d)
@@ -829,6 +831,23 @@ CLI_OUT="$(NARU_HOME="$T14/naru-home" "$CLI" install --dir "$T14/target" < /dev/
 if printf '%s' "$CLI_OUT" | grep -q 'Preview only; no files changed'; then pass "naru install previews first"; else fail "naru install previews first"; fi
 if printf '%s' "$CLI_OUT" | grep -q 'Rerun with --apply'; then pass "naru install refuses to apply non-interactively"; else fail "naru install refuses to apply non-interactively"; fi
 if [ ! -e "$T14/target" ]; then pass "naru install creates nothing without confirmation"; else fail "naru install creates nothing without confirmation"; fi
+if NARU_INSTALL_LEGACY=0 "$FIXTURE/bin/naru" install --legacy --preview --apply --dir "$T14/conflicting" >/dev/null 2>&1; then fail "naru rejects conflicting preview and apply"; else pass "naru rejects conflicting preview and apply"; fi
+if [ ! -e "$T14/conflicting" ]; then pass "conflicting flags do not mutate install target"; else fail "conflicting flags do not mutate install target"; fi
+if [ "$(uname -s)" = Darwin ] && command -v script >/dev/null 2>&1; then
+  PTY_OUTPUT=$(printf 'y\n' | NARU_INSTALL_LEGACY=0 script -q /dev/null "$FIXTURE/bin/naru" install --legacy --preview --dir "$T14/pty-preview" 2>&1)
+  if printf '%s' "$PTY_OUTPUT" | grep -q 'Preview only; no files changed' && ! printf '%s' "$PTY_OUTPUT" | grep -q 'Apply these changes?' && [ ! -e "$T14/pty-preview" ]; then pass "explicit preview exits without prompting on a TTY"; else fail "explicit preview exits without prompting on a TTY"; fi
+fi
+
+# Explicit v1 mode must work regardless of the --legacy option's position.
+for order in first last; do
+  legacy_target="$T14/legacy-$order"
+  if [ "$order" = first ]; then
+    NARU_INSTALL_LEGACY=0 "$FIXTURE/bin/naru" install --legacy --apply --dir "$legacy_target" >/dev/null
+  else
+    NARU_INSTALL_LEGACY=0 "$FIXTURE/bin/naru" install --apply --dir "$legacy_target" --legacy >/dev/null
+  fi
+  if [ -f "$legacy_target/.naru-install.json" ]; then pass "naru install --legacy ${order} selects historical v1"; else fail "naru install --legacy ${order} selects historical v1"; fi
+done
 
 # bootstrap.sh must reject bad options rather than guessing.
 if sh "$ROOT/bootstrap.sh" --nope >/dev/null 2>&1; then fail "bootstrap rejects unknown options"; else pass "bootstrap rejects unknown options"; fi

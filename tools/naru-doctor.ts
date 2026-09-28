@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { accessSync, constants as fsConstants, realpathSync } from 'node:fs';
-import { lstat, mkdir, mkdtemp, open, realpath } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,8 @@ import type { InstallOptions } from './naru-lib/install-manifest.mjs';
 import { loadRuntimeConfigFile } from './naru-lib/runtime-config.mjs';
 import { analyzeConfiguredMcp, parseModelsConfig } from './naru-lib/dispatch.mjs';
 import { COMPATIBILITY_POLICY, evaluateOpenCodeVersion } from './naru-lib/compatibility.mjs';
+import { defaultNativeConfigRoot, getNativeInstallPaths, inspectNativeInstall } from './naru-lib/native-install.mjs';
+import { projectOc2NativeAgents } from './naru-lib/oc2-native-projection.mjs';
 import { guardedRemoveDisposableRoot, HOST_CONTRACT_LIMITATION, HOST_CONTRACT_TIMEOUT_MS, runHostContractProbe, stageHostContractAssets, writeHostContractFixtures, } from './naru-lib/host-contract-probe.mjs';
 const REPORT_SCHEMA_VERSION = 3;
 const MAX_CONFIG_BYTES = 64 * 1024;
@@ -23,6 +26,7 @@ export interface DoctorOptions {
     json: boolean;
     help?: boolean;
     hostContractRoot?: string | null;
+    legacy?: boolean;
 }
 interface DoctorIssue { code: string; scope: string; detail: string }
 interface ScopeCandidate { id: string; loadState: string; target: string }
@@ -65,7 +69,7 @@ interface HostContractProbe { status: 'not-run' | 'passed' | 'failed' | 'unavail
 interface OpenCodeCompatibility {
     status: 'not-found' | 'timeout' | 'unknown' | 'unsupported' | 'supported' | 'probe-required' | 'local-tested' | 'contract-failed';
     version: string | null;
-    profile: 'stable';
+    profile: 'stable' | 'native-v2';
     testedBuilds: readonly string[];
     recognizedBuilds: readonly string[];
     versionPolicy: 'historical-tested' | 'current-target' | 'candidate' | 'invalid' | 'unsupported';
@@ -81,6 +85,7 @@ export interface DoctorReport {
     depth: DepthReport;
     scopes: ScopeReport[];
     issues: DoctorIssue[];
+    native?: { installed: boolean; package: 'absent' | 'valid' | 'invalid'; agents: 'absent' | 'valid' | 'invalid'; registration: 'absent' | 'valid' | 'invalid'; workers: number; runtimeEvidence: 'not-run' };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -94,7 +99,7 @@ function errorMessage(error: unknown): string {
 }
 function usage() {
     return `Usage: node tools/naru-doctor.js [--dir PATH] [--project-root PATH] [--source PATH] [--host-contract-root PATH] [--json]\n\n` +
-        'Reads local installation and configuration state, then probes OpenCode with an isolated fixture plugin and loopback synthetic provider. The probe uses no external provider, credentials, account, or real user configuration.\n';
+        'Reads the normal native installation without changing user state. --legacy inspects historical v1 dispatch assets. Static checks do not prove runtime behavior or account entitlement.\n';
 }
 function parseArgs(argv: string[]): DoctorOptions {
     const options: DoctorOptions = {
@@ -108,6 +113,7 @@ function parseArgs(argv: string[]): DoctorOptions {
         const argument = argv[index];
         if (argument === '--json')
             options.json = true;
+        else if (argument === '--legacy') options.legacy = true;
         else if (argument === '--dir' || argument === '--project-root' || argument === '--source' || argument === '--host-contract-root') {
             const value = argv[index + 1];
             if (value === undefined || value.startsWith('-'))
@@ -669,6 +675,7 @@ async function depthState(options: DoctorOptions, issues: DoctorIssue[]): Promis
     return { status, effective, source, global: publicConfigState(global), project: publicConfigState(project), custom: custom ? publicConfigState(custom) : null, configuredMcp };
 }
 export async function buildDoctorReport(options: DoctorOptions): Promise<DoctorReport> {
+    if (!options.legacy) return buildNativeDoctorReport(options);
     const issues: DoctorIssue[] = [];
     const bun = recordValue(Reflect.get(globalThis, 'Bun'));
     const bunVersion = typeof bun?.version === 'string' ? bun.version : '';
@@ -712,10 +719,79 @@ export async function buildDoctorReport(options: DoctorOptions): Promise<DoctorR
         issues,
     };
 }
+async function buildNativeDoctorReport(options: DoctorOptions): Promise<DoctorReport> {
+    const root = options.customDir ?? defaultNativeConfigRoot();
+    const paths = getNativeInstallPaths(root);
+    const issues: DoctorIssue[] = [];
+    const native: NonNullable<DoctorReport['native']> = { installed: false, package: 'absent', agents: 'absent', registration: 'absent', workers: 0, runtimeEvidence: 'not-run' };
+    const host = spawnSync('opencode', ['--version'], { encoding: 'utf8', timeout: 2_000, maxBuffer: 4096, stdio: ['ignore', 'pipe', 'pipe'] });
+    const evaluation = evaluateOpenCodeVersion('native-v2', host.status === 0 ? `${host.stdout ?? ''}\n${host.stderr ?? ''}` : '');
+    const exact = evaluation.status === 'supported';
+    const probe: HostContractProbe = { status: 'not-run', checks: [], actions: [], limitation: 'Native runtime, platform, provider entitlement and live agent invocation were not tested by this read-only doctor.' };
+    const compatibility: DoctorReport['compatibility'] = {
+        opencode: { status: exact ? 'probe-required' : host.error && 'code' in host.error && host.error.code === 'ENOENT' ? 'not-found' : 'unsupported', version: evaluation.observed, profile: 'native-v2', testedBuilds: [], recognizedBuilds: ['2.0.15'], versionPolicy: exact ? 'current-target' : 'unsupported', probe },
+        runtime: { name: Reflect.get(globalThis, 'Bun') ? 'bun' : 'node', version: process.versions.node },
+    };
+    if (!exact) addIssue(issues, 'opencode-compatibility', 'host', 'native install requires observed exact OpenCode 2.0.15; no runtime qualification was inferred');
+    try {
+        const inspected = await inspectNativeInstall(root);
+        native.installed = inspected.installed;
+        native.workers = inspected.models.length;
+        const packageStat = await lstat(paths.packageRoot);
+        if (!packageStat.isDirectory() || packageStat.isSymbolicLink()) throw new Error('unsafe native package directory');
+        const manifest = JSON.parse(await readFile(paths.manifestPath, 'utf8')) as { schemaVersion?: unknown; files?: unknown };
+        if (manifest.schemaVersion !== 1 || !isRecord(manifest.files) || Object.keys(manifest.files).length < 2 || Object.keys(manifest.files).length > 2048) throw new Error('invalid package inventory');
+        const files = manifest.files;
+        for (const [name, hash] of Object.entries(files)) {
+            if (!/^[a-zA-Z0-9._/-]+$/.test(name) || name.split('/').some(part => part === '..' || part === '.' || !part) || typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash)) throw new Error('invalid package entry');
+            const file = path.join(paths.packageRoot, name), stat = await lstat(file);
+            if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8 * 1024 * 1024 || createHash('sha256').update(await readFile(file)).digest('hex') !== hash) throw new Error('package inventory mismatch');
+        }
+        const observed: string[] = [];
+        async function walk(directory: string, prefix = ''): Promise<void> {
+            for (const item of await readdir(directory, { withFileTypes: true })) {
+                const relative = prefix ? `${prefix}/${item.name}` : item.name;
+                if (item.isDirectory() && !item.isSymbolicLink()) await walk(path.join(directory, item.name), relative);
+                else if (item.isFile() && !item.isSymbolicLink() && observed.length < 2049) observed.push(relative);
+                else throw new Error('unsafe native package entry');
+            }
+        }
+        await walk(paths.packageRoot);
+        if (observed.length !== Object.keys(files).length || observed.some(name => !(name in files))) throw new Error('native package inventory differs');
+        for (const name of ['tools/oc2-native-plugin/index.mjs', 'tools/oc2-native-plugin/command.md', 'tools/oc2-native-plugin/skills/naru-coordinate/SKILL.md']) if (!(name in files)) throw new Error('missing native asset');
+        native.package = 'valid';
+        const owned = await loadJsonConfig(paths.ownershipPath);
+        const config = await loadJsonConfig(paths.configPath);
+        const agents = owned?.agents, configured = config?.agents;
+        if (owned?.schemaVersion !== 1 || !isRecord(agents) || !isRecord(configured) || !native.installed || !('naru' in agents) || !Object.keys(agents).every(name => JSON.stringify(agents[name]) === JSON.stringify(configured[name]))) throw new Error('native agent projection missing or changed');
+        const parent = recordValue(configured.naru);
+        const projected = projectOc2NativeAgents(inspected.models);
+        if (parent?.mode !== 'primary' || Object.hasOwn(parent, 'model') || projected.workers.some(worker => {
+            const expected = recordValue(projected.agents[worker.name]);
+            const actual = recordValue(agents[worker.name]);
+            return actual?.mode !== 'subagent' || JSON.stringify(actual.model) !== JSON.stringify(expected?.model);
+        })) throw new Error('native worker pool missing or changed');
+        native.agents = 'valid';
+        const plugin = path.join(paths.packageRoot, 'tools', 'oc2-native-plugin');
+        if (!config || !Array.isArray(config.plugins) || config.plugins.filter(value => value === plugin).length !== 1 || !Array.isArray(config.skills) || config.skills.filter(value => value === path.join(plugin, 'skills')).length !== 1 || await statOrNull(path.join(root, 'opencode.jsonc')) !== null || await statOrNull(path.join(root, '.naru-install.json')) !== null) throw new Error('native plugin or skills not registered or v1 configuration collides');
+        native.registration = 'valid';
+    } catch (error) {
+        const message = error instanceof Error && 'code' in error && error.code === 'ENOENT' ? 'native install is missing or incomplete' : 'native install is invalid, modified, or collides with user configuration';
+        addIssue(issues, 'native-install', 'global', message);
+        if (native.package === 'absent' && !(error instanceof Error && 'code' in error && error.code === 'ENOENT' && !native.installed)) native.package = 'invalid';
+        else if (native.agents === 'absent') native.agents = 'invalid';
+        else native.registration = 'invalid';
+    }
+    const emptyMcp: StaticMcpState = { status: 'absent', basis: 'scope-only', categories: {}, notes: [] };
+    const absent: OpenCodeConfigState = { status: 'absent', file: null, depth: null, configuredMcp: emptyMcp };
+    return { schemaVersion: REPORT_SCHEMA_VERSION, diagnostic: 'naru-doctor', providerFree: true, readOnly: true, status: issues.length ? 'warning' : 'healthy', compatibility, native,
+        depth: { status: 'unknown', effective: null, source: 'native-v2-no-v1-depth-contract', global: absent, project: absent, custom: null, configuredMcp: { status: 'unknown', source: 'native-v2', toolInventory: 'unknown', categories: {}, notes: [] } }, scopes: [], issues };
+}
 export async function buildStaticDoctorReport(options: DoctorOptions): Promise<DoctorReport> {
     return buildDoctorReport({ ...options, hostContractRoot: null });
 }
 function renderPlain(report: DoctorReport): string {
+    if (report.native) return `Naru native doctor: ${report.status}\nOpenCode: ${report.compatibility.opencode.version ?? 'unknown'} (exact 2.0.15 required)\nNative package: ${report.native.package}; agents: ${report.native.agents}; registration: ${report.native.registration}; workers: ${report.native.workers}\nRuntime evidence: not run; platform, live invocation and account entitlement are not qualified\n${report.issues.map(issue => `${issue.code}: ${issue.detail}\n`).join('')}`;
     const lines = [
         `Naru doctor: ${report.status}`,
         `OpenCode: ${report.compatibility.opencode.status}${report.compatibility.opencode.version ? ` (${report.compatibility.opencode.version})` : ''}; version evidence ${report.compatibility.opencode.versionPolicy}; tested history ${report.compatibility.opencode.testedBuilds.join(', ')}`,

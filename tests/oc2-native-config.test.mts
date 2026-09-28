@@ -5,8 +5,9 @@ import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeF
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { loadOc2NativeModelProfile, updateOc2NativeProfile } from '../tools/naru-lib/oc2-native-config.mjs';
+import { loadOc2NativeModelProfile, NativeProfileRecoveryRequiredError, updateOc2NativeProfile } from '../tools/naru-lib/oc2-native-config.mjs';
 import { LEGACY_STANDALONE_NARU_AGENT, oc2NativePaths } from '../tools/naru-lib/oc2-profile.mjs';
+import { projectOc2NativeAgents } from '../tools/naru-lib/oc2-native-projection.mjs';
 
 async function fixture() {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'naru-oc2-native-config-')));
@@ -79,6 +80,25 @@ test('native profile migrates exact legacy role sidecars transactionally without
         for (const name of Object.keys(oldAgents).filter(name => name !== 'naru')) assert.equal(config.agents[name], undefined);
         assert.deepEqual((await loadOc2NativeModelProfile(root))?.preferences, preferences);
         assert.deepEqual(JSON.parse(await readFile(paths.ownership, 'utf8')).agents, { naru: config.agents.naru, ...Object.fromEntries(Object.entries(config.agents).filter(([name]) => name.startsWith('naru-worker-'))) });
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('native profile unhides only previously owned workers and preserves custom subagents', async () => {
+    const { root, home } = await fixture(), paths = oc2NativePaths(root);
+    const projected = projectOc2NativeAgents(['fixture/team/model#high']);
+    const worker = projected.workers[0]!.name;
+    const oldAgents = { ...projected.agents, [worker]: { ...projected.agents[worker], hidden: true } };
+    try {
+        await mkdir(paths.configDirectory, { recursive: true, mode: 0o700 });
+        await writeFile(paths.configFile, JSON.stringify({ agents: { ...oldAgents, custom: { mode: 'subagent', hidden: true, system: 'user-owned' } }, permissions: [{ action: 'edit', resource: '*', effect: 'deny' }] }), { mode: 0o600 });
+        await writeFile(paths.ownership, JSON.stringify({ schemaVersion: 1, agents: oldAgents }), { mode: 0o600 });
+        await writeFile(paths.profileState, JSON.stringify({ schemaVersion: 2, models: ['fixture/team/model#high'], preferences: {}, instructions: null }), { mode: 0o600 });
+        await updateOc2NativeProfile(root, undefined, { home });
+        const config = JSON.parse(await readFile(paths.configFile, 'utf8'));
+        assert.equal('hidden' in config.agents[worker], false);
+        assert.deepEqual(config.agents[worker].model, { providerID: 'fixture', model: 'team/model', variant: 'high' });
+        assert.deepEqual(config.agents.custom, { mode: 'subagent', hidden: true, system: 'user-owned' });
+        assert.deepEqual(config.permissions, [{ action: 'edit', resource: '*', effect: 'deny' }]);
     } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -173,7 +193,11 @@ test('third-file completion is finalized and rollback never overwrites a newer e
     try {
         await updateOc2NativeProfile(second.root, undefined, { home: second.home });
         const external = JSON.stringify({ externallyEdited: true }) + '\n';
-        await assert.rejects(updateOc2NativeProfile(second.root, ['fixture/new'], { home: second.home, afterCommitFile: async index => { if (index === 2) { await writeFile(paths.configFile, external, { mode: 0o600 }); throw new Error('concurrent rollback edit'); } } }), /preserved a newer edit/);
+        await assert.rejects(updateOc2NativeProfile(second.root, ['fixture/new'], { home: second.home, afterCommitFile: async index => { if (index === 2) { await writeFile(paths.configFile, external, { mode: 0o600 }); throw new Error('concurrent rollback edit'); } } }), error => {
+            assert.ok(error instanceof NativeProfileRecoveryRequiredError);
+            assert.match(error.message, /preserved a newer edit/);
+            return true;
+        });
         assert.equal(await readFile(paths.configFile, 'utf8'), external);
         await assert.rejects(loadOc2NativeModelProfile(second.root), /interrupted transaction/);
     } finally { await rm(second.root, { recursive: true, force: true }); }

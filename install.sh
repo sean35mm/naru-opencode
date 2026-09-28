@@ -26,6 +26,19 @@ if [ -f "${SRC_DIR}/tsconfig.json" ]; then
   exec sh "$BUILT_INSTALLER" "$@"
 fi
 
+# Native is the default. Historical v1 lifecycle remains opt-in and untouched.
+LEGACY_REQUESTED=${NARU_INSTALL_LEGACY:-0}
+for arg in "$@"; do
+  if [ "$arg" = --legacy ]; then LEGACY_REQUESTED=1; fi
+done
+if [ "$LEGACY_REQUESTED" != 1 ]; then
+  if command -v node >/dev/null 2>&1; then
+    exec node "${SRC_DIR}/tools/naru-native.mjs" install "$@"
+  fi
+  echo "install.sh: node is required for native installation" >&2
+  exit 1
+fi
+
 MODE=symlink
 TARGET="${HOME}/.config/opencode"
 WITH_DASHBOARD=false
@@ -50,6 +63,7 @@ usage() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --legacy) ;;
     --preview) APPLY=false ;;
     --apply) APPLY=true ;;
     --replace-conflicts) REPLACE_CONFLICTS=true ;;

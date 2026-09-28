@@ -56,10 +56,15 @@ async function overlap(name: string): Promise<void> {
 
 let sequence = 0;
 const advertised = new Map<string, string[]>();
+const subagentCatalogues: string[] = [];
 const observedModels = new Map<string, Set<string>>();
 const observedFastRequests: Array<{ model: string; effort?: string; serviceTier?: string }> = [];
+const generalRequests: Array<{ model: string; effort: string | undefined }> = [];
 const mcpCompleted = new Map<string, number>();
 let lifecycleChild = false, lifecycleContinuation = false, lifecycleBackground = false;
+let releaseFailedChild!: () => void;
+const failedChildGate = new Promise<void>(resolvePromise => { releaseFailedChild = resolvePromise; });
+let failedChildRequested = false, failureParentTurns = 0;
 function roleFrom(instructions: string): string {
     if (instructions.includes('primary native OpenCode coordinator')) return 'naru';
     return instructions.includes('reusable native Naru worker') ? 'worker' : 'unknown';
@@ -105,13 +110,15 @@ const provider = createServer(async (request, response) => {
         response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ object: 'list', data: ['native-parent-upstream', 'native-worker-upstream'].map(id => ({ id, object: 'model' })) })); return;
     }
     let body = ''; for await (const chunk of request) body += chunk;
-    const input = JSON.parse(body) as { model: string; reasoning?: { effort?: string }; service_tier?: string; instructions: string; input: unknown; tools?: Array<{ name: string }> };
+    const input = JSON.parse(body) as { model: string; reasoning?: { effort?: string }; service_tier?: string; instructions: string; input: unknown; tools?: Array<{ name: string; description?: string; parameters?: unknown }> };
     const serialized = JSON.stringify(input.input), result = outputs(input.input), role = roleFrom(input.instructions);
     const toolNames = advertisedTools(input);
+    if (role === 'naru') subagentCatalogues.push(JSON.stringify(input.tools?.filter(tool => tool.name === 'subagent') ?? []));
     advertised.set(`${role}:${serialized.includes('AFTER_RESTART') ? 'after' : 'before'}`, toolNames);
     if (!observedModels.has(role)) observedModels.set(role, new Set());
     if (input.instructions.includes('title generator')) { send(response, input.model, [message('Native beta proof')]); return; }
     observedModels.get(role)!.add(`${input.model}#${input.reasoning?.effort ?? ''}`);
+    if (serialized.includes('GENERAL_INHERIT') && role === 'unknown') generalRequests.push({ model: input.model, effort: input.reasoning?.effort });
     if (role === 'naru') { assert.equal(input.model, 'native-parent-upstream'); assert.equal(input.reasoning?.effort, 'medium'); }
     else if (role !== 'unknown') {
         assert.equal(input.model, 'native-worker-upstream', JSON.stringify({ role, serialized, instructions: input.instructions.slice(0, 300) }));
@@ -158,6 +165,19 @@ const provider = createServer(async (request, response) => {
     if (serialized.includes('LIFECYCLE_CONTINUE')) { lifecycleContinuation = true; send(response, input.model, [message('LIFECYCLE_CONTINUED')]); return; }
     if (serialized.includes('LIFECYCLE_CHILD')) { lifecycleChild = true; send(response, input.model, [message('LIFECYCLE_CHILD_DONE')]); return; }
     if (serialized.includes('LIFECYCLE_BACKGROUND')) { lifecycleBackground = true; send(response, input.model, [message('LIFECYCLE_BACKGROUND_DONE')]); return; }
+    if (serialized.includes('BACKGROUND_FAILURE_PARENT') && role === 'naru') {
+        failureParentTurns++;
+        if (!result) send(response, input.model, [call('subagent', { agent: workerName, description: 'Synthetic background provider failure', prompt: 'BACKGROUND_FAILURE_CHILD', background: true })]);
+        else if (failureParentTurns === 2) { assert.match(result, /working in the background \(sessionID:\s*ses_[a-zA-Z0-9_-]+\)/i); send(response, input.model, [message('BACKGROUND_FAILURE_RECEIPT_ONLY')]); }
+        else send(response, input.model, [message('BACKGROUND_FAILURE_PARENT_RESUMED')]);
+        return;
+    }
+    if (serialized.includes('BACKGROUND_FAILURE_CHILD')) {
+        failedChildRequested = true;
+        await failedChildGate;
+        response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'Synthetic background child provider failure', type: 'invalid_request_error' } }));
+        return;
+    }
 
     const delegated = serialized.match(/DELEGATE_(worker|fast-worker):((?:MCP|CUSTOM|SKILL)_[A-Z_]+|FAST_TRANSPORT|DENIED_WRITE)/);
     if (delegated && role === 'naru') {
@@ -166,6 +186,11 @@ const provider = createServer(async (request, response) => {
         return;
     }
     if (serialized.includes('FAST_TRANSPORT')) { send(response, input.model, [message('FAST_TRANSPORT_DONE')]); return; }
+    if (serialized.includes('GENERAL_INHERIT')) {
+        if (role === 'naru' && !result.includes('GENERAL_INHERIT_DONE')) send(response, input.model, [call('subagent', { agent: 'general', description: 'Intentional native general inheritance proof', prompt: 'GENERAL_INHERIT' })]);
+        else send(response, input.model, [message('GENERAL_INHERIT_DONE')]);
+        return;
+    }
 
     const mcp = serialized.match(/MCP_(BASELINE|NOVEL)_(?:BEFORE|AFTER)_RESTART/);
     if (mcp) {
@@ -304,15 +329,58 @@ try {
         else assert.deepEqual(resolved.model, { providerID: 'fixture', id: role === 'fast-worker' ? 'worker-fast' : 'worker', variant: role === 'fast-worker' ? 'max' : 'high' });
     }
     assert.equal(agents.some((value: any) => value.id === 'stable-sentinel'), false);
+    assert.ok(subagentCatalogues.length === 0);
     assert.match(await run('naru', 'MCP_BASELINE_BEFORE_RESTART'), /MCP_BASELINE_DONE/);
+    assert.ok(subagentCatalogues.some(catalogue => catalogue.includes('general')), 'Native parent did not advertise general');
+    assert.ok(subagentCatalogues.some(catalogue => catalogue.includes(workerName) && catalogue.includes(fastWorkerName)), 'Projected workers missing from the native parent subagent tool catalogue');
     assert.match(await run('naru', 'PARENT_DIRECT_READ'), /PARENT_DIRECT_DONE/);
     assert.match(await runRole('fast-worker', 'FAST_TRANSPORT'), /DELEGATE_fast-worker_DONE/);
+    assert.match(await run('naru', 'GENERAL_INHERIT'), /GENERAL_INHERIT_DONE/);
+    assert.ok(generalRequests.length > 0);
+    assert.deepEqual(generalRequests[0], { model: 'native-parent-upstream', effort: 'medium' });
     assert.match(await run('naru', 'SECOND_CWD', workspaceTwo), /SECOND_CWD_DONE/);
     assert.deepEqual(await pendingPermissions(), []);
 
     const lifecycle = await run('naru', 'LIFECYCLE_PARENT'); assert.match(lifecycle, /LIFECYCLE_PARENT_DONE/);
     for (let attempt = 0; attempt < 100 && !lifecycleBackground; attempt++) await new Promise(resolvePromise => setTimeout(resolvePromise, 50));
     assert.equal(lifecycleChild, true); assert.equal(lifecycleContinuation, true); assert.equal(lifecycleBackground, true);
+    const failureReceipt = await run('naru', 'BACKGROUND_FAILURE_PARENT');
+    assert.match(failureReceipt, /BACKGROUND_FAILURE_RECEIPT_ONLY/);
+    for (let attempt = 0; attempt < 100 && !failedChildRequested; attempt++) await new Promise(resolvePromise => setTimeout(resolvePromise, 50));
+    assert.equal(failedChildRequested, true, 'Background child did not reach the provider');
+    const failureParentID = failureReceipt.match(/"sessionID":"([^"]+)"/)?.[1];
+    assert.ok(failureParentID, 'Parent receipt did not expose a native session ID');
+    const receiptMessages = await api(`/api/session/${encodeURIComponent(failureParentID)}/message` + location());
+    assert.equal(receiptMessages.status, 200);
+    const receipt = JSON.stringify(receiptMessages.value).match(/working in the background \(sessionID:\s*(ses_[a-zA-Z0-9_-]+)\)/i);
+    assert.ok(receipt, 'Parent did not persist the native background receipt with its child session ID');
+    const family = await api('/api/session' + location());
+    assert.equal(family.status, 200);
+    assert.ok(Array.isArray(family.value?.data), `Native session list unavailable: ${responseShape(family.value)}`);
+    const children = family.value.data.filter((session: { id: string; parentID?: string; title?: string }) => session.parentID === failureParentID && session.id === receipt[1] && session.title === 'Synthetic background provider failure');
+    assert.equal(children.length, 1, `Receipt child not found in native session list: ${receipt[1]}`);
+    const failedChildID: string = children[0].id;
+    releaseFailedChild();
+    let failedChildMessages: any;
+    for (let attempt = 0; attempt < 100; attempt++) {
+        const response = await api(`/api/session/${encodeURIComponent(failedChildID)}/message` + location());
+        assert.equal(response.status, 200);
+        failedChildMessages = response.value;
+        if (JSON.stringify(failedChildMessages).includes('Synthetic background child provider failure')) break;
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 50));
+    }
+    assert.match(JSON.stringify(failedChildMessages), /Synthetic background child provider failure/, 'Native child failure was not persisted');
+    let failureParentMessages = '';
+    for (let attempt = 0; attempt < 100; attempt++) {
+        const response = await api(`/api/session/${encodeURIComponent(failureParentID)}/message` + location());
+        assert.equal(response.status, 200);
+        failureParentMessages = JSON.stringify(response.value);
+        if (failureParentMessages.includes('Synthetic background child provider failure') && failureParentMessages.includes('BACKGROUND_FAILURE_PARENT_RESUMED')) break;
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 50));
+    }
+    const failureParentNotified = failureParentMessages.includes('Synthetic background child provider failure');
+    assert.equal(failureParentNotified, true, 'Child failure was not delivered to the parent session');
+    assert.match(failureParentMessages, /BACKGROUND_FAILURE_PARENT_RESUMED/, 'Parent did not produce the failure follow-up');
     await Promise.all(Array.from({ length: 5 }, (_, index) => run('naru', `READ_CONCURRENT_${index}`)));
     await Promise.all(Array.from({ length: 2 }, (_, index) => run('naru', `RUN_CONCURRENT_${index}`)));
     await Promise.all(Array.from({ length: 2 }, (_, index) => run('naru', `WRITE_CONCURRENT_${index}`)));
@@ -361,7 +429,7 @@ try {
     console.log(JSON.stringify({
         status: 'PASS', native, workspaceKind: 'non-git', sandbox: 'loopback-only', production: ['projectOc2NativeAgents', 'updateOc2NativeProfile', 'planOc2NativeLaunch'],
         agentNames: { naru: 'naru', worker: workerName, fastWorker: fastWorkerName }, permission: { fixtureBaseline: 'allow', hostDenial: true, generatedOverrides: false, pending: 0 }, parentModel: `${parentReference} (user-selected)`, workerModels: [workerReference, fastReference], upstreamModels: ['native-parent-upstream', 'native-worker-upstream'],
-        nativeSubagentArgs: ['agent', 'description', 'prompt', 'sessionID', 'background'], lifecycle: { child: lifecycleChild, continuation: lifecycleContinuation, background: lifecycleBackground }, overlapPeak: Object.fromEntries([...gates].map(([name, value]) => [name, value.peak])),
+        nativeSubagentArgs: ['agent', 'description', 'prompt', 'sessionID', 'background'], catalogue: { parentTool: 'subagent', configuredWorkers: true, general: true, scope: 'synthetic host tool advertising; not autonomous LLM selection' }, generalRequest: generalRequests[0], lifecycle: { child: lifecycleChild, continuation: lifecycleContinuation, background: lifecycleBackground, failedChild: { receipt: 'running', terminal: 'failed', parentNotified: failureParentNotified, parentTurns: failureParentTurns, childSessionID: failedChildID } }, overlapPeak: Object.fromEntries([...gates].map(([name, value]) => [name, value.peak])),
         nativeEffects: { runnerShell: true, writerEditRead: true, cwd: workspace, secondCwd: workspaceTwo, inheritedEnv: 'NARU_SYNTHETIC_ENV', outsideCwdRead: true },
         launch: { naruEntry: parentPlan.argv.slice(0, 5), bareEntry: barePlan.argv, sharedDatabase: paths.database },
         setup: { freshModels: freshProfile.models, databasePreserved: true, noBrokerState: true },
@@ -371,5 +439,6 @@ try {
         pluginSkills: 'covered-by-naru-native-capabilities-smoke',
     }));
 } finally {
+    releaseFailedChild();
     server?.stop(); provider.closeAllConnections(); await new Promise<void>(resolvePromise => provider.close(() => resolvePromise())); await rm(root, { recursive: true, force: true });
 }

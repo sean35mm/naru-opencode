@@ -1,7 +1,36 @@
 ---
-title: OpenCode v2 migration and local preview
-description: The native OC2 profile, safe activation, and legacy recovery boundary.
+title: OpenCode v2 installation and staged OC2 migration
+description: Normal native-v2 install, qualification boundary, and the separate OC2 preview history.
 ---
+
+## Normal native-v2 installation
+
+Normal Naru installation uses an existing OpenCode **exactly 2.0.15** on `PATH` and Node 24; it does not install a host binary or run a broker. Bootstrap installs only the `naru` command. From a built checkout, `sh install.sh` takes the same normal route:
+
+```sh
+sh install.sh --preview
+sh install.sh --apply
+naru doctor
+naru configure             # interactive preview; rerun with --apply to save
+naru models --list
+naru models --set provider/model#variant --apply
+```
+
+The default config root is `~/.config/opencode`, or specify `--dir PATH` for an exact directory. The installer copies the compiled native package to `.naru-native/package`, keeps its selected models and managed ownership under `.naru-native/`, and updates `opencode.json` without setting a default parent model. Native workers are selected explicitly; the normal installer does not import the OC2 preview pool, move conversations, touch an installed preview profile, or enable paid provider access. Restart OpenCode after applying or changing models. `naru upgrade` downloads a release and previews this same normal installation; `naru doctor --json` checks local registration and integrity only, not live behavior or account entitlement.
+
+Normal install currently refuses JSONC/ambiguous configuration and existing v1 commands, plugin, or manifest ownership. It does not remove historical assets or user data automatically. Resolve any collision through a separately reviewed cutover; do not delete v1 data or stop running services blindly. The installed user OC2 profile remains untouched until a deliberate checkpoint. For historical v1 installation and doctor use explicit `--legacy`; native uninstall/rollback are not available yet.
+
+From built source, the normal packaged qualification is:
+
+```sh
+node .naru-build/scripts/naru-compat-smoke.mjs \
+  --profile native-v2 --opencode /absolute/path/to/opencode-2.0.15 \
+  --source .naru-build
+```
+
+The gate installs into a disposable private HOME/XDG and checks native routes against a synthetic local model source. It has not established cross-platform release qualification or real-account entitlement. Do not print config or credentials for troubleshooting. The rest of this page records the **separate, staged `oc2` preview**, not a required or permanent normal install route.
+
+## Staged local OC2 preview
 
 OC2 is a local native profile pinned to upstream stable OpenCode `2.0.15`, with an
 OC2-only package plugin for Naru capabilities. It is
@@ -76,11 +105,13 @@ model feed, not hardcoded. Base models and variants count separately. Configurat
 does not stop, restart, or promise to hot-reload active services or sessions. Restart
 an active OC2 service yourself and create a new session after changing the pool.
 
-Each exact reference projects one deterministic hidden reusable worker definition.
-Its model object retains exact `providerID`, model ID, and optional variant. One
-definition can create many native child sessions, including concurrent, background,
-and continued sessions; there is no Naru broker slot limit. The visible `naru`
-primary contains no model or effort override: the user chooses both in OpenCode.
+Each exact reference projects one deterministic reusable `subagent` worker advertised
+in OpenCode's native subagent catalogue. Its model object retains exact `providerID`,
+model ID, and optional variant. One definition can create many native child sessions,
+including concurrent, background, and continued sessions; there is no Naru broker slot
+limit. Native `general` remains available for intentional inheritance of the parent's
+model and effort. The visible `naru` primary contains no model or effort override: the
+user chooses both in OpenCode.
 
 OC2 does not project blanket permission overrides or role-specific MCP allowlists.
 Tool access follows OpenCode's native permissions and the capabilities it advertises;

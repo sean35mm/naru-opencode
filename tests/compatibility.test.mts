@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import { chmod, lstat, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { projectOc2NativeAgents } from '../tools/naru-lib/oc2-native-projection.mjs';
 
 import {
   classifyDashboardEvidence,
@@ -20,6 +22,8 @@ import {
 import {
   OPENCODE_SAFE_COMMANDS,
   OPENCODE_V2_EXPLORATORY_COMMANDS,
+  checkNativeHostRoutes,
+  nativeWorkerPoolValid,
   runBoundedProcess,
   runCompatibilitySmoke,
 } from '../scripts/naru-compat-smoke.mjs';
@@ -125,6 +129,75 @@ test('exploratory evidence is visibly distinct and never release-qualified', () 
   assert.equal(evidence.qualification, 'exploratory');
   assert.equal(evidence.releaseQualification, 'ineligible-exploratory');
   assert.equal(evidence.versionEvidence.classification, 'exploratory-exact');
+});
+
+test('native-v2 qualification requires exact 2.0.15 and all packaged checks', () => {
+  const required = REQUIRED_COMPATIBILITY_CHECKS['native-v2'].map(id => ({ id, status: 'passed' as const, durationMs: 0, diagnostic: null }));
+  const base = { profile: 'native-v2' as const, platform: evaluatePlatformTarget({ platform: 'darwin', arch: 'arm64' }), versions: { node: '24.0.0', opencode: '2.0.15' } };
+  assert.equal(createCompatibilityEvidence({ ...base, checks: required }).status, 'passed-local-smoke');
+  assert.equal(createCompatibilityEvidence({ ...base, checks: required }).releaseQualification, 'not-established');
+  for (const id of REQUIRED_COMPATIBILITY_CHECKS['native-v2']) {
+    assert.equal(createCompatibilityEvidence({ ...base, checks: required.filter(check => check.id !== id) }).status, 'failed-local-smoke', id);
+  }
+  for (const version of ['2.0.16', '2.0.15-beta.1', '1.18.28', 'unknown']) {
+    assert.equal(createCompatibilityEvidence({ ...base, versions: { node: '24.0.0', opencode: version }, checks: required }).status, 'failed-local-smoke', version);
+  }
+});
+
+test('native worker pool cannot pass empty, unowned, or mismatched model and effort', () => {
+  const worker = { mode: 'subagent', model: { providerID: 'fixture', model: 'worker', variant: 'high' } };
+  const name = 'naru-worker-fixture-worker-high-';
+  const projected = projectOc2NativeAgents(['fixture/worker#high']).workers[0]!.name;
+  assert.ok(projected.startsWith(name));
+  assert.equal(nativeWorkerPoolValid([], { [projected]: worker }, { [projected]: worker }), false);
+  assert.equal(nativeWorkerPoolValid(['fixture/worker#high'], {}, {}), false);
+  assert.equal(nativeWorkerPoolValid(['fixture/worker#high'], { [projected]: worker }, {}), false);
+  assert.equal(nativeWorkerPoolValid(['fixture/worker#high'], { [projected]: { ...worker, model: { ...worker.model, variant: 'low' } } }, { [projected]: worker }), false);
+  assert.equal(nativeWorkerPoolValid(['fixture/worker#high'], { [projected]: worker }, { [projected]: worker }), true);
+});
+
+test('native qualification reads the private 2.0.15 API response shapes and fails closed on missing registration', async () => {
+  const configPath = '/fixture/config/opencode.json', plugin = '/fixture/config/.naru-native/package/tools/oc2-native-plugin';
+  const responses: Record<string, unknown> = {
+    '/api/config': [{ path: configPath }],
+    '/api/agent': { data: [{ id: 'naru', mode: 'primary' }, { id: 'naru-worker-fixture', mode: 'subagent', model: { providerID: 'fixture', id: 'worker', variant: 'high' } }] },
+    '/api/plugin': { data: [{ id: 'naru.oc2-native', source: { type: 'local', path: `${plugin}/index.mjs` }, state: { status: 'active' } }] },
+    '/api/skill': { data: [{ name: 'naru-coordinate' }] },
+    '/api/command': { data: [{ name: 'naru' }] },
+  };
+  const requests: string[] = [];
+  const server = createServer((request, response) => {
+    requests.push(request.url ?? '');
+    const route = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+    if (route === '/api/plugin' && request.headers.authorization !== 'Basic isolated') { response.writeHead(401).end(); return; }
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify(responses[route] ?? {}));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address(); assert.ok(address && typeof address !== 'string');
+    const url = `http://127.0.0.1:${address.port}`;
+    const worker = { name: 'naru-worker-fixture', model: { providerID: 'fixture', id: 'worker', variant: 'high' } };
+    const run = () => checkNativeHostRoutes(url, { authorization: 'Basic isolated' }, '/fixture/project', configPath, plugin, [worker], 1000);
+    assert.deepEqual((await run()).map(check => [check.id, check.status]), [
+      ['native-config-source', 'passed'], ['native-host-agents', 'passed'], ['native-host-plugin', 'passed'], ['native-host-skills', 'passed'], ['native-host-command', 'passed'],
+    ]);
+    assert.deepEqual(requests, ['/api/config', '/api/agent', '/api/plugin', '/api/skill', '/api/command'].map(route => `${route}?location%5Bdirectory%5D=%2Ffixture%2Fproject`));
+    assert.equal((await checkNativeHostRoutes(url, { authorization: 'Basic isolated' }, '/fixture/project', configPath, plugin, [], 1000)).find(check => check.id === 'native-host-agents')?.status, 'failed');
+    responses['/api/agent'] = { data: [{ id: 'naru' }, { id: worker.name, model: { ...worker.model, variant: 'low' } }] };
+    assert.equal((await run()).find(check => check.id === 'native-host-agents')?.diagnostic, 'native-host-agents-missing-registration');
+    responses['/api/config'] = { data: [{ path: configPath }] };
+    responses['/api/agent'] = { data: [{ id: 'naru' }] };
+    responses['/api/plugin'] = { data: [{ source: { type: 'local', path: `${plugin}/index.mjs` }, status: 'active' }] };
+    responses['/api/skill'] = { data: [] };
+    responses['/api/command'] = { data: [] };
+    assert.deepEqual((await run()).map(check => check.diagnostic), [
+      'native-config-source-missing-registration', 'native-host-agents-missing-registration', 'native-host-plugin-missing-registration', 'native-host-skills-missing-registration', 'native-host-command-missing-registration',
+    ]);
+    responses['/api/plugin'] = { data: [{ source: { type: 'local', path: `${plugin}/other.mjs` }, state: { status: 'active' } }] };
+    assert.equal((await run()).find(check => check.id === 'native-host-plugin')?.diagnostic, 'native-host-plugin-missing-registration');
+    assert.equal((await checkNativeHostRoutes(url, {}, '/fixture/project', configPath, plugin, [], 1000)).find(check => check.id === 'native-host-plugin')?.diagnostic, 'native-host-plugin-http-401');
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
 test('missing, omitted, failed, and duplicate required checks cannot produce passing evidence', () => {

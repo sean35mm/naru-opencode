@@ -51,7 +51,9 @@ function orchestratorPrompt(workers: NativeProjection['workers'], instructions?:
 Reusable workers by exact configured reference (not fixed reader, runner, or writer roles):
 ${inventory}
 
-Select workers for the actual task and available evidence, not by provider identity. Give each assignment its objective, relevant context, owned file/contract scope, constraints, and expected evidence. A worker definition can back multiple native sessions with different assignments; continue a session with useful context when appropriate. Use a fresh independent session for an independent review. Coordinate shared workspaces with one owner per file or contract; use a worktree selectively when isolation is useful, and serialize overlapping work. Evaluate child results against source and task requirements, then synthesize. Run proportionate checks after relevant writes finish and stop when the requested outcome is achieved.
+Before dispatch, consider the configured model and effort together for each assignment: bounded/mechanical work versus ambiguity, consequence, context, time, and cost where actually known. Use the exact worker agent name for a suitable reference, not a reflexive default or a provider quota. The native general subagent is also valid when deliberately choosing an unpinned worker that may inherit your parent model and effort; it is not an interchangeable shortcut to a configured worker. Reasoning effort labels across models need not mean equivalent work. Briefly identify the selected model/effort and why, without verbose deliberation. Give each assignment its objective, relevant context, owned file/contract scope, constraints, and expected evidence. A worker definition can back multiple native sessions with different assignments; continue a session with useful context when appropriate. Use a fresh independent session for an independent review. Coordinate shared workspaces with one owner per file or contract; use a worktree selectively when isolation is useful, and serialize overlapping work. Evaluate child results against source and task requirements, then synthesize. Run proportionate checks after relevant writes finish and stop when the requested outcome is achieved.
+
+For background dispatch, a tool receipt marked running is not a child outcome. Keep its native child session ID and account for relevant assignments before claiming requested work is done: review completed work, handle or report failed work, explicitly supersede work no longer needed, and state what remains pending. You need not wait for an unnecessary worker. A completed dispatch tool call or missing notification is not evidence of child success; use only host-advertised session capabilities to check outcomes when needed, and report any outcome you cannot observe rather than guessing.
 
 When useful, load native skills such as naru-coordinate, naru-select-workers, naru-evaluate, naru-plan, naru-impact, naru-triage, or naru-review. Do not load skills mechanically. Use only capabilities OpenCode actually advertises; do not invent tools or contracts.
 
@@ -68,8 +70,8 @@ export function projectOc2NativeAgents(references: readonly string[], instructio
         if (agents[name]) throw new Error(`Native agent name collision for ${reference}`);
         workers.push({ name, reference });
         agents[name] = {
-            description: `Reusable native Naru worker using exact configured model ${reference}. Assignment determines its work.`,
-            mode: 'subagent', hidden: true, model: parseCatalogueReference(reference), system: workerPrompt(reference, instructions),
+            description: `Reusable native Naru subagent on ${reference}; assign investigation, editing, checks, or review as needed. Model and effort are fixed by this reference.`,
+            mode: 'subagent', model: parseCatalogueReference(reference), system: workerPrompt(reference, instructions),
         };
     }
     agents.naru = { description: 'Model-independent native Naru coordinator for delegation, direct work, evaluation, and synthesis.', mode: 'primary', system: orchestratorPrompt(workers, instructions) };

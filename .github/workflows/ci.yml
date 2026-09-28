@@ -55,6 +55,10 @@ jobs:
           test -x "$opencode_path"
           npm run test:native-catalogue:built -- "$opencode_path"
           npm run test:native-readers:built -- "$opencode_path"
+          node .naru-build/scripts/naru-native-agent-smoke.mjs "$opencode_path"
+          node .naru-build/scripts/naru-native-capabilities-smoke.mjs "$opencode_path"
+          node .naru-build/scripts/naru-native-launch-smoke.mjs "$opencode_path"
+          node .naru-build/scripts/naru-compat-smoke.mjs --profile native-v2 --opencode "$opencode_path" --source "$GITHUB_WORKSPACE/.naru-build" --json
 
   test:
     runs-on: ubuntu-latest
@@ -86,7 +90,7 @@ jobs:
         run: npm ci --prefix docs
       - name: Build documentation
         run: npm run build --prefix docs
-      - name: Run stable OpenCode compatibility smoke
+      - name: Run historical v1 OpenCode compatibility smoke
         shell: bash
         run: |
           set -euo pipefail
@@ -149,5 +153,6 @@ jobs:
           test ! -L "$package_root/bin/opencode"
           test -x "$opencode_path"
           node .naru-build/scripts/naru-compat-smoke.mjs --profile v2-beta-exploratory --opencode "$opencode_path" --source "$GITHUB_WORKSPACE/.naru-build" --json
+          node .naru-build/scripts/naru-compat-smoke.mjs --profile native-v2 --opencode "$opencode_path" --source "$GITHUB_WORKSPACE/.naru-build" --json
       - name: Check whitespace
         run: git diff --check
