@@ -4,7 +4,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cleanProcessEnvironment, nodeSpawner, startPreviewServer } from '../tools/naru-lib/preview-process.mjs';
+import { cleanProcessEnvironment, nodeSpawner, startHostServer } from '../tools/naru-lib/host-process.mjs';
 import { validateSmokeNative } from './naru-smoke-native.mjs';
 
 if (process.platform !== 'darwin') throw new Error('Native capability acceptance requires the certified macOS network sandbox');
@@ -155,7 +155,7 @@ const modelSource = join(root, 'models.json');
 const sourceModel = (id: string) => ({ id, name: `Fixture ${id}`, release_date: '2026-09-13', attachment: false, reasoning: true, tool_call: true, modalities: { input: ['text'], output: ['text'] }, limit: { context: 200000, output: 8000 }, provider: { npm: '@ai-sdk/openai' } });
 await writeFile(modelSource, JSON.stringify({ fixture: { id: 'fixture', name: 'Fixture', env: [], npm: '@ai-sdk/openai-compatible', models: { parent: sourceModel('parent'), worker: sourceModel('worker') } } }), { mode: 0o600 });
 
-let server: Awaited<ReturnType<typeof startPreviewServer>> | undefined;
+let server: Awaited<ReturnType<typeof startHostServer>> | undefined;
 try {
     const run = nodeSpawner(cleanProcessEnvironment(process.execPath));
     for (const argv of [['init', '-q'], ['config', 'user.name', 'Fixture'], ['config', 'user.email', 'fixture@example.invalid']]) {
@@ -175,7 +175,7 @@ try {
         XDG_CACHE_HOME: cacheRoot, XDG_STATE_HOME: stateRoot, TMPDIR: temporary, OPENCODE_DB: join(root, 'opencode.db'),
         OPENCODE_DISABLE_AUTOUPDATE: 'true', OPENCODE_DISABLE_PROJECT_CONFIG: 'true', OPENCODE_DISABLE_MODELS_FETCH: 'true', OPENCODE_MODELS_PATH: modelSource,
     };
-    server = await startPreviewServer(wrapper, workspace, environment, 'catalogue');
+    server = await startHostServer(wrapper, workspace, environment, 'catalogue');
     const location = `?location%5Bdirectory%5D=${encodeURIComponent(workspace)}`;
     const commandResponse = await fetch(server.url + '/api/command' + location, { headers: server.headers });
     assert.equal(commandResponse.status, 200, `Native command listing failed: ${commandResponse.status}`);
@@ -216,7 +216,7 @@ try {
         commands: { naru: { description: 'User fixture command', template: 'USER_COMMAND_SENTINEL $ARGUMENTS' } },
     }), { mode: 0o600 });
     const { OPENCODE_DISABLE_PROJECT_CONFIG: _disabled, ...projectEnvironment } = environment;
-    server = await startPreviewServer(wrapper, project, projectEnvironment, 'catalogue');
+    server = await startHostServer(wrapper, project, projectEnvironment, 'catalogue');
     const projectLocation = `?location%5Bdirectory%5D=${encodeURIComponent(project)}`;
     const sourcesResponse = await fetch(server.url + '/api/config' + projectLocation, { headers: server.headers });
     assert.equal(sourcesResponse.status, 200);

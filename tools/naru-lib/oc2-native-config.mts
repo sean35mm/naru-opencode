@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { promisify } from 'node:util';
 import { loadGlobalInstructions, validateGlobalInstructionsSetting, type GlobalInstructionsSnapshot } from './global-instructions.mjs';
-import { LEGACY_STANDALONE_NARU_AGENT, ensureOc2NativeDirectories, inspectOc2NativeDirectories, oc2NativePaths, type Oc2NativePaths } from './oc2-profile.mjs';
+import { LEGACY_STANDALONE_NARU_AGENT, ensureOc2NativeDirectories, inspectOc2NativeDirectories, oc2NativePaths, type Oc2NativePaths } from './native-profile.mjs';
 import { NATIVE_MODEL_LIMIT, projectOc2NativeAgents, type NativeAgent } from './oc2-native-projection.mjs';
 import { parseCatalogueReference } from './native-reader-projection.mjs';
 

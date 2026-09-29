@@ -2,8 +2,8 @@
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultNativeConfigRoot, installNative, nativeModels, uninstallNative, validateNativeExecutable, verifyNativeHostVersion } from './naru-lib/native-install.mjs';
-import { fetchPreviewCatalogue, startPreviewServer } from './naru-lib/preview-process.mjs';
-import { selectValidModels, TerminalWizardPrompt, WizardCancelled } from './naru-lib/preview-wizard.mjs';
+import { fetchHostCatalogue, startHostServer } from './naru-lib/host-process.mjs';
+import { selectValidModels, TerminalWizardPrompt, WizardCancelled } from './naru-lib/configure-wizard.mjs';
 import { projectOc2NativeAgents } from './naru-lib/oc2-native-projection.mjs';
 
 export async function runNative(argv: string[], sourceRoot: string): Promise<void> {
@@ -48,9 +48,9 @@ export async function runNative(argv: string[], sourceRoot: string): Promise<voi
             if (!selected.length || selected.some(value => !value)) throw new Error('models --set requires exact comma-separated references');
             projectOc2NativeAgents(selected);
         } else if (!args.length && process.stdin.isTTY && process.stdout.isTTY) {
-            const server = await startPreviewServer(executable, process.cwd(), catalogueEnv, 'catalogue');
+            const server = await startHostServer(executable, process.cwd(), catalogueEnv, 'catalogue');
             try {
-                const catalogue = await fetchPreviewCatalogue(server.url, process.cwd(), server.headers);
+                const catalogue = await fetchHostCatalogue(server.url, process.cwd(), server.headers);
                 const prompt = new TerminalWizardPrompt();
                 selected = await selectValidModels(prompt, catalogue.models, existing);
                 if (!await prompt.confirm('Save these native worker models?')) throw new WizardCancelled();

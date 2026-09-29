@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { loadOc2NativeModelProfile, NativeProfileRecoveryRequiredError, updateOc2NativeProfile } from '../tools/naru-lib/oc2-native-config.mjs';
-import { LEGACY_STANDALONE_NARU_AGENT, oc2NativePaths } from '../tools/naru-lib/oc2-profile.mjs';
+import { LEGACY_STANDALONE_NARU_AGENT, oc2NativePaths } from '../tools/naru-lib/native-profile.mjs';
 import { projectOc2NativeAgents } from '../tools/naru-lib/oc2-native-projection.mjs';
 
 async function fixture() {

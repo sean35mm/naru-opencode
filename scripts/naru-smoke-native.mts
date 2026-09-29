@@ -1,7 +1,7 @@
 import { lstat, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { COMPATIBILITY_POLICY, evaluateOpenCodeVersion } from '../tools/naru-lib/compatibility.mjs';
-import { cleanProcessEnvironment, nodeSpawner } from '../tools/naru-lib/preview-process.mjs';
+import { cleanProcessEnvironment, nodeSpawner } from '../tools/naru-lib/host-process.mjs';
 
 const nativeSignatures = new Set(['cffaedfe', 'feedfacf', 'cefaedfe', 'feedface', 'cafebabe', 'cafebabf', 'bfbafeca', '7f454c46']);
 const noEgressProfile = '(version 1)(allow default)(deny network-outbound)';

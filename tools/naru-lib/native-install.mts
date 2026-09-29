@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { loadOc2NativeModelProfile, NativeProfileRecoveryRequiredError, removeOc2NativeRegistration, updateOc2NativeProfile, type NativeConfigAdapters, type NativeRemovalPlan } from './oc2-native-config.mjs';
 import { evaluateOpenCodeVersion } from './compatibility.mjs';
-import type { Oc2NativePaths } from './oc2-profile.mjs';
+import type { Oc2NativePaths } from './native-profile.mjs';
 
 const run = promisify(execFile);
 export function getNativeInstallPaths(configRoot: string) {
