@@ -1,11 +1,8 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { access, cp, lstat, mkdir, mkdtemp, readlink, realpath, rm } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
+import { access, rm } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import type { Spawn } from './transport.mjs';
-import { isSafeRelativePath } from './validate.mjs';
-import { pathContains, protectedPathContains } from './safe-write.mjs';
 
 const active = new Set<number>();
 export type PreviewReadinessMode = 'mcp' | 'auth' | 'catalogue';
@@ -48,46 +45,6 @@ export function nodeSpawner(env: NodeJS.ProcessEnv): Spawn {
 }
 export function cleanProcessEnvironment(node: string): NodeJS.ProcessEnv {
     return { PATH: `${dirname(node)}:/usr/bin:/bin`, LANG: 'C', NO_COLOR: '1', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
-}
-export async function runtimeReadRoot(node: string): Promise<string> {
-    if (!isAbsolute(node)) throw new Error('Node runtime path must be absolute');
-    const canonicalNode = await realpath(node);
-    const root = await realpath(dirname(dirname(canonicalNode)));
-    const home = await realpath(homedir()).catch(() => resolve(homedir()));
-    const broadRoots = new Set(['/', '/Applications', '/Library', '/System', '/Users', '/Volumes', '/bin', '/opt', '/private', '/private/tmp', '/private/var', '/sbin', '/tmp', '/usr', '/usr/local', '/var']);
-    if (!pathContains(root, canonicalNode) || broadRoots.has(root) || pathContains(root, home)) {
-        throw new Error('Node runtime read root is too broad for isolated checks');
-    }
-    return root;
-}
-async function verificationSource(directory: string): Promise<string> {
-    const source = await realpath(directory);
-    if (source === parse(source).root) throw new Error('Isolated checks cannot snapshot the filesystem root; choose a narrower enrolled directory');
-    return source;
-}
-export async function copyVerificationSnapshot(directory: string, snapshot: string, excludedPaths: string[] = []): Promise<void> {
-    directory = await verificationSource(directory);
-    const exclusions = [...excludedPaths];
-    const snapshotPath = resolve(snapshot);
-    if (pathContains(directory, snapshotPath)) exclusions.push(relative(directory, snapshotPath));
-    let files = 0, bytes = 0;
-    await cp(directory, snapshot, { recursive: true, dereference: false, verbatimSymlinks: true, filter: async source => {
-        const file = relative(directory, source);
-        if (file) {
-            if (exclusions.some(excluded => protectedPathContains(excluded, file))) return false;
-            const parts = file.split(sep);
-            if (parts.includes('node_modules') || !isSafeRelativePath(file)) return false;
-        }
-        const info = await lstat(source);
-        if (++files > 50000 || (bytes += info.isFile() ? info.size : 0) > 512 * 1024 * 1024) throw new Error('Verification snapshot exceeds preview limits');
-        if (info.isSymbolicLink()) {
-            const link = await readlink(source);
-            const target = await realpath(source).catch(() => '');
-            const targetPath = relative(directory, target);
-            return !isAbsolute(link) && pathContains(directory, target) && isSafeRelativePath(targetPath);
-        }
-        return info.isDirectory() || info.isFile();
-    } });
 }
 function readinessUrl(url: string, path: string, cwd: string): string {
     return url + path + '?location%5Bdirectory%5D=' + encodeURIComponent(cwd);
@@ -308,29 +265,4 @@ export async function startPreviewServer(executable: string, cwd: string, enviro
         });
         return { url, env, headers, stop };
     } catch (error) { stop(); throw error; }
-}
-export async function isolatedCheck(directory: string, argv: string[], node: string, scratchRoot: string, excludedPaths: string[] = []) {
-    if (process.platform !== 'darwin') throw new Error('Isolated checks are unavailable: this platform has not passed containment certification');
-    if (!Array.isArray(argv) || argv.length === 0 || argv.length > 64 || argv.some(arg => typeof arg !== 'string' || arg.length > 8192 || arg.includes('\0'))) throw new Error('Invalid check argv');
-    directory = await verificationSource(directory);
-    const scratchInsideSource = pathContains(directory, resolve(scratchRoot));
-    if (!scratchInsideSource) await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
-    const temporary = await realpath(await mkdtemp(scratchInsideSource ? join(tmpdir(), 'naru-check-') : join(scratchRoot, 'check-')));
-    const snapshot = join(temporary, 'workspace');
-    try {
-        await copyVerificationSnapshot(directory, snapshot, excludedPaths);
-        const tmp = join(temporary, 'tmp');
-        await mkdir(tmp, { mode: 0o700 });
-        const executableRoot = await runtimeReadRoot(node);
-        const quote = (value: string) => JSON.stringify(value);
-        const profile = `(version 1)
-(deny default)
-(import "system.sb")
-(allow syscall* mach-bootstrap process-exec process-fork sysctl-read file-read-metadata)
-(allow signal (target self))
-(allow file-read* file-map-executable (subpath "/System") (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/Library") (subpath "/private/var/db") (subpath "/dev") (subpath ${quote(executableRoot)}) (subpath ${quote(temporary)}))
-(allow file-write* (subpath ${quote(temporary)}) (literal "/dev/null"))`;
-        return await nodeSpawner({ ...cleanProcessEnvironment(node), HOME: tmp, TMPDIR: tmp, TMP: tmp, TEMP: tmp })(
-            ['/usr/bin/sandbox-exec', '-p', profile, ...argv], { cwd: snapshot, timeout: 30000, maxBytes: 128 * 1024 });
-    } finally { await rm(temporary, { recursive: true, force: true }); }
 }

@@ -33,6 +33,7 @@ test('runtime review defaults are backward-safe and strictly validated', () => {
   assert.throws(() => parseRuntimeConfig({ mcp: [] }), /plain object/);
   assert.throws(() => parseRuntimeConfig({ mcp: { configuredTools: 'always' } }), /configuredTools/);
   assert.throws(() => parseRuntimeConfig({ mcp: { enabled: true } }), /unknown fields/);
+  assert.throws(() => parseRuntimeConfig({ models: {} }), /unknown fields: models/);
 });
 
 test('configured MCP runtime policy is backward-safe and strictly validated', () => {

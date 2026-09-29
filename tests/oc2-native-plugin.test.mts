@@ -108,11 +108,10 @@ test('OC2 native tools use the trusted session directory and never accept a mode
     );
 });
 
-test('OC2 worktree adapter uses beta-local runtime defaults without probing stable config', async () => {
+test('OC2 worktree adapter uses built-in runtime defaults without reading a config file', async () => {
     const tools = await registered({ worktreeRegistry: new Map() });
     const snapshot = JSON.parse((await tools.get('naru-worktree')!.execute({
         input: { operation: 'snapshot', runId: 'missing-run' },
-        runtimeConfigPath: '/model/cannot/select/stable.json',
     }, {
         agent: 'naru', sessionID: 'parent-session',
     })).content);

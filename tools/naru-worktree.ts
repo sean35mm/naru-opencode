@@ -1,14 +1,11 @@
 import { stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { errEnvelope, okEnvelope } from './naru-lib/output.mjs';
 import { cleanupWorktreeRun, createWorktreeRun, createWriterWorktree, finalizeWorktreeRun, integrateWriterWorktree, recoverWorktreeRun, worktreeRunSnapshot, } from './naru-lib/worktree.mjs';
 import type { WorktreeRegistry } from './naru-lib/worktree.mjs';
-import { loadRuntimeConfigFile, parseRuntimeConfig } from './naru-lib/runtime-config.mjs';
-import type { RuntimeConfig } from './naru-lib/runtime-config.mjs';
+import { parseRuntimeConfig } from './naru-lib/runtime-config.mjs';
 import type { Spawn } from './naru-lib/transport.mjs';
 const TOOL_ID = 'naru-worktree';
-const DEFAULT_CONFIG_PATH = fileURLToPath(new URL('../naru-runtime.json', import.meta.url));
 const OPERATIONS = Object.freeze([
     'prepare_run',
     'recover_run',
@@ -29,7 +26,6 @@ interface WorktreeToolContext {
     directory?: string;
     worktree?: string;
     runtimeConfig?: unknown;
-    runtimeConfigPath?: string;
     spawn?: Spawn | undefined;
     worktreeRegistry?: WorktreeRegistry | undefined;
     worktreeRoot?: string | undefined;
@@ -43,25 +39,9 @@ interface WorktreeTool {
 function isOperationName(value: unknown): value is WorktreeOperation {
     return typeof value === 'string' && OPERATIONS.some((operation) => operation === value);
 }
-function isErrorCode(error: unknown, code: string): error is Error & { code: string } {
-    return error instanceof Error && 'code' in error && error.code === code;
-}
 function assertUnknownRecord(value: unknown): asserts value is Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         throw new Error('input must be an object');
-    }
-}
-async function runtimeConfig(context: WorktreeToolContext): Promise<RuntimeConfig> {
-    if (context?.runtimeConfig !== undefined)
-        return parseRuntimeConfig(context.runtimeConfig);
-    const path = context?.runtimeConfigPath ?? DEFAULT_CONFIG_PATH;
-    try {
-        return await loadRuntimeConfigFile(path);
-    }
-    catch (error) {
-        if (isErrorCode(error, 'ENOENT') && path === DEFAULT_CONFIG_PATH)
-            return parseRuntimeConfig();
-        throw error;
     }
 }
 function validate(raw: unknown): WorktreeInput {
@@ -132,7 +112,7 @@ const worktreeTool: WorktreeTool = {
                 throw new Error('naru-worktree is restricted to naru');
             const directory = await workspaceDirectory(context);
             input = validate(args?.input);
-            const config = await runtimeConfig(context);
+            const config = parseRuntimeConfig(context.runtimeConfig);
             const implementation = config.implementation;
             if (implementation.workspaceMode === 'shared')
                 throw new Error('isolated writer mode is disabled');

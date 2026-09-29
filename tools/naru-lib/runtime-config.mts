@@ -1,10 +1,7 @@
 // Naru runtime configuration.
-// Small on purpose: durable settings cover workspace behavior, review defaults,
-// model dispatch, and explicitly opted-in configured MCP policy.
-import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
-import { basename } from 'node:path';
-const MAX_CONFIG_BYTES = 64 * 1024;
+// Small on purpose: settings cover workspace behavior, review defaults, and
+// explicitly opted-in configured MCP policy. The native plugin passes
+// DEFAULT_RUNTIME_CONFIG; there is no runtime config file.
 const WORKSPACE_MODES = Object.freeze(['auto', 'shared', 'worktree'] as const);
 const REVIEW_PROFILES = Object.freeze(['standard', 'release-critical'] as const);
 const REVIEW_DECISIONS = Object.freeze(['automatic', 'comment-only'] as const);
@@ -33,7 +30,6 @@ export interface RuntimeConfig {
     implementation: RuntimeImplementationConfig;
     mcp: RuntimeMcpConfig;
     review: RuntimeReviewConfig;
-    models?: UnknownRecord;
 }
 
 export const DEFAULT_RUNTIME_CONFIG = Object.freeze({
@@ -87,7 +83,7 @@ export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
         return { schemaVersion: 1, implementation: { ...DEFAULT_RUNTIME_CONFIG.implementation }, mcp: { ...DEFAULT_RUNTIME_CONFIG.mcp }, review: { ...DEFAULT_RUNTIME_CONFIG.review } };
     }
     assertObject(value, 'naru runtime config');
-    assertAllowedKeys(value, ['implementation', 'mcp', 'models', 'review', 'schemaVersion'], 'naru runtime config');
+    assertAllowedKeys(value, ['implementation', 'mcp', 'review', 'schemaVersion'], 'naru runtime config');
     if (value.schemaVersion !== undefined && value.schemaVersion !== 1) {
         throw new Error('naru runtime config schemaVersion must be 1');
     }
@@ -97,11 +93,6 @@ export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
     if (implementation.cleanWorkspaceRequired !== undefined && implementation.cleanWorkspaceRequired !== true) {
         throw new Error('implementation.cleanWorkspaceRequired must be true');
     }
-    // The optional models block has no consumer; it only needs to be a plain
-    // object so that a typo cannot break the worktree tool.
-    if (value.models !== undefined && !isPlainObject(value.models)) {
-        throw new Error('models must be a plain object of model classes');
-    }
     const mcp = value.mcp ?? {};
     assertObject(mcp, 'mcp config');
     assertAllowedKeys(mcp, Object.keys(DEFAULT_RUNTIME_CONFIG.mcp), 'mcp config');
@@ -110,7 +101,6 @@ export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
     assertAllowedKeys(review, Object.keys(DEFAULT_RUNTIME_CONFIG.review), 'review config');
     return {
         schemaVersion: 1,
-        ...(value.models !== undefined ? { models: value.models } : {}),
         implementation: {
             workspaceMode: enumOption(implementation.workspaceMode, DEFAULT_RUNTIME_CONFIG.implementation.workspaceMode, WORKSPACE_MODES, 'implementation.workspaceMode'),
             maxConcurrentWriters: integerOption(implementation.maxConcurrentWriters, DEFAULT_RUNTIME_CONFIG.implementation.maxConcurrentWriters, 'implementation.maxConcurrentWriters', { minimum: 1, maximum: MAX_CONCURRENT_WRITERS }),
@@ -125,61 +115,4 @@ export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
             defaultOutput: enumOption(review.defaultOutput, DEFAULT_RUNTIME_CONFIG.review.defaultOutput, REVIEW_OUTPUTS, 'review.defaultOutput'),
         },
     };
-}
-function hasControl(value: string): boolean {
-    for (let index = 0; index < value.length; index += 1) {
-        const code = value.charCodeAt(index);
-        if (code <= 31 || code === 127)
-            return true;
-    }
-    return false;
-}
-function assertSafeConfigPath(path: unknown): asserts path is string {
-    if (typeof path !== 'string' ||
-        path.length === 0 ||
-        path.length > 4096 ||
-        hasControl(path)) {
-        throw new Error('config path is invalid');
-    }
-    const name = basename(path);
-    if (!name.endsWith('.json') || /(?:^|\.)(?:env|pem|key|p12|pfx)$/i.test(name)) {
-        throw new Error('config path must identify a non-secret JSON file');
-    }
-}
-export async function loadRuntimeConfigFile(path: string): Promise<RuntimeConfig> {
-    const value = await loadRawRuntimeConfigFile(path, false);
-    return parseRuntimeConfig(value);
-}
-async function loadRawRuntimeConfigFile(path: string, optional: boolean): Promise<unknown | undefined> {
-    assertSafeConfigPath(path);
-    let handle;
-    try {
-        handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    }
-    catch (error) {
-        if (optional && error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
-        throw error;
-    }
-    try {
-        const stats = await handle.stat();
-        if (!stats.isFile())
-            throw new Error('config path must identify a regular file');
-        if (stats.size > MAX_CONFIG_BYTES)
-            throw new Error(`runtime config exceeds ${MAX_CONFIG_BYTES} bytes`);
-        const text = await handle.readFile({ encoding: 'utf8' });
-        if (Buffer.byteLength(text, 'utf8') > MAX_CONFIG_BYTES) {
-            throw new Error(`runtime config exceeds ${MAX_CONFIG_BYTES} bytes`);
-        }
-        let value: unknown;
-        try {
-            value = JSON.parse(text);
-        }
-        catch {
-            throw new Error('runtime config contains invalid JSON');
-        }
-        return value;
-    }
-    finally {
-        await handle.close();
-    }
 }

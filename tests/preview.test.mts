@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
-import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, truncate, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { copyVerificationSnapshot, fetchPreviewCatalogue, isSafeCatalogueModelID, isolatedCheck, nodeSpawner, cleanProcessEnvironment, runtimeReadRoot, startPreviewServer, waitForPreviewReadiness } from '../tools/naru-lib/preview-process.mjs';
-import { pathContains, protectedPathContains } from '../tools/naru-lib/safe-write.mjs';
+import { fetchPreviewCatalogue, isSafeCatalogueModelID, nodeSpawner, cleanProcessEnvironment, startPreviewServer, waitForPreviewReadiness } from '../tools/naru-lib/preview-process.mjs';
 const built = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 test('native smoke scripts reject wrappers before execution or fixture root creation', { skip: process.platform !== 'darwin' }, async () => {
@@ -254,80 +253,5 @@ test('preview server keeps MCP readiness as its default and cleans up after auth
         const pid = Number(await readFile(pidFile, 'utf8'));
         await new Promise(resolvePromise => setTimeout(resolvePromise, 20));
         assert.throws(() => process.kill(pid, 0));
-    } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('verification copies omit dependencies and every denied secret path, including aliases', async () => {
-    const root = await realpath(await mkdtemp('/tmp/naru-copy-policy-test-'));
-    try {
-        const repository = join(root, 'repo'), snapshot = join(root, 'snapshot');
-        await mkdir(join(repository, 'node_modules', 'fixture'), { recursive: true });
-        await mkdir(join(repository, 'secrets'), { recursive: true });
-        await mkdir(join(repository, 'credentials'), { recursive: true });
-        await writeFile(join(repository, 'source.txt'), 'source');
-        await writeFile(join(repository, '.env.example'), 'SAFE_TEMPLATE=true\n');
-        await writeFile(join(repository, '.env.production.local'), 'SYNTHETIC_DENIED=true\n');
-        await writeFile(join(repository, 'secrets', 'token.txt'), 'synthetic');
-        await writeFile(join(repository, 'credentials', 'service.json'), '{}');
-        await writeFile(join(repository, 'node_modules', 'fixture', 'index.js'), 'throw new Error()');
-        await symlink('.env.production.local', join(repository, 'environment-alias'));
-        await copyVerificationSnapshot(repository, snapshot);
-        assert.equal(await readFile(join(snapshot, 'source.txt'), 'utf8'), 'source');
-        assert.equal(await readFile(join(snapshot, '.env.example'), 'utf8'), 'SAFE_TEMPLATE=true\n');
-        for (const path of ['.env.production.local', 'secrets', 'credentials', 'node_modules', 'environment-alias']) {
-            await assert.rejects(lstat(join(snapshot, path)), { code: 'ENOENT' });
-        }
-        const oversized = join(repository, 'oversized.bin');
-        await writeFile(oversized, '');
-        await truncate(oversized, 512 * 1024 * 1024 + 1);
-        await assert.rejects(copyVerificationSnapshot(repository, join(root, 'too-large')), /exceeds preview limits/);
-    } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('path containment and verification snapshot boundaries handle filesystem roots', async () => {
-    assert.equal(pathContains('/', '/tmp/example'), true);
-    assert.equal(pathContains('/tmp/example', '/'), false);
-    assert.equal(pathContains('/tmp/example', '/tmp/example-child'), false);
-    assert.equal(protectedPathContains('runtime/state', 'RUNTIME/state/child'), true);
-    assert.equal(protectedPathContains('runtimé/state', `RUNTIM${'É'.normalize('NFD')}/state/child`), true);
-    assert.equal(protectedPathContains('runtime/state', 'runtime/state-sibling'), false);
-    const root = await mkdtemp('/tmp/naru-root-snapshot-test-');
-    try { await assert.rejects(copyVerificationSnapshot('/', join(root, 'snapshot')), /filesystem root.*narrower/i); }
-    finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('verification snapshots prune protected runtime and nested output before metadata reads', async () => {
-    const root = await realpath(await mkdtemp('/tmp/naru-copy-runtime-test-'));
-    try {
-        const source = join(root, 'source'), runtime = join(source, 'RUNTIME-STATE'), normalizedAlias = join(source, `runtim${'é'.normalize('NFD')}`), output = join(source, 'output-scratch'), snapshot = join(root, 'snapshot');
-        await mkdir(runtime, { recursive: true }); await mkdir(normalizedAlias); await mkdir(output); await writeFile(join(source, 'ordinary.txt'), 'ordinary'); await writeFile(join(runtime, 'marker.txt'), 'synthetic runtime marker'); await writeFile(join(normalizedAlias, 'marker.txt'), 'synthetic normalized marker'); await writeFile(join(output, 'partial.txt'), 'partial');
-        await copyVerificationSnapshot(source, snapshot, ['runtime-state', 'runtimé', 'output-scratch']);
-        assert.equal(await readFile(join(snapshot, 'ordinary.txt'), 'utf8'), 'ordinary');
-        await assert.rejects(lstat(join(snapshot, 'RUNTIME-STATE')), { code: 'ENOENT' });
-        await assert.rejects(lstat(join(snapshot, `runtim${'é'.normalize('NFD')}`)), { code: 'ENOENT' });
-        await assert.rejects(lstat(join(snapshot, 'output-scratch')), { code: 'ENOENT' });
-    } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('runtime read roots reject shallow executables but allow the current Node installation', async () => {
-    const root = await realpath(await mkdtemp('/tmp/naru-runtime-root-test-'));
-    try {
-        const shallow = join(root, 'node'); await writeFile(shallow, 'synthetic runtime');
-        await assert.rejects(runtimeReadRoot(shallow), /too broad/);
-        const current = await runtimeReadRoot(process.execPath);
-        assert.ok(process.execPath.startsWith(current + '/'));
-    } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('isolated checks may change their copy but cannot change/read outside files or use the network', { skip: process.platform !== 'darwin' }, async () => {
-    const root = await realpath(await mkdtemp('/tmp/naru-containment-test-'));
-    try {
-        const repository = join(root, 'repo'); await mkdir(repository);
-        await writeFile(join(repository, 'source.txt'), 'original');
-        const outside = join(root, 'outside'); await writeFile(outside, 'private');
-        const code = `const fs=require('fs'),assert=require('assert/strict'); fs.writeFileSync('source.txt','copy-only'); for(const f of [()=>fs.readFileSync(${JSON.stringify(outside)}),()=>fs.writeFileSync(${JSON.stringify(join(repository, 'source.txt'))},'escaped')]) assert.throws(f); const s=require('net').connect(1,'127.0.0.1');s.on('connect',()=>process.exit(9));s.on('error',e=>{assert.ok(['EPERM','EACCES'].includes(e.code));console.log('contained')});`;
-        const result = await isolatedCheck(repository, [process.execPath, '-e', code], process.execPath, join(root, 'scratch'));
-        assert.equal(result.ok, true, JSON.stringify(result)); assert.match(result.stdout, /contained/);
-        assert.equal(await readFile(join(repository, 'source.txt'), 'utf8'), 'original');
     } finally { await rm(root, { recursive: true, force: true }); }
 });
