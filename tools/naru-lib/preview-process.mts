@@ -3,7 +3,6 @@ import { randomBytes } from 'node:crypto';
 import { access, cp, lstat, mkdir, mkdtemp, readlink, realpath, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
-import type { ModelSourceCost, ModelSourceMode } from './preview-model-catalogue.mjs';
 import type { Spawn } from './transport.mjs';
 import { isSafeRelativePath } from './validate.mjs';
 import { pathContains, protectedPathContains } from './safe-write.mjs';
@@ -13,9 +12,8 @@ export type PreviewReadinessMode = 'mcp' | 'auth' | 'catalogue';
 export interface PreviewReadinessTiming { deadlineMs?: number; requestTimeoutMs?: number; pollIntervalMs?: number; requiredMcpNames?: string[]; readyFiles?: string[] }
 export interface PreviewCatalogueModel { id: string; providerID: string; name: string; reference: string; capabilities: { tools: boolean; input: string[]; output: string[] }; variantIDs: string[] }
 export type PreviewCatalogueExclusion = 'provider-disabled' | 'model-disabled' | 'deprecated' | 'tools-unsupported' | 'text-input-unsupported' | 'text-output-unsupported';
-export interface PreviewCatalogueEntry { id: string; providerID: string; upstreamModelID: string; name: string; reference: string; variantIDs: string[]; capabilities: { tools: boolean; input: string[]; output: string[] }; limit: { context: number; input?: number; output?: number }; releasedAt: number; eligibility: 'eligible' | 'excluded'; reason?: PreviewCatalogueExclusion; validationMode?: Omit<ModelSourceMode, 'id'> }
+export interface PreviewCatalogueEntry { id: string; providerID: string; upstreamModelID: string; name: string; reference: string; variantIDs: string[]; capabilities: { tools: boolean; input: string[]; output: string[] }; limit: { context: number; input?: number; output?: number }; releasedAt: number; eligibility: 'eligible' | 'excluded'; reason?: PreviewCatalogueExclusion }
 export interface PreviewCatalogue { models: PreviewCatalogueModel[]; providers: Array<{ id: string; name: string; activation: 'auto' | 'enabled' | 'disabled' }>; entries?: PreviewCatalogueEntry[]; observedAt: string; metadataFreshness: 'unknown'; accountAccess: 'unknown'; source?: { management: 'host-managed-unverified' | 'naru-snapshot'; digest?: string; completedAt?: string; upstreamFreshness: 'unknown' } }
-export function stopPreviewProcesses() { for (const pid of active) { try { process.kill(-pid, 'SIGKILL'); } catch {} } }
 
 export function nodeSpawner(env: NodeJS.ProcessEnv): Spawn {
     return async (argv, options = {}) => new Promise(resolve => {
@@ -132,40 +130,6 @@ const variantCatalogueID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const unsafeDisplay = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 const displayText = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max && !unsafeDisplay.test(value);
 const stringArray = (value: unknown): value is string[] => Array.isArray(value) && value.length <= 32 && value.every(item => displayText(item, 64));
-const finiteNonnegative = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
-function hostCost(value: unknown): ModelSourceCost[] | undefined {
-    if (!Array.isArray(value) || value.length < 1 || value.length > 65) return undefined;
-    const result: ModelSourceCost[] = [];
-    for (const raw of value) {
-        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
-        const item = raw as Record<string, unknown>, cache = item.cache;
-        if (!finiteNonnegative(item.input) || !finiteNonnegative(item.output) || !cache || typeof cache !== 'object' || Array.isArray(cache)
-            || !finiteNonnegative((cache as Record<string, unknown>).read) || !finiteNonnegative((cache as Record<string, unknown>).write)) return undefined;
-        let tier: ModelSourceCost['tier'];
-        if (item.tier !== undefined) {
-            if (!item.tier || typeof item.tier !== 'object' || Array.isArray(item.tier) || !displayText((item.tier as Record<string, unknown>).type, 64) || !finiteNonnegative((item.tier as Record<string, unknown>).size)) return undefined;
-            tier = { type: (item.tier as Record<string, unknown>).type as string, size: (item.tier as Record<string, unknown>).size as number };
-        }
-        result.push({ input: item.input, output: item.output, cache: { read: (cache as Record<string, unknown>).read as number, write: (cache as Record<string, unknown>).write as number }, ...(tier ? { tier } : {}) });
-    }
-    return result;
-}
-function safeHostMode(model: Record<string, unknown>): Omit<ModelSourceMode, 'id'> | undefined {
-    const cost = hostCost(model.cost); if (!cost) return undefined;
-    const result: Omit<ModelSourceMode, 'id'> = { cost };
-    if (model.body !== undefined) {
-        if (!model.body || typeof model.body !== 'object' || Array.isArray(model.body)) return undefined;
-        const body = model.body as Record<string, unknown>;
-        if (body.service_tier === 'priority') result.body = { service_tier: 'priority' };
-        else if (body.speed === 'fast') result.body = { speed: 'fast' };
-        else if (body.reasoning && typeof body.reasoning === 'object' && !Array.isArray(body.reasoning) && (body.reasoning as Record<string, unknown>).mode === 'pro') result.body = { reasoning: { mode: 'pro' } };
-    }
-    if (model.headers !== undefined) {
-        if (!model.headers || typeof model.headers !== 'object' || Array.isArray(model.headers)) return undefined;
-        if ((model.headers as Record<string, unknown>)['anthropic-beta'] === 'fast-mode-2026-02-01') result.headers = { 'anthropic-beta': 'fast-mode-2026-02-01' };
-    }
-    return result;
-}
 export async function fetchPreviewCatalogue(url: string, cwd: string, headers: Record<string, string>, timing: PreviewReadinessTiming = {}): Promise<PreviewCatalogue> {
     const deadline = Date.now() + (timing.deadlineMs ?? 20000), requestTimeoutMs = timing.requestTimeoutMs ?? 5000;
     const get = async (path: string, message: string, maxBytes = 1024 * 1024) => {
@@ -217,7 +181,6 @@ export async function fetchPreviewCatalogue(url: string, cwd: string, headers: R
             limit: { context: normalizedLimit.context as number, ...(typeof normalizedLimit.input === 'number' ? { input: normalizedLimit.input } : {}), ...(typeof normalizedLimit.output === 'number' ? { output: normalizedLimit.output } : {}) },
             releasedAt: (model.time as Record<string, unknown>).released as number, eligibility: reason ? 'excluded' : 'eligible', ...(reason ? { reason } : {}) };
         Object.defineProperty(entry, 'upstreamModelID', { value: model.modelID, enumerable: false });
-        Object.defineProperty(entry, 'validationMode', { value: safeHostMode(model), enumerable: false });
         entries.push(entry);
         if (!reason) {
             models.push({ id: model.id, providerID: model.providerID, name: model.name, reference, capabilities: { tools: true, input: [...(capability.input as string[])], output: [...(capability.output as string[])] }, variantIDs });
@@ -226,49 +189,6 @@ export async function fetchPreviewCatalogue(url: string, cwd: string, headers: R
     return { models, providers, entries, observedAt: new Date().toISOString(), metadataFreshness: 'unknown', accountAccess: 'unknown' };
 }
 
-export function diagnosePreviewCatalogue(query: string, catalogue: PreviewCatalogue, sourceEntries: Array<{ reference: string; name: string }> = []) {
-    const needle = query.toLocaleLowerCase();
-    const entries = catalogue.entries ?? catalogue.models.map(model => ({ ...model, eligibility: 'eligible' as const }));
-    const matches = entries.flatMap(entry => [entry.reference, ...entry.variantIDs.map(id => `${entry.reference}#${id}`)].map(reference => ({ entry, reference })))
-        .filter(({ entry, reference }) => [reference, entry.name, entry.providerID, entry.id].some(value => value.toLocaleLowerCase().includes(needle)))
-        .map(({ entry, reference }) => ({ reference, name: entry.name, eligibility: entry.eligibility, ...('reason' in entry && entry.reason ? { reason: entry.reason } : {}) }));
-    const hostReferences = new Set(entries.map(entry => entry.reference));
-    const sourceOnly = sourceEntries.filter(entry => !hostReferences.has(entry.reference) && [entry.reference, entry.name].some(value => value.toLocaleLowerCase().includes(needle)))
-        .map(entry => ({ reference: entry.reference, name: entry.name, eligibility: 'absent-from-host-catalogue' as const, sourcePresence: 'source-present-host-absent' as const }));
-    return { query, observedAt: catalogue.observedAt, accountAccess: 'unknown' as const, matches: [...matches, ...sourceOnly] };
-}
-
-export function diagnoseExactPreviewCatalogue(reference: { providerID: string; model: string; variant?: string }, catalogue: PreviewCatalogue, sourceEntries: Array<{ reference: string; name: string }> = []) {
-    const base = `${reference.providerID}/${reference.model}`, exact = reference.variant ? `${base}#${reference.variant}` : base;
-    const entry = catalogue.entries?.find(item => item.reference === base);
-    if (!entry) {
-        const source = sourceEntries.find(item => item.reference === base);
-        return { query: exact, observedAt: catalogue.observedAt, accountAccess: 'unknown' as const, matches: source
-            ? [{ reference: exact, name: source.name, eligibility: 'absent-from-host-catalogue' as const, sourcePresence: 'source-present-host-absent' as const, ...(reference.variant ? { variantAvailability: 'unknown' as const } : {}) }]
-            : [{ reference: exact, name: exact, eligibility: 'absent-from-host-catalogue' as const, sourcePresence: 'source-presence-unknown' as const, ...(reference.variant ? { variantAvailability: 'unknown' as const } : {}) }] };
-    }
-    if (entry.eligibility === 'excluded') return { query: exact, observedAt: catalogue.observedAt, accountAccess: 'unknown' as const, matches: [{ reference: exact, name: entry.name, eligibility: 'excluded' as const, ...(entry.reason ? { reason: entry.reason } : {}), ...(reference.variant ? { variantAvailability: 'unknown' as const } : {}) }] };
-    if (reference.variant && !entry.variantIDs.includes(reference.variant)) return { query: exact, observedAt: catalogue.observedAt, accountAccess: 'unknown' as const, matches: [{ reference: exact, name: entry.name, eligibility: 'excluded' as const, reason: 'variant-unavailable' as const, variantAvailability: 'unknown' as const }] };
-    return { query: exact, observedAt: catalogue.observedAt, accountAccess: 'unknown' as const, matches: [{ reference: exact, name: entry.name, eligibility: 'eligible' as const, ...(reference.variant ? { variantAvailability: 'observed-in-host' as const } : {}) }] };
-}
-
-export function differentialCatalogueWitness(sourceEntries: Array<{ providerID: string; modelID: string; reference: string; name: string; tools: boolean; modalities?: { input: string[]; output: string[] }; limit: { context: number; input?: number; output: number }; mode?: ModelSourceMode }>, baseline: PreviewCatalogue, candidate: PreviewCatalogue) {
-    const baselineEntries = new Map((baseline.entries ?? []).map(entry => [entry.reference, entry]));
-    for (const source of sourceEntries.filter(entry => entry.mode)) {
-        const entry = candidate.entries?.find(item => item.reference === source.reference);
-        if (!entry || entry.upstreamModelID !== source.modelID || JSON.stringify(entry.validationMode) !== JSON.stringify({ cost: source.mode!.cost, ...(source.mode!.body ? { body: source.mode!.body } : {}), ...(source.mode!.headers ? { headers: source.mode!.headers } : {}) })) return null;
-    }
-    for (const source of sourceEntries) {
-        const entry = candidate.entries?.find(item => item.reference === source.reference);
-        if (!entry || entry.name !== source.name || entry.upstreamModelID !== source.modelID || entry.capabilities.tools !== source.tools
-            || entry.limit.context !== source.limit.context || entry.limit.output !== source.limit.output || (source.limit.input !== undefined && entry.limit.input !== source.limit.input)
-            || (source.modalities && (JSON.stringify(entry.capabilities.input) !== JSON.stringify(source.modalities.input) || JSON.stringify(entry.capabilities.output) !== JSON.stringify(source.modalities.output)))) continue;
-        const before = baselineEntries.get(source.reference);
-        const signature = (value: PreviewCatalogueEntry | undefined) => value && JSON.stringify({ name: value.name, upstreamModelID: value.upstreamModelID, capabilities: value.capabilities, limit: value.limit, releasedAt: value.releasedAt, variantIDs: value.variantIDs });
-        if (!before || signature(before) !== signature(entry)) return { providerID: source.providerID, reference: source.reference, name: source.name, distinction: before ? 'metadata-distinct' as const : 'candidate-only' as const };
-    }
-    return null;
-}
 const authMethodTypes = new Set(['command', 'env', 'key', 'oauth']);
 const interactiveAuthMethodTypes = new Set(['command', 'key', 'oauth']);
 export async function waitForPreviewReadiness(url: string, cwd: string, headers: Record<string, string>, mode: PreviewReadinessMode, timing: PreviewReadinessTiming = {}): Promise<void> {

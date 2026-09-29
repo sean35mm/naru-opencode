@@ -11,10 +11,7 @@
     "test:compat": "npm run build && node .naru-build/scripts/naru-compat-smoke.mjs --profile stable --source .naru-build",
     "test:installer": "npm run build && npm run test:installer:built",
     "test:installer:built": "sh .naru-build/tests/install.test.sh",
-    "test:native-catalogue:built": "node .naru-build/scripts/naru-native-catalogue-smoke.mjs",
     "test:node": "node --test --test-concurrency=1 .naru-build/tests/*.test.mjs",
-    "test:native-readers:built": "node .naru-build/scripts/naru-native-reader-smoke.mjs",
-    "test:preview:built": "node .naru-build/scripts/naru-preview-smoke.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "type": "module",

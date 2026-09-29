@@ -21,7 +21,6 @@ import {
 } from '../tools/naru-lib/compatibility.mjs';
 import {
   OPENCODE_SAFE_COMMANDS,
-  OPENCODE_V2_EXPLORATORY_COMMANDS,
   checkNativeHostRoutes,
   nativeWorkerPoolValid,
   runBoundedProcess,
@@ -45,7 +44,7 @@ test('compatibility policy fixes approved targets without inventing Git or gh fl
     floor: '1.18.4', current: '1.18.28', testedBuilds: ['1.18.4', '1.18.28'], recognizedBuilds: ['1.18.4', '1.18.28'],
   });
   assert.deepEqual(COMPATIBILITY_POLICY.profiles.stable.recognizedBuilds, ['1.18.4', '1.18.28']);
-  assert.deepEqual(COMPATIBILITY_POLICY.profiles['v2-beta-exploratory'].recognizedBuilds, ['2.0.15']);
+  assert.deepEqual(COMPATIBILITY_POLICY.profiles['native-v2'].recognizedBuilds, ['2.0.15']);
   assert.deepEqual(COMPATIBILITY_POLICY.targets.platforms.map(target => target.id), ['macos-arm64', 'ubuntu-x64']);
   assert.equal(COMPATIBILITY_POLICY.targets.runtimes.node.major, 24);
   assert.equal(COMPATIBILITY_POLICY.targets.runtimes.bun.exact, '1.3.9');
@@ -93,9 +92,9 @@ test('semantic versions distinguish tested history from stable probe candidates'
   assert.equal(evaluateObservedVersion('opencode', '2.0.0-beta.1').status, 'unsupported');
   assert.equal(evaluateObservedVersion('opencode', 'not-a-version').status, 'unrecognized');
   assert.equal(sanitizeObservedVersion('opencode v2.0.15\n'), '2.0.15');
-  assert.equal(evaluateOpenCodeVersion('v2-beta-exploratory', ' \nopencode v2.0.15\t').status, 'supported');
-  assert.equal(evaluateOpenCodeVersion('v2-beta-exploratory', 'opencode2 v0.0.0-beta-19425').status, 'unsupported');
-  assert.equal(evaluateOpenCodeVersion('v2-beta-exploratory', '0.0.0-beta-19086').status, 'unsupported');
+  assert.equal(evaluateOpenCodeVersion('native-v2', ' \nopencode v2.0.15\t').status, 'supported');
+  assert.equal(evaluateOpenCodeVersion('native-v2', 'opencode2 v0.0.0-beta-19425').status, 'unsupported');
+  assert.equal(evaluateOpenCodeVersion('native-v2', '0.0.0-beta-19086').status, 'unsupported');
   assert.throws(() => evaluateOpenCodeVersion('unknown-profile', '1.18.28'), /unknown compatibility profile/);
   assert.equal(evaluateObservedVersion('node', 'v24.4.0').status, 'targeted');
   assert.equal(evaluateObservedVersion('bun', '1.3.8').status, 'non-target');
@@ -115,20 +114,6 @@ test('unsupported and unverified hosts cannot become successful local evidence',
   assert.equal(evidence.status, 'failed-local-smoke');
   assert.equal(evidence.releaseQualification, 'not-established');
   assert.equal(evidence.versionEvidence.localProbe, 'failed');
-});
-
-test('exploratory evidence is visibly distinct and never release-qualified', () => {
-  const evidence = createCompatibilityEvidence({
-    profile: 'v2-beta-exploratory',
-    platform: evaluatePlatformTarget({ platform: 'darwin', arch: 'arm64' }),
-    versions: { node: '24.0.0', opencode: 'opencode v2.0.15' },
-    checks: REQUIRED_COMPATIBILITY_CHECKS['v2-beta-exploratory'].map(id => ({ id, status: 'passed', durationMs: 0, diagnostic: null })),
-  });
-  assert.equal(evidence.status, 'passed-exploratory-smoke');
-  assert.equal(evidence.profile, 'v2-beta-exploratory');
-  assert.equal(evidence.qualification, 'exploratory');
-  assert.equal(evidence.releaseQualification, 'ineligible-exploratory');
-  assert.equal(evidence.versionEvidence.classification, 'exploratory-exact');
 });
 
 test('native-v2 qualification requires exact 2.0.15 and all packaged checks', () => {
@@ -201,7 +186,7 @@ test('native qualification reads the private 2.0.15 API response shapes and fail
 });
 
 test('missing, omitted, failed, and duplicate required checks cannot produce passing evidence', () => {
-  for (const profile of ['stable', 'v2-beta-exploratory'] as const) {
+  for (const profile of ['stable', 'native-v2'] as const) {
     const required = REQUIRED_COMPATIBILITY_CHECKS[profile].map(id => ({ id, status: 'passed', durationMs: 0, diagnostic: null }));
     const base = { profile, platform: evaluatePlatformTarget({ platform: 'darwin', arch: 'arm64' }), versions: { node: '24.0.0', opencode: profile === 'stable' ? '1.18.28' : 'opencode v2.0.15' } };
     for (const checks of [[], required.slice(1), required.map(check => ({ ...check, status: 'omitted' })), required.map(check => ({ ...check, status: 'failed' }))]) {
@@ -230,7 +215,6 @@ test('OpenCode command allowlist contains only provider-free inspection and loca
   ]);
   const serialized = JSON.stringify(OPENCODE_SAFE_COMMANDS);
   for (const forbidden of ['auth', 'model', 'run', 'prompt']) assert.doesNotMatch(serialized, new RegExp(`"${forbidden}"`));
-  assert.deepEqual(OPENCODE_V2_EXPLORATORY_COMMANDS.map(command => command.args), [['--version'], ['--help']]);
 });
 
 async function fakeOpenCode(directory: string, {
@@ -430,33 +414,6 @@ test('successful host commands cannot hide a disabled dispatch plugin', async ()
     assert.equal(report.status, 'failed-local-smoke');
     assert.equal(report.checks.find(check => check.id === 'core-config')?.diagnostic, 'review-defaults-missing');
   } finally { await rm(temporary, { recursive: true, force: true }); }
-});
-
-test('isolated v2 smoke is exact-build exploratory and runs only confirmed commands', async () => {
-  const temporary = await mkdtemp(path.join(os.tmpdir(), 'naru-compat-v2-'));
-  try {
-    const fake = await fakeOpenCode(temporary, { version: '2.0.15' });
-    const report = await runCompatibilitySmoke({
-      opencodePath: fake,
-      profile: 'v2-beta-exploratory',
-      sourcePath: root,
-      platformEvidence: { platform: 'darwin', arch: 'arm64', osId: null, wsl: false },
-    });
-    assert.equal(report.status, 'passed-exploratory-smoke');
-    assert.deepEqual(report.checks.map(check => check.id), ['target-platform', 'opencode-version', 'opencode-help', 'cleanup']);
-
-    const drift = await fakeOpenCode(temporary, { version: '0.0.0-beta-19425' });
-    const failed = await runCompatibilitySmoke({
-      opencodePath: drift,
-      profile: 'v2-beta-exploratory',
-      sourcePath: root,
-      platformEvidence: { platform: 'darwin', arch: 'arm64', osId: null, wsl: false },
-    });
-    assert.equal(failed.status, 'failed-exploratory-smoke');
-    assert.deepEqual(failed.checks.map(check => check.id), ['target-platform', 'opencode-version', 'cleanup']);
-  } finally {
-    await rm(temporary, { recursive: true, force: true });
-  }
 });
 
 test('process runner bounds time and output without depending on OpenCode', async () => {

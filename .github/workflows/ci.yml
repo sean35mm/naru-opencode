@@ -27,7 +27,7 @@ jobs:
         run: npm ci
       - name: Build runtime and native acceptance artifacts
         run: npm run build
-      - name: Run sandboxed native reader acceptance
+      - name: Run sandboxed native acceptance
         shell: bash
         run: |
           set -euo pipefail
@@ -55,11 +55,7 @@ jobs:
           test -f "$opencode_path"
           test ! -L "$package_root/bin/opencode"
           test -x "$opencode_path"
-          npm run test:native-catalogue:built -- "$opencode_path"
-          npm run test:native-readers:built -- "$opencode_path"
-          node .naru-build/scripts/naru-native-agent-smoke.mjs "$opencode_path"
           node .naru-build/scripts/naru-native-capabilities-smoke.mjs "$opencode_path"
-          node .naru-build/scripts/naru-native-launch-smoke.mjs "$opencode_path"
           node .naru-build/scripts/naru-compat-smoke.mjs --profile native-v2 --opencode "$opencode_path" --source "$GITHUB_WORKSPACE/.naru-build" --json
 
   test:
@@ -108,7 +104,7 @@ jobs:
           test -f "$opencode_path"
           test -x "$opencode_path"
           node .naru-build/scripts/naru-compat-smoke.mjs --profile stable --opencode "$opencode_path" --source "$GITHUB_WORKSPACE/.naru-build" --json
-      - name: Run pinned OpenCode v2 stable exploratory smoke
+      - name: Run pinned OpenCode v2 native smoke
         shell: bash
         run: |
           set -euo pipefail
@@ -154,7 +150,6 @@ jobs:
           test -f "$opencode_path"
           test ! -L "$package_root/bin/opencode"
           test -x "$opencode_path"
-          node .naru-build/scripts/naru-compat-smoke.mjs --profile v2-beta-exploratory --opencode "$opencode_path" --source "$GITHUB_WORKSPACE/.naru-build" --json
           node .naru-build/scripts/naru-compat-smoke.mjs --profile native-v2 --opencode "$opencode_path" --source "$GITHUB_WORKSPACE/.naru-build" --json
       - name: Check whitespace
         run: git diff --check
