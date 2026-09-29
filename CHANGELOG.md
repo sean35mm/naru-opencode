@@ -2,6 +2,17 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.8.2](https://github.com/sean35mm/naru-opencode/compare/v0.8.1...v0.8.2) (2026-09-29)
+
+
+### Bug Fixes
+
+* **native:** accept OpenCode 2.0.x patch releases from 2.0.15 ([57d1db4](https://github.com/sean35mm/naru-opencode/commit/57d1db474df6d5c88b19eda5afda2a91528f6105))
+* **native:** grant Naru skill access and add worker delivery guardrails ([a074527](https://github.com/sean35mm/naru-opencode/commit/a0745276532909382b81ce28f7701be4e58e9fa7))
+* **native:** harden plugin command, config, and upgrade edges ([bb3b332](https://github.com/sean35mm/naru-opencode/commit/bb3b332593dee0bf7a91d202f9ba6f996f937c21))
+* **native:** limit worker release deny to write subcommands ([03035c4](https://github.com/sean35mm/naru-opencode/commit/03035c4fd5bd47c88188e01f3836ba23aaa4787e))
+* **native:** restore Naru skill access, add worker guardrails, accept 2.0.x patches ([da13e5a](https://github.com/sean35mm/naru-opencode/commit/da13e5ac2ca979dffa78bf4fa3b74e420984b4e3))
+
 ## [0.8.1](https://github.com/sean35mm/naru-opencode/compare/v0.8.0...v0.8.1) (2026-09-28)
 
 
