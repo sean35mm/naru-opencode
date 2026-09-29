@@ -40,7 +40,7 @@ There is no mandatory pipeline, agent quota, or fixed phase order.
 
 Each configured reference, such as `openai/gpt-5.6-terra#medium`, becomes a subagent named `naru-worker-<provider>-<model>-<hash>` with that exact model and variant. Workers have no fixed role: the assignment decides whether a worker investigates, edits, runs checks, or reviews. One worker definition can back several concurrent sessions with different assignments.
 
-Configure the pool with `naru configure` (interactive, from OpenCode's catalogue) or `naru models --set REF[,REF] --apply`, up to 32 references. Restart OpenCode afterwards.
+Configure the pool with `naru configure` (interactive, from OpenCode's catalogue) or `naru models --set REF[,REF]`, up to 32 references. Restart OpenCode afterwards.
 
 How the coordinator picks a worker:
 

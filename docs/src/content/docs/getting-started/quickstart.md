@@ -10,15 +10,15 @@ curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstr
 naru install
 ```
 
-The bootstrap installs only the `naru` command. `naru install` previews every change to `~/.config/opencode` and asks before applying it. You need OpenCode 2.0.15 or a later 2.0.x patch release on `PATH`, and Node 24.
+The bootstrap installs only the `naru` command. `naru install` registers Naru in `~/.config/opencode` and prints what it changed (`--dry-run` shows the plan without writing). You need OpenCode 2.0.15 or a later 2.0.x patch release on `PATH`, and Node 24.
 
 ## 2. Pick workers
 
 ```sh
-naru configure --apply
+naru configure
 ```
 
-This offers models from OpenCode's catalogue and saves the ones you choose as workers. For a non-interactive setup, use `naru models --set provider/model#variant[,REF] --apply`.
+This offers models from OpenCode's catalogue and saves the ones you choose as workers. For a non-interactive setup, use `naru models --set provider/model#variant[,REF]`.
 
 ## 3. Select the coordinator
 

@@ -4,8 +4,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstrap.sh | sh
 #
 # Downloads the latest Naru release into ~/.naru and installs the `naru` command.
-# It does NOT touch your OpenCode configuration: run `naru install` afterwards,
-# which previews every change and asks before applying it.
+# It does NOT touch your OpenCode configuration: run `naru install` afterwards
+# (`naru install --dry-run` prints the plan without changing anything).
 set -eu
 
 REPO=${NARU_REPO:-sean35mm/naru-opencode}
@@ -161,5 +161,5 @@ if [ "$ON_PATH" = false ] && [ "$MODIFY_PATH" = false ]; then
 else
   echo
   echo "Next:"
-  echo "  naru install     # previews every change and asks before applying"
+  echo "  naru install     # add --dry-run to preview without changing anything"
 fi

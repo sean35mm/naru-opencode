@@ -128,7 +128,7 @@ export async function installNative(configRoot: string, sourceRoot: string, appl
     const sourceTools = join(sourceRoot, 'tools');
     if (!await safeDirectory(sourceTools)) throw new Error(`Missing compiled Naru tools: ${sourceTools}`);
     if (!await regular(join(sourceTools, 'oc2-native-plugin', 'index.mjs')) || !await regular(join(sourceTools, 'naru-lib', 'oc2-native-config.mjs'))) throw new Error('Native install requires the compiled release; build it first');
-    if (!apply) return `Native install preview: ${configRoot}\n  package: ${paths.packageRoot}\n  register: naru agents, plugin and skills; preserve unrelated config\nPreview only; no files changed. Rerun with --apply.`;
+    if (!apply) return `Native install dry run: ${configRoot}\n  package: ${paths.packageRoot}\n  register: naru agents, plugin and skills; preserve unrelated config\nDry run; no files changed. Rerun without --dry-run to apply.`;
     // Stage assets on the destination filesystem, then publish them before registration.
     await mkdir(configRoot, { recursive: true });
     if (!await safeDirectory(paths.state, true)) await mkdir(paths.state, { mode: 0o700 });
@@ -146,7 +146,7 @@ export async function installNative(configRoot: string, sourceRoot: string, appl
         await writeFile(paths.manifestPath, JSON.stringify({ schemaVersion: 1, files }, null, 2) + '\n', { mode: 0o600 });
         await updateOc2NativeProfile(configRoot, models, { ...adapters, ...transactionAdapters });
         if (backedUp) await rm(backup, { recursive: true });
-        return `Installed native Naru in ${configRoot}. Restart OpenCode to load updated agents and plugin.`;
+        return `Installed native Naru in ${configRoot}. Restart OpenCode to load updated agents and plugin.\n  package: ${paths.packageRoot}\n  registered: naru agents, plugin and skills; unrelated config preserved`;
     } catch (error) {
         if (error instanceof NativeProfileRecoveryRequiredError) throw new Error(`Native installation is indeterminate: ${error.message}. Keep ${paths.packageRoot}, ${paths.manifestPath}${backedUp ? `, and ${backup}` : ''}; inspect the profile, config, and recovery state before retrying.`, { cause: error });
         if (published) await rm(paths.packageRoot, { recursive: true });
@@ -202,7 +202,7 @@ export async function uninstallNative(configRoot: string, apply: boolean, env: N
     if (!await verifyNativePackage(paths) || !await regular(paths.ownershipPath) || !await regular(paths.profilePath)) throw new Error(`Native install in ${paths.state} is incomplete (package, manifest, ownership, or profile missing); refusing to guess what to remove. No files were changed.`);
     const plan = await removeOc2NativeRegistration({ nativePaths: profilePaths(configRoot), nativeAssetRoot: paths.packageRoot, preview: !apply });
     const footer = v1Note ? `\n${v1Note}` : '';
-    if (!apply) return { installed: true, text: `Native uninstall preview: ${configRoot}\n${describeRemoval(plan, paths.state, false)}\nPreview only; no files changed. Rerun with --apply.${footer}` };
+    if (!apply) return { installed: true, text: `Native uninstall dry run: ${configRoot}\n${describeRemoval(plan, paths.state, false)}\nDry run; no files changed. Rerun without --dry-run to apply.${footer}` };
     await uninstallableState(paths.state, false);
     // Rename first so the state directory disappears atomically; a failed rm leaves only an inert sibling.
     // ponytail: the profile lock is released before this rename; a concurrent naru install in that window could re-register agents.

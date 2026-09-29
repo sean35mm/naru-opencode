@@ -313,7 +313,7 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
             if (result.status === 'passed' && versionAccepted) {
                 const cli = path.join(source, 'bin', 'naru');
                 const invoke = (args: string[]) => runBoundedProcess('/bin/sh', [cli, ...args], { cwd: project, env, timeoutMs });
-                result = await invoke(['install', '--preview']);
+                result = await invoke(['install', '--dry-run']);
                 let mutated = false;
                 for (const name of ['.naru-native', 'opencode.json']) {
                     try { await lstat(path.join(target, name)); mutated = true; } catch (error) { if (errorCode(error) !== 'ENOENT') throw error; }
@@ -324,7 +324,7 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
                     checks.at(-1)!.diagnostic = known.find(message => result.output.includes(message)) ?? checks.at(-1)!.diagnostic;
                 }
                 if (result.status === 'passed' && !mutated) {
-                    result = await invoke(['install', '--apply']);
+                    result = await invoke(['install']);
                     checks.push(commandCheck('install-apply', result));
                     if (result.status === 'passed') {
                         const native = await import('../tools/naru-lib/native-install.mjs');
@@ -341,10 +341,10 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
                         await writeFile(paths.configPath, JSON.stringify(configBefore, null, 2) + '\n', { mode: 0o600 });
                         const modelEnv = { ...env, OPENCODE_DISABLE_MODELS_FETCH: 'true', OPENCODE_MODELS_PATH: sourceFile };
                         const configure = (args: string[]) => runBoundedProcess('/bin/sh', [cli, ...args], { cwd: project, env: modelEnv, timeoutMs });
-                        result = await configure(['models', '--set', NATIVE_FIXTURE_WORKER]);
+                        result = await configure(['models', '--set', NATIVE_FIXTURE_WORKER, '--dry-run']);
                         checks.push(commandCheck('models-preview', result));
                         if (result.status === 'passed') {
-                            result = await configure(['models', '--set', NATIVE_FIXTURE_WORKER, '--apply']);
+                            result = await configure(['models', '--set', NATIVE_FIXTURE_WORKER]);
                             checks.push(commandCheck('models-apply', result));
                         }
                         const inspected = await native.inspectNativeInstall(target);
