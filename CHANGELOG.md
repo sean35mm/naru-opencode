@@ -2,6 +2,17 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.10.0](https://github.com/sean35mm/naru-opencode/compare/v0.9.0...v0.10.0) (2026-09-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* `--legacy`, the v1 install/uninstall/rollback lifecycle, `naru doctor --legacy`, and the `stable` compatibility profile are removed. OpenCode 1.x is no longer supported; 0.9.0 was the last release with the v1 installer. `naru uninstall` and `naru rollback` are not yet available for native installs.
+
+### Features
+
+* remove OpenCode v1 legacy path ([6b07daf](https://github.com/sean35mm/naru-opencode/commit/6b07dafcbc516ee4c343bafb1031cf1c91f2f6d2))
+
 ## [0.9.0](https://github.com/sean35mm/naru-opencode/compare/v0.8.2...v0.9.0) (2026-09-29)
 
 
