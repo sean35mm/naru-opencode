@@ -15,7 +15,8 @@ import { defaultNativeConfigRoot, getNativeInstallPaths, inspectNativeInstall } 
 import { projectOc2NativeAgents } from './naru-lib/oc2-native-projection.mjs';
 import { guardedRemoveDisposableRoot, HOST_CONTRACT_LIMITATION, HOST_CONTRACT_TIMEOUT_MS, runHostContractProbe, stageHostContractAssets, writeHostContractFixtures, } from './naru-lib/host-contract-probe.mjs';
 const REPORT_SCHEMA_VERSION = 3;
-const MAX_CONFIG_BYTES = 64 * 1024;
+// Native projections put ~4 KB per worker into opencode.json; 32 workers plus user config exceed 64 KiB.
+const MAX_CONFIG_BYTES = 1024 * 1024;
 const MAX_ISSUES = 32;
 const MAX_REPORTED_PATHS = 10;
 
