@@ -2,6 +2,23 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.9.0](https://github.com/sean35mm/naru-opencode/compare/v0.8.2...v0.9.0) (2026-09-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* removes the `oc2` launcher (`oc2`, `oc2 naru ...`), the `install-oc2`, `naru-preview`, `naru-eval`, and `naru-session-report` tools, the `v2-beta-exploratory` compatibility profile of `naru-compat-smoke`, and the `test:preview:built`, `test:native-readers:built`, and `test:native-catalogue:built` npm scripts. Use `naru install`, `naru configure`, and `naru models` on OpenCode 2.0.15 instead.
+
+### Features
+
+* remove OC2 preview track ([38b601c](https://github.com/sean35mm/naru-opencode/commit/38b601c5b5d67965a69477296b0b0b8f393881a1))
+
+
+### Bug Fixes
+
+* **doctor:** read native configs larger than 64 KiB ([c60385e](https://github.com/sean35mm/naru-opencode/commit/c60385e0ed2c81e86c7fb0034ed81d49208eb843))
+* **doctor:** read native configs larger than 64 KiB ([dbf643b](https://github.com/sean35mm/naru-opencode/commit/dbf643b58a0a09c0d0cb00de8b69d8d6673dbdad))
+
 ## [0.8.2](https://github.com/sean35mm/naru-opencode/compare/v0.8.1...v0.8.2) (2026-09-29)
 
 
