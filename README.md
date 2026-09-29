@@ -17,12 +17,12 @@ Built by [Naru Labs](https://github.com/sean35mm). Documentation: [sean35mm.gith
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstrap.sh | sh
-naru install           # previews, then asks before applying
+naru install
 ```
 
 The bootstrap downloads a checksum-verified release into `~/.naru` and installs one file, the `naru` command. It does not touch your OpenCode config; pass `--modify-path` if you want it to add `~/.naru/bin` to your shell profile.
 
-`naru install` targets `~/.config/opencode` (or `--dir PATH`). It copies the compiled package to `.naru-native/package`, records its profile and ownership in `.naru-native/`, and registers the `naru` agent, plugin, and skills in `opencode.json` while leaving unrelated settings alone. It sets no parent model. Pass `--apply` to skip the prompt, `--preview` to only print the plan, and `--opencode PATH` to use a specific OpenCode executable.
+`naru install` targets `~/.config/opencode` (or `--dir PATH`). It copies the compiled package to `.naru-native/package`, records its profile and ownership in `.naru-native/`, and registers the `naru` agent, plugin, and skills in `opencode.json` while leaving unrelated settings alone. It sets no parent model. It applies immediately and prints what it changed. Pass `--dry-run` to only print the plan, and `--opencode PATH` to use a specific OpenCode executable. (`--apply` and `--preview` are accepted for compatibility.)
 
 The installer requires strict JSON and refuses to proceed when it finds `opencode.jsonc`, an existing `naru` command, or assets from a v1 install (`agents/naru.md`, `plugins/naru-dispatch.js`, `.naru-install.json`). It never deletes or converts them for you. If you are upgrading from a v1 install, remove it first with `naru uninstall --legacy` from Naru 0.9.0 (the last release that shipped it), or delete those files by hand, then run `naru install`.
 
@@ -34,8 +34,8 @@ From a clone:
 git clone https://github.com/sean35mm/naru-opencode.git
 cd naru-opencode
 npm ci && npm run build
-sh install.sh --preview
-sh install.sh --apply
+sh install.sh --dry-run   # optional: print the plan only
+sh install.sh
 ```
 
 ## Choose worker models
@@ -43,9 +43,8 @@ sh install.sh --apply
 Installing registers the coordinator but no workers. Pick them explicitly:
 
 ```sh
-naru configure                           # interactive picker from OpenCode's model catalogue; previews
-naru configure --apply                   # same, then saves
-naru models --set openai/gpt-5.6-terra#medium,opencode/glm-5-free --apply
+naru configure                           # interactive picker from OpenCode's model catalogue; saves your choices
+naru models --set openai/gpt-5.6-terra#medium,opencode/glm-5-free
 naru models --list
 ```
 
@@ -80,7 +79,7 @@ Review posting is dry-run by default. A generic request to post, comment, or sub
 ```sh
 naru doctor            # read-only check of host version, package integrity, agents, and registration
 naru doctor --json
-naru upgrade           # download the latest release, then the same preview-first install
+naru upgrade           # download the latest release, then install it (`--dry-run` only reports what it would do)
 naru version
 ```
 
@@ -89,11 +88,11 @@ naru version
 ## Uninstall
 
 ```sh
-naru uninstall            # preview the removal, then ask
-naru uninstall --apply    # remove without prompting
+naru uninstall              # remove immediately
+naru uninstall --dry-run    # print what would be removed
 ```
 
-`naru uninstall` accepts `--preview`, `--apply`, and `--dir PATH` like `install`. It removes from `opencode.json` the agents recorded in `.naru-native/ownership.json` that still match what Naru wrote, plus the `plugins` and `skills` entries that point into `.naru-native/package`, then deletes `.naru-native`. Agents you edited after installing are kept and listed; every other setting is left alone. It refuses to run, changing nothing, when the install state is incomplete or has unexpected files. It does not remove v1 files; use `naru uninstall --legacy` from Naru 0.9.0 for those.
+`naru uninstall` accepts `--dry-run` and `--dir PATH` like `install`. It removes from `opencode.json` the agents recorded in `.naru-native/ownership.json` that still match what Naru wrote, plus the `plugins` and `skills` entries that point into `.naru-native/package`, then deletes `.naru-native`. Agents you edited after installing are kept and listed; every other setting is left alone. It refuses to run, changing nothing, when the install state is incomplete or has unexpected files. It does not remove v1 files; use `naru uninstall --legacy` from Naru 0.9.0 for those.
 
 The `naru` command itself stays: delete `~/.naru` and remove `~/.naru/bin` from `PATH` to remove it. Restart OpenCode afterwards. There is no `naru rollback` for native installs.
 

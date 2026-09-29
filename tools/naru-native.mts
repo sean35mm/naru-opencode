@@ -7,7 +7,7 @@ import { selectValidModels, TerminalWizardPrompt, WizardCancelled } from './naru
 import { projectOc2NativeAgents } from './naru-lib/oc2-native-projection.mjs';
 
 export async function runNative(argv: string[], sourceRoot: string): Promise<void> {
-    let root = defaultNativeConfigRoot(), apply = false, preview = false, executable = 'opencode';
+    let root = defaultNativeConfigRoot(), apply = false, dryRun = false, executable = 'opencode';
     const args: string[] = [];
     for (let i = 0; i < argv.length; i++) {
         if (argv[i] === '--dir') {
@@ -18,10 +18,11 @@ export async function runNative(argv: string[], sourceRoot: string): Promise<voi
             if (!value || !isAbsolute(value)) throw new Error('--opencode requires an absolute executable path');
             executable = value;
         } else if (argv[i] === '--apply') apply = true;
-        else if (argv[i] === '--preview') preview = true;
+        else if (argv[i] === '--dry-run' || argv[i] === '--preview') dryRun = true;
         else args.push(argv[i]!);
     }
-    if (apply && preview) throw new Error('--preview and --apply cannot be combined');
+    if (apply && dryRun) throw new Error('--dry-run and --apply cannot be combined');
+    apply = !dryRun; // mutating commands apply by default; --apply is accepted as a no-op
     await validateNativeExecutable(executable);
     const command = args.shift() ?? 'install';
     const catalogueEnv = root === defaultNativeConfigRoot() ? process.env : { ...process.env, OPENCODE_CONFIG_DIR: root };
@@ -53,10 +54,10 @@ export async function runNative(argv: string[], sourceRoot: string): Promise<voi
                 const catalogue = await fetchHostCatalogue(server.url, process.cwd(), server.headers);
                 const prompt = new TerminalWizardPrompt();
                 selected = await selectValidModels(prompt, catalogue.models, existing);
-                if (!await prompt.confirm('Save these native worker models?')) throw new WizardCancelled();
+                if (apply && !await prompt.confirm('Save these native worker models?')) throw new WizardCancelled();
             } finally { server.stop(); }
         } else throw new Error('Use naru configure in a terminal, or naru models --set REF[,REF] / --list');
-        if (!apply) { process.stdout.write(`Native worker pool preview: ${selected.join(', ')}\nPreview only; rerun with --apply.${command === 'models' ? ' Availability not checked.' : ''}\n`); return; }
+        if (!apply) { process.stdout.write(`Native worker pool dry run: ${selected.join(', ')}\nDry run; no files changed. Rerun without --dry-run to apply.${command === 'models' ? ' Availability not checked.' : ''}\n`); return; }
         process.stdout.write(`Saved native worker configuration: ${(await nativeModels(root, selected, existing, executable)).join(', ')}\n${command === 'models' ? 'Availability not checked. ' : ''}Restart OpenCode to load changes.\n`);
     } else throw new Error(`Unknown native command: ${command}`);
 }

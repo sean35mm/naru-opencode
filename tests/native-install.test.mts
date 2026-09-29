@@ -22,7 +22,7 @@ test('normal native preview, registration, reinstallation, and model changes pre
         const original = { theme: 'user-theme', provider: { fixture: { key: 'public-placeholder' } }, agent: { custom: { mode: 'subagent' } } };
         await writeFile(paths.configPath, JSON.stringify(original), { mode: 0o644 });
         const before = await readFile(paths.configPath);
-        assert.match(await installNative(root, source, false), /Preview only/);
+        assert.match(await installNative(root, source, false), /Dry run; no files changed/);
         assert.deepEqual(await readFile(paths.configPath), before);
         await assert.rejects(readFile(paths.manifestPath), /ENOENT/);
         assert.match(await installNative(root, source, true), /Installed native/);
@@ -46,27 +46,42 @@ test('normal native preview, registration, reinstallation, and model changes pre
     } finally { process.env.PATH = originalPath; await rm(tmp, { recursive: true, force: true }); }
 });
 
-test('normal CLI honors explicit --dir and previews before apply', async () => {
+test('normal CLI applies by default, and --dry-run writes nothing', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'naru-native-cli-'));
     const bin = join(tmp, 'bin'), root = join(tmp, 'custom-config');
     try {
         await mkdir(bin);
         const host = join(bin, 'opencode'); await writeFile(host, '#!/bin/sh\nprintf "2.0.15\\n"\n'); await chmod(host, 0o700);
         const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: tmp };
-        const command = join(source, 'bin', 'naru');
-        const preview = await run(command, ['install', '--dir', root], { env });
-        assert.match(preview.stdout, /Preview only/);
-        await assert.rejects(readFile(getNativeInstallPaths(root).manifestPath), /ENOENT/);
-        const applied = await run(command, ['install', '--dir', root, '--apply'], { env });
-        assert.match(applied.stdout, /Installed native Naru/);
-        assert.equal(JSON.parse(await readFile(getNativeInstallPaths(root).configPath, 'utf8')).agents.naru.mode, 'primary');
-        const uninstallPreview = await run(command, ['uninstall', '--dir', root], { env });
-        assert.match(uninstallPreview.stdout, /Native uninstall preview.*remove agents: naru.*Not an interactive terminal/s);
-        await lstat(getNativeInstallPaths(root).state);
-        const removed = await run(command, ['uninstall', '--dir', root, '--apply'], { env });
-        assert.match(removed.stdout, /Removed native Naru/);
-        assert.deepEqual(JSON.parse(await readFile(getNativeInstallPaths(root).configPath, 'utf8')), {});
-        for (const args of [['uninstall', '--dir', root], ['uninstall', '--dir', root, '--apply']]) assert.match((await run(command, args, { env })).stdout, /not installed.*Nothing to remove/);
+        const command = join(source, 'bin', 'naru'), paths = getNativeInstallPaths(root);
+        // --dry-run and its --preview alias print the plan and leave the config directory absent.
+        for (const flag of ['--dry-run', '--preview']) {
+            const dryRun = await run(command, ['install', '--dir', root, flag], { env });
+            assert.match(dryRun.stdout, /Dry run; no files changed\. Rerun without --dry-run to apply\./);
+            await assert.rejects(lstat(root), { code: 'ENOENT' });
+        }
+        await assert.rejects(run(command, ['install', '--dir', root, '--dry-run', '--apply'], { env }), /--dry-run and --apply cannot be combined/);
+        await assert.rejects(run(command, ['uninstall', '--dir', root, '--preview', '--apply'], { env }), /cannot be combined/);
+        await assert.rejects(lstat(root), { code: 'ENOENT' });
+        // The default applies immediately, with stdin closed and no prompt.
+        const applied = await run(command, ['install', '--dir', root], { env });
+        assert.match(applied.stdout, /Installed native Naru.*registered: naru agents/s);
+        assert.doesNotMatch(applied.stdout, /\[y\/N\]|Rerun/);
+        assert.equal(JSON.parse(await readFile(paths.configPath, 'utf8')).agents.naru.mode, 'primary');
+        // Dry-run uninstall leaves the config directory byte-identical.
+        const snapshot = async () => Promise.all([paths.configPath, paths.ownershipPath, paths.profilePath, paths.manifestPath].map(path => readFile(path)));
+        const before = await snapshot(), stateBefore = await readdir(paths.state);
+        const uninstallDryRun = await run(command, ['uninstall', '--dir', root, '--dry-run'], { env });
+        assert.match(uninstallDryRun.stdout, /Native uninstall dry run.*remove agents: naru.*Dry run; no files changed/s);
+        assert.deepEqual(await snapshot(), before);
+        assert.deepEqual(await readdir(paths.state), stateBefore);
+        const removed = await run(command, ['uninstall', '--dir', root], { env });
+        assert.match(removed.stdout, /Removed native Naru.*removed agents: naru/s);
+        assert.deepEqual(JSON.parse(await readFile(paths.configPath, 'utf8')), {});
+        // --apply stays accepted as a no-op.
+        assert.match((await run(command, ['install', '--dir', root, '--apply'], { env })).stdout, /Installed native Naru/);
+        assert.match((await run(command, ['uninstall', '--dir', root, '--apply'], { env })).stdout, /Removed native Naru/);
+        for (const args of [['uninstall', '--dir', root], ['uninstall', '--dir', root, '--dry-run']]) assert.match((await run(command, args, { env })).stdout, /not installed.*Nothing to remove/);
         await assert.rejects(run(command, ['doctor', '--dir', root, '--json'], { env }), (error: { stdout?: string }) => {
             const report = JSON.parse(error.stdout ?? '{}');
             assert.deepEqual([report.native.installed, report.native.package, report.native.agents, report.native.registration], [false, 'absent', 'absent', 'absent']);
@@ -86,16 +101,16 @@ test('explicit --opencode selects v2 while PATH remains v1, with a read-only CLI
         await writeFile(v2, '#!/bin/sh\nprintf "opencode v2.0.15\\n"\n'); await chmod(v2, 0o700);
         const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: tmp, XDG_CONFIG_HOME: join(tmp, 'xdg') };
         const cli = join(source, 'bin', 'naru');
-        await assert.rejects(run(cli, ['install', '--preview'], { env }), /requires OpenCode 2.0.15/);
-        const { stdout } = await run(cli, ['install', '--preview', '--opencode', v2], { env });
-        assert.match(stdout, /Native install preview/);
+        await assert.rejects(run(cli, ['install', '--dry-run'], { env }), /requires OpenCode 2.0.15/);
+        const { stdout } = await run(cli, ['install', '--dry-run', '--opencode', v2], { env });
+        assert.match(stdout, /Native install dry run/);
         assert.ok(stdout.includes(root));
         assert.doesNotMatch(stdout, /Apply these changes\?/);
         await assert.rejects(lstat(root), { code: 'ENOENT' });
         for (const args of [['--opencode'], ['--opencode', 'relative/path'], ['--opencode', join(tmp, 'missing')], ['--opencode', v1]]) {
-            await assert.rejects(run(cli, ['install', '--preview', ...args], { env }), /--opencode|requires OpenCode 2.0.15/);
+            await assert.rejects(run(cli, ['install', '--dry-run', ...args], { env }), /--opencode|requires OpenCode 2.0.15/);
         }
-        await assert.rejects(run(cli, ['install', '--preview', '--apply', '--opencode', v2], { env }), /cannot be combined/);
+        await assert.rejects(run(cli, ['install', '--dry-run', '--apply', '--opencode', v2], { env }), /cannot be combined/);
         await assert.rejects(lstat(root), { code: 'ENOENT' });
     } finally { await rm(tmp, { recursive: true, force: true }); }
 });
@@ -114,8 +129,8 @@ writeFileSync(${JSON.stringify(probeHomeFile)}, process.env.HOME);
 console.log('opencode v2.0.15');
 `); await chmod(host, 0o700);
         const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config'), TMPDIR: probes, TMP: probes, TEMP: probes };
-        const { stdout } = await run(join(source, 'bin', 'naru'), ['install', '--preview', '--opencode', host], { env });
-        assert.match(stdout, /Preview only; no files changed/);
+        const { stdout } = await run(join(source, 'bin', 'naru'), ['install', '--dry-run', '--opencode', host], { env });
+        assert.match(stdout, /Dry run; no files changed/);
         const probeHome = await readFile(probeHomeFile, 'utf8');
         assert.notEqual(probeHome, home);
         assert.ok(probeHome.startsWith(probes));
@@ -131,25 +146,25 @@ test('real 2.0.15 previews without fixture writes and saves explicit references 
     try {
         await mkdir(home); await mkdir(probes);
         const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config'), TMPDIR: probes, TMP: probes, TEMP: probes };
-        const { stdout } = await run(join(source, 'bin', 'naru'), ['install', '--preview', '--opencode', process.env.NARU_NATIVE_TEST_REAL_OPENCODE!], { env });
-        assert.match(stdout, /Preview only; no files changed/);
+        const { stdout } = await run(join(source, 'bin', 'naru'), ['install', '--dry-run', '--opencode', process.env.NARU_NATIVE_TEST_REAL_OPENCODE!], { env });
+        assert.match(stdout, /Dry run; no files changed/);
         await assert.rejects(lstat(root), { code: 'ENOENT' });
         assert.deepEqual(await readdir(probes), []);
-        await run(join(source, 'bin', 'naru'), ['install', '--dir', root, '--apply', '--opencode', process.env.NARU_NATIVE_TEST_REAL_OPENCODE!], { env });
+        await run(join(source, 'bin', 'naru'), ['install', '--dir', root, '--opencode', process.env.NARU_NATIVE_TEST_REAL_OPENCODE!], { env });
         const refs = 'fixture/previously-working,fixture/other#fast', cli = join(source, 'bin', 'naru');
         const before = await Promise.all([getNativeInstallPaths(root).configPath, getNativeInstallPaths(root).profilePath].map(path => readFile(path)));
-        const preview = await run(cli, ['models', '--dir', root, '--set', refs, '--preview', '--opencode', process.env.NARU_NATIVE_TEST_REAL_OPENCODE!], { env });
+        const preview = await run(cli, ['models', '--dir', root, '--set', refs, '--dry-run', '--opencode', process.env.NARU_NATIVE_TEST_REAL_OPENCODE!], { env });
         assert.match(preview.stdout, /Availability not checked/);
         for (const [index, path] of [getNativeInstallPaths(root).configPath, getNativeInstallPaths(root).profilePath].entries()) assert.deepEqual(await readFile(path), before[index]);
-        await run(cli, ['models', '--dir', root, '--set', refs, '--apply', '--opencode', process.env.NARU_NATIVE_TEST_REAL_OPENCODE!], { env });
+        await run(cli, ['models', '--dir', root, '--set', refs, '--opencode', process.env.NARU_NATIVE_TEST_REAL_OPENCODE!], { env });
         assert.deepEqual(await nativeModels(root), refs.split(','));
-        await run(cli, ['uninstall', '--dir', root, '--apply'], { env });
+        await run(cli, ['uninstall', '--dir', root], { env });
         assert.deepEqual(JSON.parse(await readFile(getNativeInstallPaths(root).configPath, 'utf8')), {});
         await assert.rejects(lstat(getNativeInstallPaths(root).state), { code: 'ENOENT' });
     } finally { await rm(tmp, { recursive: true, force: true }); }
 });
 
-test('normal CLI explicit models --set previews and saves exact references offline', async () => {
+test('normal CLI explicit models --set dry-runs and saves exact references offline', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'naru-native-model-cli-'));
     const bin = join(tmp, 'bin'), root = join(tmp, 'config'), serveMarker = join(tmp, 'serve-invoked');
     try {
@@ -164,24 +179,24 @@ process.exit(1);
 `); await chmod(host, 0o700);
         const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: tmp };
         const command = join(source, 'bin', 'naru');
-        await run(command, ['install', '--dir', root, '--apply', '--opencode', host], { env });
+        await run(command, ['install', '--dir', root, '--opencode', host], { env });
         const before = await run(command, ['models', '--dir', root, '--list'], { env });
         assert.match(before.stdout, /No native workers selected/);
-        await assert.rejects(run(command, ['models', '--dir', root, '--set', 'fixture/model#fast', '--preview'], { env }), /requires OpenCode 2.0.15/);
+        await assert.rejects(run(command, ['models', '--dir', root, '--set', 'fixture/model#fast', '--dry-run'], { env }), /requires OpenCode 2.0.15/);
         const paths = getNativeInstallPaths(root), original = await Promise.all([paths.configPath, paths.profilePath].map(path => readFile(path)));
         const refs = 'fixture/model#fast,absent/previously-working';
-        const preview = await run(command, ['models', '--dir', root, '--set', refs, '--opencode', host], { env });
-        assert.match(preview.stdout, /Preview only.*Availability not checked/s);
+        const preview = await run(command, ['models', '--dir', root, '--set', refs, '--dry-run', '--opencode', host], { env });
+        assert.match(preview.stdout, /Dry run; no files changed.*Availability not checked/s);
         assert.deepEqual(await nativeModels(root), []);
         for (const [index, path] of [paths.configPath, paths.profilePath].entries()) assert.deepEqual(await readFile(path), original[index]);
-        const saved = await run(command, ['models', '--dir', root, '--set', refs, '--apply', '--opencode', host], { env });
+        const saved = await run(command, ['models', '--dir', root, '--set', refs, '--opencode', host], { env });
         assert.match(saved.stdout, /Saved native worker configuration:.*Availability not checked/s);
         const after = await run(command, ['models', '--dir', root, '--list'], { env });
         assert.equal(after.stdout.trim(), refs.replace(',', '\n'));
         assert.deepEqual(JSON.parse(await readFile(paths.profilePath, 'utf8')).models, refs.split(','));
         const stable = await Promise.all([paths.configPath, paths.profilePath].map(path => readFile(path)));
         for (const invalid of ['fixture/one,fixture/one', 'fixture/one,', 'fixture/../unsafe', 'fixture/one, fixture/two', Array.from({ length: 33 }, (_, index) => `fixture/model${index}`).join(',')]) {
-            await assert.rejects(run(command, ['models', '--dir', root, '--set', invalid, '--apply', '--opencode', host], { env }), /Duplicate native model reference|exact comma-separated|Invalid enrolled catalogue reference|at most 32/);
+            await assert.rejects(run(command, ['models', '--dir', root, '--set', invalid, '--opencode', host], { env }), /Duplicate native model reference|exact comma-separated|Invalid enrolled catalogue reference|at most 32/);
             for (const [index, path] of [paths.configPath, paths.profilePath].entries()) assert.deepEqual(await readFile(path), stable[index]);
         }
         await assert.rejects(lstat(serveMarker), { code: 'ENOENT' });
@@ -312,7 +327,7 @@ test('unresolved upgrade keeps both package generations and the new manifest', a
     } finally { process.env.PATH = oldPath; await rm(tmp, { recursive: true, force: true }); }
 });
 
-test('native uninstall previews, removes only unmodified owned registration, and round-trips', async () => {
+test('native uninstall dry-runs, removes only unmodified owned registration, and round-trips', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'naru-native-uninstall-'));
     const bin = join(tmp, 'bin'), root = join(tmp, 'config'), paths = getNativeInstallPaths(root), oldPath = process.env.PATH;
     try {
@@ -333,7 +348,7 @@ test('native uninstall previews, removes only unmodified owned registration, and
         const snapshot = async () => Promise.all([paths.configPath, paths.ownershipPath, paths.profilePath, paths.manifestPath].map(path => readFile(path)));
         const before = await snapshot(), stateBefore = await readdir(paths.state);
         const preview = await uninstallNative(root, false);
-        assert.match(preview.text, /Preview only; no files changed/);
+        assert.match(preview.text, /Dry run; no files changed/);
         assert.match(preview.text, new RegExp(`keep agents edited since install.*${workers[0]}`));
         assert.deepEqual(await snapshot(), before);
         assert.deepEqual(await readdir(paths.state), stateBefore);

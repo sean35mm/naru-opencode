@@ -2,10 +2,11 @@
 # Install Naru into OpenCode v2.
 #
 # Usage:
-#   ./install.sh [--preview | --apply] [--dir PATH] [--opencode PATH]
+#   ./install.sh [--dry-run] [--dir PATH] [--opencode PATH]
 #
-# Previews by default; pass --apply after reviewing the plan. This script is a
-# thin launcher for the compiled native installer (tools/naru-native.mjs).
+# Applies by default; --dry-run prints the plan only (--apply and --preview are
+# accepted for compatibility). This script is a thin launcher for the compiled
+# native installer (tools/naru-native.mjs).
 set -eu
 
 SRC_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)

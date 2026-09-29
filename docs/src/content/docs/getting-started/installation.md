@@ -18,17 +18,17 @@ The bootstrap downloads a checksum-verified release into `~/.naru` and installs 
 curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstrap.sh | sh -s -- --version vX.Y.Z
 ```
 
-`naru install` prints the plan and asks before applying. `--apply` skips the prompt, `--preview` only prints the plan, `--dir PATH` selects another config directory (one OpenCode actually loads), and `--opencode PATH` names an exact OpenCode executable.
+`naru install` applies immediately and prints what it changed. `--dry-run` only prints the plan, `--dir PATH` selects another config directory (one OpenCode actually loads), and `--opencode PATH` names an exact OpenCode executable. `--apply` and `--preview` are accepted for compatibility.
 
 | Command | Effect |
 | --- | --- |
-| `naru install [--dir PATH]` | Preview the install, then ask |
-| `naru configure [--dir PATH] [--apply]` | Pick worker models from OpenCode's catalogue; preview unless applied |
+| `naru install [--dir PATH] [--dry-run]` | Install and register Naru |
+| `naru configure [--dir PATH] [--dry-run]` | Pick worker models from OpenCode's catalogue and save them |
 | `naru models --list [--dir PATH]` | List the configured worker references |
-| `naru models --set REF[,REF] [--dir PATH] [--apply]` | Preview or save exact worker references offline |
+| `naru models --set REF[,REF] [--dir PATH] [--dry-run]` | Save exact worker references offline |
 | `naru doctor [--dir PATH] [--json]` | Read-only package and registration health |
-| `naru uninstall [--dir PATH]` | Preview the removal, then ask |
-| `naru upgrade` | Download the latest release, then preview the install |
+| `naru uninstall [--dir PATH] [--dry-run]` | Remove Naru's registration and state |
+| `naru upgrade [--dry-run]` | Download the latest release, then install it |
 | `naru version` | Show installed and latest versions |
 
 Releases live under `~/.naru/versions/<version>` with `~/.naru/current` pointing at the active one, so an upgrade keeps the previous release on disk.
@@ -40,27 +40,27 @@ git clone https://github.com/sean35mm/naru-opencode.git
 cd naru-opencode
 npm ci
 npm run build
-sh install.sh --preview
-sh install.sh --apply
+sh install.sh --dry-run   # optional: print the plan only
+sh install.sh
 ```
 
 In a checkout, `install.sh` runs the built copy under `.naru-build/`, so build first.
 
 ## What gets written
 
-- `.naru-native/package/`: a copy (not a symlink) of the compiled tools, the Naru plugin, the `/naru` command, and seven skills. A checkout update changes nothing until you apply another install.
+- `.naru-native/package/`: a copy (not a symlink) of the compiled tools, the Naru plugin, the `/naru` command, and seven skills. A checkout update changes nothing until you run another install.
 - `.naru-native/profile.json`, `ownership.json`, `manifest.json`: the selected worker models, the agents Naru owns, and a hash of every package file.
 - `opencode.json`: the `naru` agent, one agent per configured worker, and the plugin and skills paths. Unrelated settings are preserved and no parent model is set.
 
-Restart OpenCode after applying, choose the coordinator's model in OpenCode, and select `naru` in the agent picker or run `opencode --agent naru`.
+Restart OpenCode after installing, choose the coordinator's model in OpenCode, and select `naru` in the agent picker or run `opencode --agent naru`.
 
 ## Choose workers
 
 A fresh install has no workers. Add them:
 
 ```sh
-naru configure --apply
-naru models --set openai/gpt-5.6-terra#medium,opencode/glm-5-free --apply
+naru configure
+naru models --set openai/gpt-5.6-terra#medium,opencode/glm-5-free
 ```
 
 `naru configure` needs a terminal and reads OpenCode's normal model catalogue. `naru models --set` checks reference syntax, duplicates, and the 32-reference limit offline; it does not check that a model is available to your account. Neither command enables a provider. Restart OpenCode after changing workers. See [agents and workers](/naru-opencode/workflows/agents/) for how the coordinator uses them.
@@ -88,10 +88,10 @@ The doctor checks the observed OpenCode version, the package against its manifes
 
 ```sh
 naru uninstall
-naru uninstall --dir /path/to/opencode-config --apply
+naru uninstall --dir /path/to/opencode-config
 ```
 
-`naru uninstall` prints the plan and asks, like `install`; `--apply` skips the prompt and `--preview` only prints the plan. Applying it:
+`naru uninstall` removes immediately and reports what it removed; `--dry-run` only prints the plan. It:
 
 - removes from `opencode.json` each agent listed in `.naru-native/ownership.json` whose entry still matches what Naru wrote, and the `plugins` and `skills` entries that point into `.naru-native/package`, through the same locked, recoverable write the installer uses;
 - keeps and lists any Naru agent you edited after installing (it is yours now);

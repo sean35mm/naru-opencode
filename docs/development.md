@@ -63,7 +63,7 @@ Sources are `.ts` and `.mts`. `npm run build` type-checks and emits `.js`/`.mjs`
 - Worker rules keep the delivery denies (`git push*`, `gh pr`/`gh issue`/`gh release` mutations) and the `gh api*` ask. Both `naru` and workers keep the `naru-*` and `unslop` skill allows.
 - `naru-github-post-review` and `naru-worktree` refuse any caller other than `naru`.
 - Review posting requires schema v5 for new mutations, derives the event from manifest-bound final evidence, makes one POST attempt, and never retries an ambiguous outcome. v2/v3/v4 remain recognition-only.
-- Install previews by default and writes nothing until `--apply`. It never deletes user or v1 data.
+- Install applies by default; `--dry-run` (alias `--preview`) writes nothing. It never deletes user or v1 data.
 - The doctor stays read-only and provider-free.
 
 ## Tests

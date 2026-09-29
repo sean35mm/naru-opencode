@@ -22,8 +22,9 @@ service, a provider-wide control plane, or a proven speedup.
    Do not reimplement platform infrastructure.
 3. **Local-first.** Orchestration, configuration, and diagnostics stay local unless
    the user explicitly chooses a delivery action.
-4. **Preview before mutation.** Every action that changes a user's machine shows
-   exactly what it will do first. This is the product's identity, not a feature.
+4. **Inspectable mutation.** Every action that changes a user's machine reports
+   exactly what it changed, and supports `--dry-run` to show the plan first. This is
+   the product's identity, not a feature.
 5. **Provider-neutral.** Naru must run on whatever model the user already has.
 6. **Measurable claims.** Tie correctness, cost, and concurrency statements to
    versioned evidence. Never imply a speedup that was not measured.

@@ -65,9 +65,9 @@ test('CLI doctor inspects a packaged native install', async () => {
     const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin` };
     const cli = path.join(root, 'bin', 'naru');
     const invoke = (args: string[]) => spawnSync('sh', [cli, ...args], { cwd: temporary, env, encoding: 'utf8', timeout: 30_000 });
-    const preview = invoke(['install', '--preview']);
-    assert.equal(preview.status, 0, preview.stderr);
-    const install = invoke(['install', '--apply']);
+    const dryRun = invoke(['install', '--dry-run']);
+    assert.equal(dryRun.status, 0, dryRun.stderr);
+    const install = invoke(['install']);
     assert.equal(install.status, 0, install.stderr);
     let doctor = invoke(['doctor', '--json']);
     assert.equal(doctor.status, 0, doctor.stderr + doctor.stdout);

@@ -1,6 +1,6 @@
 #!/bin/sh
 # The Naru command. A thin front door over install.sh, naru-native.mjs and naru-doctor.js:
-# every mutating subcommand previews first and asks before changing anything.
+# mutating subcommands apply immediately; pass --dry-run to print the plan only.
 set -eu
 
 REPO=${NARU_REPO:-sean35mm/naru-opencode}
@@ -27,23 +27,22 @@ Naru — thin hard walls, free interior.
 
 Usage: naru <command> [options]
 
-  install [opts]     Install Naru into OpenCode (previews, then asks)
+  install [opts]     Install Naru into OpenCode
   configure          Select normal native worker models interactively
   models --list|--set REF[,REF]  Inspect or change native worker pool
-  uninstall [opts]   Remove Naru from OpenCode (previews, then asks)
+  uninstall [opts]   Remove Naru from OpenCode
   upgrade [opts]     Fetch the latest release, then install it
   doctor             Report local install and configuration health
   version            Show installed and latest available versions
   help               Show this message
 
-Install/upgrade/uninstall options:
-  --apply            Skip the confirmation prompt (for non-interactive use)
-  --preview          Print the plan and exit without prompting or applying
+Install/upgrade/uninstall/configure/models options:
+  --dry-run          Print the plan and exit without changing anything
   --opencode PATH    Use this absolute OpenCode executable (install/upgrade)
   --dir PATH         Use an exact OpenCode config directory
 
-Everything that changes your machine previews first. Nothing is written
-until you confirm, or pass --apply.
+Commands apply immediately and report what changed. --apply and --preview
+are accepted for compatibility.
 EOF
 }
 
@@ -72,53 +71,27 @@ install_step() {
   sh "$INSTALLER" "$@"
 }
 uninstall_step() {
-  # The native uninstaller exits 3 when Naru is not installed: nothing to confirm.
+  # The native uninstaller exits 3 when Naru is not installed: nothing to remove, not an error.
   status=0
   node "$NATIVE" uninstall "$@" || status=$?
-  [ "$status" -ne 3 ] || { nothing=true; return 0; }
+  [ "$status" -ne 3 ] || return 0
   return "$status"
 }
 
-# Runs a step in preview mode, then asks. `--apply` anywhere in the caller's
-# arguments skips the prompt and applies directly.
-run_previewed() {
-  step=$1
-  shift
+# Sets dry_run for --dry-run/--preview and rejects combining it with --apply.
+parse_flags() {
+  dry_run=false
   apply=false
-  preview=false
-  nothing=false
   for arg in "$@"; do
-    [ "$arg" = --apply ] && apply=true
-    [ "$arg" = --preview ] && preview=true
+    case "$arg" in
+      --dry-run|--preview) dry_run=true ;;
+      --apply) apply=true ;;
+    esac
   done
-  if [ "$apply" = true ] && [ "$preview" = true ]; then
-    echo "naru: --preview and --apply cannot be combined" >&2
+  if [ "$dry_run" = true ] && [ "$apply" = true ]; then
+    echo "naru: --dry-run and --apply cannot be combined" >&2
     exit 2
   fi
-
-  if [ "$apply" = true ]; then
-    # Caller already opted in; pass through untouched.
-    "$step" "$@"
-    return
-  fi
-  "$step" --preview "$@"
-  [ "$preview" = false ] && [ "$nothing" = false ] || return 0
-
-  if [ ! -t 0 ]; then
-    echo
-    echo "Not an interactive terminal. Rerun with --apply to proceed."
-    return
-  fi
-
-  printf '\nApply these changes? [y/N] '
-  read -r reply || reply=""
-  case "$reply" in
-    y|Y|yes|YES)
-      echo
-      "$step" --apply "$@"
-      ;;
-    *) echo "Cancelled. Nothing was changed." ;;
-  esac
 }
 
 command=${1:-help}
@@ -131,17 +104,18 @@ case "$command" in
     exec node "$NATIVE" "$command" "$@"
     ;;
   install)
-    run_previewed install_step "$@"
+    install_step "$@"
     ;;
 
   uninstall)
     need node
     [ -f "$NATIVE" ] || { echo "naru: compiled native installer is unavailable" >&2; exit 1; }
-    run_previewed uninstall_step "$@"
+    uninstall_step "$@"
     ;;
 
   upgrade)
     need curl
+    parse_flags "$@"
     current=$(installed_version)
     latest=$(latest_version)
     if [ -z "$latest" ]; then
@@ -153,7 +127,11 @@ case "$command" in
       echo "Naru ${current} is already the latest release."
       echo "Reinstalling the current version:"
       echo
-      run_previewed install_step "$@"
+      install_step "$@"
+      exit 0
+    fi
+    if [ "$dry_run" = true ]; then
+      echo "Dry run: would download Naru ${plain} and install it into OpenCode. No files changed."
       exit 0
     fi
     echo "Upgrading Naru ${current} -> ${plain}"

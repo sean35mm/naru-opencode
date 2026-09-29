@@ -312,7 +312,7 @@ export async function removeOc2NativeRegistration(adapters: NativeConfigAdapters
         return planNativeRemoval(config, ownership, adapters.nativeAssetRoot);
     };
     if (adapters.preview) {
-        try { await lstat(paths.transaction); throw new Error('Native install has an interrupted transaction; run naru install --apply to recover it, then uninstall'); }
+        try { await lstat(paths.transaction); throw new Error('Native install has an interrupted transaction; run naru install to recover it, then uninstall'); }
         catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error; }
         return plan(await snapshot(paths.configFile, true), await snapshot(paths.ownership), await snapshot(paths.profileState)).plan;
     }

@@ -28,7 +28,7 @@ node .naru-build/scripts/naru-compat-smoke.mjs \
   --source .naru-build --json
 ```
 
-The smoke requires exactly 2.0.15. In a disposable private HOME and XDG tree it previews and applies the install, sets a synthetic worker, runs `naru doctor`, and starts a private OpenCode server with a synthetic model source to confirm the config, agents, plugin, skills, and `/naru` command are registered. It uses no external provider, credentials, or account.
+The smoke requires exactly 2.0.15. In a disposable private HOME and XDG tree it dry-runs and applies the install, sets a synthetic worker, runs `naru doctor`, and starts a private OpenCode server with a synthetic model source to confirm the config, agents, plugin, skills, and `/naru` command are registered. It uses no external provider, credentials, or account.
 
 The capability smoke (macOS only, loopback-only network sandbox) goes further: it loads the plugin in a real 2.0.15 host and exercises the four tools, per-session working directory, skill loading, the managed command, and the worker denial of review posting:
 
