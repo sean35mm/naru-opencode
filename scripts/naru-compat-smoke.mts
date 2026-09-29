@@ -2,20 +2,17 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { chmod, lstat, mkdir, mkdtemp, open, realpath, symlink, writeFile, } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { classifyDashboardEvidence, COMPATIBILITY_POLICY, createCompatibilityEvidence, evaluateOpenCodeVersion, evaluatePlatformTarget, isCompatibilityProfile, sanitizeObservedVersion, } from '../tools/naru-lib/compatibility.mjs';
-import type { CompatibilityCheck, CompatibilityEvidence, CompatibilityCheckStatus, CompatibilityProfile } from '../tools/naru-lib/compatibility.mjs';
-import { coreConfigContractFailures, guardedRemoveDisposableRoot, HOST_CONTRACT_TIMEOUT_MS, runBoundedProcess, runHostContractProbe, signalProcessGroup, stopProcessGroup, validateCoreConfigContract, writeHostContractFixtures, } from '../tools/naru-lib/host-contract-probe.mjs';
+import { fileURLToPath } from 'node:url';
+import { createCompatibilityEvidence, evaluateOpenCodeVersion, evaluatePlatformTarget, isCompatibilityProfile, sanitizeObservedVersion, } from '../tools/naru-lib/compatibility.mjs';
+import type { CompatibilityCheck, CompatibilityEvidence, CompatibilityProfile } from '../tools/naru-lib/compatibility.mjs';
+import { guardedRemoveDisposableRoot, PROCESS_TIMEOUT_MS, runBoundedProcess } from '../tools/naru-lib/bounded-process.mjs';
 import { startPreviewServer } from '../tools/naru-lib/preview-process.mjs';
 import { projectOc2NativeAgents } from '../tools/naru-lib/oc2-native-projection.mjs';
-export { runBoundedProcess } from '../tools/naru-lib/host-contract-probe.mjs';
+export { runBoundedProcess } from '../tools/naru-lib/bounded-process.mjs';
 
 interface CompatibilityCliOptions {
-    bunPath: string | null;
-    dashboard: boolean;
     help?: boolean;
     json: boolean;
     opencodePath: string | null;
@@ -25,8 +22,6 @@ interface CompatibilityCliOptions {
 }
 interface PlatformEvidence { platform?: unknown; arch?: unknown; osId?: unknown; wsl?: unknown }
 export interface CompatibilitySmokeOptions {
-    bunPath?: string | null;
-    dashboard?: boolean;
     opencodePath: string;
     profile: CompatibilityProfile;
     sourcePath: string;
@@ -34,7 +29,6 @@ export interface CompatibilitySmokeOptions {
     platformEvidence?: PlatformEvidence;
 }
 interface CompatibilitySmokeHooks { onDisposableRoot?(root: string): void }
-interface StartupOptions { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }
 interface CommandResult { durationMs: number; status: 'passed' | 'failed'; reason: string | null }
 interface SafeCommand {
     id: string;
@@ -52,42 +46,24 @@ function errorMessage(error: unknown): string {
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-const DEFAULT_TIMEOUT_MS = HOST_CONTRACT_TIMEOUT_MS;
-const MAX_OUTPUT_BYTES = 64 * 1024;
+const DEFAULT_TIMEOUT_MS = PROCESS_TIMEOUT_MS;
 const MAX_AGENT_LIST_OUTPUT_BYTES = 1024 * 1024;
 const CONFIG_MAX_BYTES = 64 * 1024;
 export const OPENCODE_SAFE_COMMANDS: readonly SafeCommand[] = Object.freeze([
     Object.freeze({ id: 'opencode-version', args: Object.freeze(['--version']) }),
-    Object.freeze({ id: 'opencode-help', args: Object.freeze(['--help']) }),
-    Object.freeze({ id: 'opencode-debug-paths', args: Object.freeze(['debug', 'paths']) }),
-    Object.freeze({
-        id: 'opencode-debug-config',
-        args: Object.freeze(['debug', 'config']),
-        maxOutputBytes: MAX_AGENT_LIST_OUTPUT_BYTES,
-        retainOutput: true,
-    }),
-    Object.freeze({
-        id: 'opencode-agent-list',
-        args: Object.freeze(['agent', 'list']),
-        maxOutputBytes: MAX_AGENT_LIST_OUTPUT_BYTES,
-        retainOutput: false,
-    }),
-    Object.freeze({ id: 'opencode-startup', args: Object.freeze(['serve', '--hostname', '127.0.0.1', '--port', '<ephemeral>']) }),
 ]);
 function usage() {
-    return 'Usage: node scripts/naru-compat-smoke.mjs --profile stable|native-v2 --opencode PATH --source PATH [--json] [--output PATH] [--dashboard --bun PATH]\n';
+    return 'Usage: node scripts/naru-compat-smoke.mjs --profile native-v2 --opencode PATH --source PATH [--json] [--output PATH]\n';
 }
 function parseArgs(argv: string[]): CompatibilityCliOptions {
-    const options: CompatibilityCliOptions = { bunPath: null, dashboard: false, json: false, opencodePath: null, output: null, profile: null, sourcePath: null };
+    const options: CompatibilityCliOptions = { json: false, opencodePath: null, output: null, profile: null, sourcePath: null };
     for (let index = 0; index < argv.length; index += 1) {
         const argument = argv[index];
         if (argument === undefined)
             throw new Error('unknown option');
         if (argument === '--json')
             options.json = true;
-        else if (argument === '--dashboard')
-            options.dashboard = true;
-        else if (['--opencode', '--source', '--output', '--bun', '--profile'].includes(argument)) {
+        else if (['--opencode', '--source', '--output', '--profile'].includes(argument)) {
             const value = argv[index + 1];
             if (value === undefined || value.startsWith('-'))
                 throw new Error(`${argument} requires a value`);
@@ -103,8 +79,6 @@ function parseArgs(argv: string[]): CompatibilityCliOptions {
                     throw new Error(`unknown compatibility profile: ${value}`);
                 options.profile = value;
             }
-            else
-                options.bunPath = value;
         }
         else if (argument === '--help' || argument === '-h')
             options.help = true;
@@ -113,10 +87,6 @@ function parseArgs(argv: string[]): CompatibilityCliOptions {
     }
     if (!options.help && (!options.profile || !options.opencodePath || !options.sourcePath))
         throw new Error('--profile, --opencode, and --source are required');
-    if (options.profile !== 'stable' && options.dashboard)
-        throw new Error('--dashboard is available only for historical stable v1');
-    if (options.dashboard !== Boolean(options.bunPath))
-        throw new Error('--dashboard and --bun PATH must be supplied together');
     return options;
 }
 async function executablePath(value: string, label: string): Promise<string> {
@@ -172,7 +142,6 @@ function isolatedEnvironment(root: string, privateBin: string): NodeJS.ProcessEn
         XDG_STATE_HOME: path.join(root, 'state'),
     };
 }
-export const validStableNaruConfig = validateCoreConfigContract;
 function commandCheck(id: string, result: CommandResult): CompatibilityCheck {
     return {
         id,
@@ -180,69 +149,6 @@ function commandCheck(id: string, result: CommandResult): CompatibilityCheck {
         durationMs: result.durationMs,
         diagnostic: result.status === 'passed' ? null : `${id}-${result.reason ?? 'failed'}`,
     };
-}
-async function availablePort() {
-    const server = createServer();
-    await new Promise<void>((resolvePromise, reject) => {
-        server.once('error', reject);
-        server.listen(0, '127.0.0.1', () => resolvePromise());
-    });
-    const address = server.address();
-    await new Promise<void>(resolvePromise => server.close(() => resolvePromise()));
-    if (!address || typeof address === 'string')
-        throw new Error('localhost port allocation failed');
-    return address.port;
-}
-async function startupCheck(executable: string, { cwd, env, timeoutMs }: StartupOptions): Promise<CommandResult> {
-    const started = Date.now();
-    const port = await availablePort();
-    const args = ['serve', '--hostname', '127.0.0.1', '--port', String(port)];
-    let bytes = 0;
-    let overflow = false;
-    let exited = false;
-    const child = spawn(executable, args, { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    const count = (chunk: Buffer) => {
-        bytes += chunk.length;
-        if (bytes > MAX_OUTPUT_BYTES) {
-            overflow = true;
-            signalProcessGroup(child, 'SIGTERM');
-        }
-    };
-    child.stdout.on('data', count);
-    child.stderr.on('data', count);
-    child.once('error', () => { exited = true; });
-    child.once('exit', () => { exited = true; });
-    let passed = false;
-    let reason: string | null = 'startup-timeout';
-    const deadline = Date.now() + timeoutMs;
-    try {
-        while (Date.now() < deadline && !exited && !overflow) {
-            try {
-                const controller = new AbortController();
-                const timer = setTimeout(() => controller.abort(), Math.min(500, Math.max(1, deadline - Date.now())));
-                const response = await fetch(`http://127.0.0.1:${port}/global/health`, { signal: controller.signal });
-                clearTimeout(timer);
-                response.body?.cancel().catch(() => { });
-                if (response.ok) {
-                    passed = true;
-                    reason = null;
-                    break;
-                }
-            }
-            catch {
-                // The bounded local server may still be starting.
-            }
-            await new Promise(resolve => setTimeout(resolve, 50));
-        }
-        if (overflow)
-            reason = 'output-limit';
-        else if (exited && !passed)
-            reason = 'early-exit';
-    }
-    finally {
-        await stopProcessGroup(child);
-    }
-    return { durationMs: Date.now() - started, status: passed ? 'passed' : 'failed', reason };
 }
 async function boundedJson(file: string): Promise<unknown> {
     const stats = await lstat(file);
@@ -365,9 +271,6 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
     const timeoutMs = validateTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     const opencode = await executablePath(options.opencodePath, 'OpenCode');
     const source = await sourceRoot(options.sourcePath);
-    const bun = options.dashboard
-        ? await executablePath(typeof options.bunPath === 'string' ? options.bunPath : '', 'Bun')
-        : null;
     const detected = options.platformEvidence ?? { platform: process.platform, arch: process.arch, ...(await linuxIdentity()) };
     const platform = evaluatePlatformTarget(detected);
     const checks: CompatibilityCheck[] = [{
@@ -377,8 +280,6 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
             diagnostic: platform.reason,
         }];
     const versions = { bun: '', gh: '', git: '', node: process.versions.node, opencode: '' };
-    let dashboardSyntax: CompatibilityCheckStatus = 'omitted';
-    let dashboardRegistration: CompatibilityCheckStatus = 'omitted';
     if (platform.status === 'targeted') {
         const root = await mkdtemp(path.join(await realpath(os.tmpdir()), 'naru-compat-'));
         const privateBin = path.join(root, 'bin');
@@ -402,14 +303,14 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
             let result = await runBoundedProcess(opencode, versionCommand.args, { cwd: project, env: versionEnv, timeoutMs });
             versions.opencode = sanitizeObservedVersion(result.output) ?? '';
             const versionEvaluation = evaluateOpenCodeVersion(options.profile, result.output);
-            const versionAccepted = versionEvaluation.status === 'supported' || (options.profile === 'stable' && versionEvaluation.status === 'candidate');
+            const versionAccepted = versionEvaluation.status === 'supported';
             checks.push({
                 id: versionCommand.id,
                 status: result.status === 'passed' && versionAccepted ? 'passed' : 'failed',
                 durationMs: result.durationMs,
                 diagnostic: result.status !== 'passed' ? `opencode-version-${result.reason}` : versionAccepted ? null : versionEvaluation.status === 'unrecognized' ? 'opencode-version-invalid' : 'opencode-version-not-eligible-for-profile',
             });
-            if (result.status === 'passed' && versionEvaluation.status === 'supported' && options.profile === 'native-v2') {
+            if (result.status === 'passed' && versionAccepted) {
                 const cli = path.join(source, 'bin', 'naru');
                 const invoke = (args: string[]) => runBoundedProcess('/bin/sh', [cli, ...args], { cwd: project, env, timeoutMs });
                 result = await invoke(['install', '--preview']);
@@ -468,131 +369,6 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
                     }
                 }
             }
-            let hostContractMarker = '';
-            if (result.status === 'passed' && (versionEvaluation.status === 'supported' || versionEvaluation.status === 'candidate') && options.profile === 'stable') {
-                const installArgs = [path.join(source, 'install.sh'), '--legacy', '--copy'];
-                if (options.dashboard)
-                    installArgs.push('--with-dashboard');
-                result = await runBoundedProcess('/bin/sh', [...installArgs, '--preview'], { cwd: project, env, timeoutMs });
-            let targetExists = true;
-            try {
-                await lstat(target);
-            }
-            catch (error) {
-                if (errorCode(error) === 'ENOENT')
-                    targetExists = false;
-                else
-                    throw error;
-            }
-            if (targetExists)
-                result = { ...result, status: 'failed', reason: 'preview-mutated-target' };
-            checks.push(commandCheck('install-preview', result));
-            if (result.status === 'passed') {
-                result = await runBoundedProcess('/bin/sh', [...installArgs, '--apply'], { cwd: project, env, timeoutMs });
-                checks.push(commandCheck('install-apply', result));
-                if (result.status === 'passed') await writeFile(path.join(target, 'naru-runtime.json'), JSON.stringify({
-                    schemaVersion: 1,
-                    models: { smoke: { use: 'Provider-free configuration fixture; never execute', chain: ['openai/naru-compat-fixture@high'] } },
-                    review: { defaultProfile: 'release-critical', defaultDecision: 'comment-only', defaultOutput: 'concise' },
-                    mcp: { configuredTools: 'ask' },
-                }), { mode: 0o600 });
-                if (result.status === 'passed') hostContractMarker = await writeHostContractFixtures(target, project);
-            }
-            else {
-                checks.push({ id: 'install-apply', status: 'omitted', durationMs: 0, diagnostic: 'preview-failed' });
-            }
-            const doctorPath = path.join(target, 'tools', 'naru-doctor.js');
-            const doctorEntry = path.join(root, 'doctor-static.mjs');
-            await writeFile(doctorEntry, `import { buildStaticDoctorReport } from ${JSON.stringify(pathToFileURL(doctorPath).href)};\nconst report = await buildStaticDoctorReport({ customDir: null, projectRoot: process.argv[2], sourceRoot: process.argv[3], json: true, legacy: true });\nprocess.stdout.write(JSON.stringify(report));\n`, { mode: 0o600 });
-            result = await runBoundedProcess(process.execPath, [doctorEntry, project, source], {
-                cwd: project,
-                env,
-                timeoutMs,
-            });
-            let doctorValid = false;
-            if (result.output.length <= CONFIG_MAX_BYTES) {
-                try {
-                    const report = JSON.parse(result.output);
-                    const reportRecord = isRecord(report) ? report : {};
-                    const scopes = Array.isArray(reportRecord.scopes) ? reportRecord.scopes.filter(isRecord) : [];
-                    const scope = scopes.find(item => item.id === 'global');
-                    const depth = isRecord(reportRecord.depth) ? reportRecord.depth : {};
-                    const runtime = isRecord(scope?.runtime) ? scope.runtime : {};
-                    doctorValid = reportRecord.providerFree === true
-                        && reportRecord.readOnly === true
-                        && typeof depth.effective === 'number'
-                        && depth.effective >= COMPATIBILITY_POLICY.features.core.minimumSubagentDepth
-                        && typeof runtime.workspaceMode === 'string';
-                }
-                catch {
-                    doctorValid = false;
-                }
-            }
-            checks.push({
-                id: 'naru-doctor',
-                status: result.status === 'passed' && doctorValid ? 'passed' : 'failed',
-                durationMs: result.durationMs,
-                diagnostic: result.status !== 'passed' ? `naru-doctor-${result.reason}` : doctorValid ? null : 'naru-doctor-contract-failed',
-            });
-            for (const command of OPENCODE_SAFE_COMMANDS.slice(1, -1)) {
-                result = await runBoundedProcess(opencode, command.args, {
-                    cwd: project,
-                    env,
-                    ...(command.maxOutputBytes === undefined ? {} : { maxOutputBytes: command.maxOutputBytes }),
-                    ...(command.retainOutput === undefined ? {} : { retainOutput: command.retainOutput }),
-                    timeoutMs,
-                });
-                checks.push(commandCheck(command.id, result));
-                if (command.id === 'opencode-debug-config') {
-                    let parsed: unknown;
-                    try { parsed = result.status === 'passed' ? JSON.parse(result.stdout) : undefined; } catch { /* Invalid effective config fails both contracts. */ }
-                    const coreFailures = result.status === 'passed' ? coreConfigContractFailures(parsed) : ['debug-config-command-failed'];
-                    const coreValid = coreFailures.length === 0;
-                    checks.push({ id: 'core-config', status: coreValid ? 'passed' : 'failed', durationMs: 0, diagnostic: coreValid ? null : coreFailures.join(',') });
-                }
-            }
-            const hostContract = hostContractMarker
-                ? await runHostContractProbe({ executable: opencode, cwd: project, env, marker: hostContractMarker, timeoutMs })
-                : { status: 'failed' as const, diagnostic: 'host-contract-fixture-unavailable', observations: [] };
-            checks.push({ id: 'mcp-contract', status: hostContract.status, durationMs: 0, diagnostic: hostContract.diagnostic });
-            const startupResult = await startupCheck(opencode, { cwd: project, env, timeoutMs });
-            checks.push(commandCheck('opencode-startup', startupResult));
-            if (options.dashboard) {
-                if (!bun)
-                    throw new Error('Bun executable is unavailable');
-                result = await runBoundedProcess(bun, ['--version'], { cwd: project, env, timeoutMs });
-                versions.bun = sanitizeObservedVersion(result.output) ?? '';
-                checks.push(commandCheck('bun-version', result));
-                const output = path.join(root, 'dashboard-build.js');
-                result = await runBoundedProcess(bun, [
-                    'build',
-                    path.join(target, 'plugins', 'naru-minions-dashboard.tsx'),
-                    '--target=bun',
-                    `--outfile=${output}`,
-                    '--external=solid-js',
-                    '--external=@opentui/solid',
-                ], { cwd: project, env, timeoutMs });
-                dashboardSyntax = result.status;
-                checks.push(commandCheck('dashboard-bun-syntax', result));
-                try {
-                    const config = await boundedJson(path.join(target, 'tui.json'));
-                    const plugins = isRecord(config) ? config.plugin : undefined;
-                    const matches = Array.isArray(plugins)
-                        ? plugins.filter(entry => entry === './plugins/naru-minions-dashboard.tsx')
-                        : [];
-                    dashboardRegistration = matches.length === 1 ? 'passed' : 'failed';
-                }
-                catch {
-                    dashboardRegistration = 'failed';
-                }
-                checks.push({
-                    id: 'dashboard-registration',
-                    status: dashboardRegistration,
-                    durationMs: 0,
-                    diagnostic: dashboardRegistration === 'passed' ? null : 'dashboard-registration-invalid',
-                });
-            }
-            }
         }
         catch {
             checks.push({ id: 'harness', status: 'failed', durationMs: 0, diagnostic: 'harness-failed-safely' });
@@ -607,13 +383,7 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
             }
         }
     }
-    const dashboard = classifyDashboardEvidence({
-        requested: Boolean(options.dashboard),
-        bun: versions.bun,
-        syntax: dashboardSyntax,
-        registration: dashboardRegistration,
-    });
-    return createCompatibilityEvidence({ profile: options.profile, platform, versions, checks, dashboard });
+    return createCompatibilityEvidence({ profile: options.profile, platform, versions, checks });
 }
 async function writeOutput(file: string, report: CompatibilityEvidence): Promise<void> {
     const resolved = path.resolve(file);
