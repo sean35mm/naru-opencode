@@ -2,6 +2,20 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.11.0](https://github.com/sean35mm/naru-opencode/compare/v0.10.0...v0.11.0) (2026-09-29)
+
+
+### Features
+
+* add native naru uninstall ([941d845](https://github.com/sean35mm/naru-opencode/commit/941d8451ec89562d2c66262cff04e9b1a1c95169))
+* add native naru uninstall; tidy bootstrap, dead helpers, and preview-era names ([682c979](https://github.com/sean35mm/naru-opencode/commit/682c979a1f3cc348a1612d222f1bedc090b423fa))
+
+
+### Bug Fixes
+
+* **bootstrap:** require Node 24 ([7c1a9f5](https://github.com/sean35mm/naru-opencode/commit/7c1a9f5696a82cdc8e5a34cfef93af34b02f9eeb))
+* **doctor:** report absent agents when Naru is not installed ([b7912d6](https://github.com/sean35mm/naru-opencode/commit/b7912d6c2599fbb2df6ceea3a4401cb575db991c))
+
 ## [0.10.0](https://github.com/sean35mm/naru-opencode/compare/v0.9.0...v0.10.0) (2026-09-29)
 
 
