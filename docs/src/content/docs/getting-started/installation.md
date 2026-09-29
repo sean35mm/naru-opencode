@@ -27,6 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstr
 | `naru models --list [--dir PATH]` | List the configured worker references |
 | `naru models --set REF[,REF] [--dir PATH] [--apply]` | Preview or save exact worker references offline |
 | `naru doctor [--dir PATH] [--json]` | Read-only package and registration health |
+| `naru uninstall [--dir PATH]` | Preview the removal, then ask |
 | `naru upgrade` | Download the latest release, then preview the install |
 | `naru version` | Show installed and latest versions |
 
@@ -85,10 +86,18 @@ The doctor checks the observed OpenCode version, the package against its manifes
 
 ## Uninstall
 
-`naru uninstall` and `naru rollback` are not available for native installs yet; both print manual steps and exit without changing anything. To remove Naru by hand, quit OpenCode, then:
+```sh
+naru uninstall
+naru uninstall --dir /path/to/opencode-config --apply
+```
 
-1. In `~/.config/opencode/opencode.json`, delete the `agents` entries listed in `.naru-native/ownership.json`, and the `plugins` and `skills` entries that point into `.naru-native/package`.
-2. Delete `~/.config/opencode/.naru-native`.
-3. Optionally delete `~/.naru` and remove `~/.naru/bin` from `PATH`.
+`naru uninstall` prints the plan and asks, like `install`; `--apply` skips the prompt and `--preview` only prints the plan. Applying it:
 
-Use your `--dir` path instead of `~/.config/opencode` if you installed elsewhere.
+- removes from `opencode.json` each agent listed in `.naru-native/ownership.json` whose entry still matches what Naru wrote, and the `plugins` and `skills` entries that point into `.naru-native/package`, through the same locked, recoverable write the installer uses;
+- keeps and lists any Naru agent you edited after installing (it is yours now);
+- leaves every other setting untouched, dropping `agents`, `plugins`, or `skills` only if removal empties them;
+- deletes `.naru-native` (package, profile, ownership record, manifest).
+
+If Naru is not installed it says so and changes nothing. If the state is incomplete, unparseable, modified, or contains unexpected files, or `opencode.json` still references a missing `.naru-native`, it stops without changing anything and tells you what to fix. It does not remove v1 files; use `naru uninstall --legacy` from Naru 0.9.0 or delete them by hand.
+
+The `naru` command is not removed: delete `~/.naru` and remove `~/.naru/bin` from `PATH` for that. Restart OpenCode afterwards. `naru rollback` is not available for native installs.

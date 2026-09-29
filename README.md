@@ -84,15 +84,18 @@ naru upgrade           # download the latest release, then the same preview-firs
 naru version
 ```
 
-`naru doctor` does not load the plugin, start a session, or contact a provider. `--dir PATH` works with `install`, `configure`, `models`, and `doctor`. Releases live under `~/.naru/versions/<version>` with `~/.naru/current` pointing at the active one.
+`naru doctor` does not load the plugin, start a session, or contact a provider. `--dir PATH` works with `install`, `uninstall`, `configure`, `models`, and `doctor`. Releases live under `~/.naru/versions/<version>` with `~/.naru/current` pointing at the active one.
 
 ## Uninstall
 
-There is no `naru uninstall` or `naru rollback` for native installs yet; both commands print manual steps and change nothing. To remove Naru by hand, quit OpenCode, then:
+```sh
+naru uninstall            # preview the removal, then ask
+naru uninstall --apply    # remove without prompting
+```
 
-1. In `~/.config/opencode/opencode.json`, delete the `agents` entries listed in `~/.config/opencode/.naru-native/ownership.json`, and the `plugins` and `skills` entries that point into `~/.config/opencode/.naru-native/package`.
-2. Delete `~/.config/opencode/.naru-native`.
-3. Optionally delete `~/.naru` and remove `~/.naru/bin` from `PATH`.
+`naru uninstall` accepts `--preview`, `--apply`, and `--dir PATH` like `install`. It removes from `opencode.json` the agents recorded in `.naru-native/ownership.json` that still match what Naru wrote, plus the `plugins` and `skills` entries that point into `.naru-native/package`, then deletes `.naru-native`. Agents you edited after installing are kept and listed; every other setting is left alone. It refuses to run, changing nothing, when the install state is incomplete or has unexpected files. It does not remove v1 files; use `naru uninstall --legacy` from Naru 0.9.0 for those.
+
+The `naru` command itself stays: delete `~/.naru` and remove `~/.naru/bin` from `PATH` to remove it. Restart OpenCode afterwards. There is no `naru rollback` for native installs.
 
 ## Limits
 

@@ -2,11 +2,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
 import { link, lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { promisify } from 'node:util';
 import { loadGlobalInstructions, validateGlobalInstructionsSetting, type GlobalInstructionsSnapshot } from './global-instructions.mjs';
-import { LEGACY_STANDALONE_NARU_AGENT, ensureOc2NativeDirectories, inspectOc2NativeDirectories, oc2NativePaths, type Oc2NativePaths } from './oc2-profile.mjs';
+import { LEGACY_STANDALONE_NARU_AGENT, ensureOc2NativeDirectories, inspectOc2NativeDirectories, oc2NativePaths, type Oc2NativePaths } from './native-profile.mjs';
 import { NATIVE_MODEL_LIMIT, projectOc2NativeAgents, type NativeAgent } from './oc2-native-projection.mjs';
 import { parseCatalogueReference } from './native-reader-projection.mjs';
 
@@ -263,15 +263,67 @@ async function mergeProjection(configSnapshot: Snapshot, managedSnapshot: Snapsh
     return { config, managed: { schemaVersion: 1, agents: projection.agents } };
 }
 
+function assetEntries(config: Record<string, unknown>, key: 'plugins' | 'skills'): unknown[] {
+    const existing = config[key] === undefined ? [] : config[key];
+    // v2 plugins also accept { package, options } entries; preserve them untouched.
+    const entry = (value: unknown) => typeof value === 'string' || key === 'plugins' && value !== null && typeof value === 'object' && !Array.isArray(value) && typeof (value as Record<string, unknown>).package === 'string';
+    if (!Array.isArray(existing) || !existing.every(entry)) throw new Error(`OpenCode profile ${key} must be an array of ${key === 'plugins' ? 'paths or { package, options } entries' : 'paths'}`);
+    return existing;
+}
 function mergeNativeAssets(config: Record<string, unknown>, root: string, nativeAssetRoot?: string): void {
     const plugin = nativeAssetRoot ? join(nativeAssetRoot, 'tools', 'oc2-native-plugin') : join(root, 'lib', 'tools', 'oc2-native-plugin'), skills = join(plugin, 'skills');
     for (const [key, required] of [['plugins', plugin], ['skills', skills]] as const) {
-        const existing = config[key] === undefined ? [] : config[key];
-        // v2 plugins also accept { package, options } entries; preserve them untouched.
-        const entry = (value: unknown) => typeof value === 'string' || key === 'plugins' && value !== null && typeof value === 'object' && !Array.isArray(value) && typeof (value as Record<string, unknown>).package === 'string';
-        if (!Array.isArray(existing) || !existing.every(entry)) throw new Error(`OpenCode profile ${key} must be an array of ${key === 'plugins' ? 'paths or { package, options } entries' : 'paths'}`);
+        const existing = assetEntries(config, key);
         config[key] = existing.includes(required) ? [...existing] : [...existing, required];
     }
+}
+
+export interface NativeRemovalPlan { removedAgents: string[]; keptAgents: string[]; absentAgents: string[]; removedPlugins: string[]; removedSkills: string[] }
+// Inverse of mergeProjection + mergeNativeAssets: drop owned agents only while they still equal the ownership record,
+// and drop plugin/skills paths inside the native package. Everything else in the config is left as parsed.
+function planNativeRemoval(configSnapshot: Snapshot, managedSnapshot: Snapshot, nativeAssetRoot: string): { plan: NativeRemovalPlan; config: Record<string, unknown> | null } {
+    if (!managedSnapshot.exists) throw new Error('Native ownership record is missing; refusing to guess which agents Naru owns');
+    const managed = readManaged(parseJson(managedSnapshot.bytes!, 'OC2 native ownership metadata'));
+    const plan: NativeRemovalPlan = { removedAgents: [], keptAgents: [], absentAgents: [], removedPlugins: [], removedSkills: [] };
+    if (!configSnapshot.exists) return { plan: { ...plan, absentAgents: Object.keys(managed.agents) }, config: null };
+    const config = object(parseJson(configSnapshot.bytes!, 'OpenCode profile config'), 'OpenCode profile config');
+    const agents = config.agents === undefined ? {} : object(config.agents, 'OpenCode profile agents');
+    for (const [name, owned] of Object.entries(managed.agents)) {
+        if (!Object.hasOwn(agents, name)) plan.absentAgents.push(name);
+        else if (isDeepStrictEqual(agents[name], owned)) { plan.removedAgents.push(name); delete agents[name]; }
+        else plan.keptAgents.push(name);
+    }
+    if (plan.removedAgents.length && !Object.keys(agents).length) delete config.agents;
+    const inside = (value: unknown) => typeof value === 'string' && (value === nativeAssetRoot || value.startsWith(nativeAssetRoot + sep));
+    for (const [key, removed] of [['plugins', plan.removedPlugins], ['skills', plan.removedSkills]] as const) {
+        const existing = assetEntries(config, key);
+        removed.push(...existing.filter(inside) as string[]);
+        if (!removed.length) continue;
+        const remaining = existing.filter(value => !inside(value));
+        if (remaining.length) config[key] = remaining; else delete config[key];
+    }
+    return { plan, config };
+}
+export async function removeOc2NativeRegistration(adapters: NativeConfigAdapters & { nativePaths: Oc2NativePaths; nativeAssetRoot: string }): Promise<NativeRemovalPlan> {
+    const paths = adapters.nativePaths;
+    const plan = (config: Snapshot, ownership: Snapshot, profile: Snapshot) => {
+        if (!profile.exists) throw new Error('Native model profile is missing; refusing to uninstall a partial install');
+        readProfile(parseJson(profile.bytes!, 'OC2 native model profile'));
+        return planNativeRemoval(config, ownership, adapters.nativeAssetRoot);
+    };
+    if (adapters.preview) {
+        try { await lstat(paths.transaction); throw new Error('Native install has an interrupted transaction; run naru install --apply to recover it, then uninstall'); }
+        catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error; }
+        return plan(await snapshot(paths.configFile, true), await snapshot(paths.ownership), await snapshot(paths.profileState)).plan;
+    }
+    return commitNativeTransaction(paths, adapters, async ({ config: configSnapshot, ownership, profile }) => {
+        const { plan: result, config } = plan(configSnapshot, ownership, profile);
+        const { removedAgents, removedPlugins, removedSkills } = result;
+        if (!config || !removedAgents.length && !removedPlugins.length && !removedSkills.length) return { result, values: null };
+        const next = Buffer.from(JSON.stringify(config, null, 2) + '\n');
+        // Ownership is emptied (not deleted) so a crash before the state directory is removed leaves a clean reinstall.
+        return { result, values: { config: next, ownership: Buffer.from(JSON.stringify({ schemaVersion: 1, agents: {} } satisfies ManagedProjection, null, 2) + '\n'), profile: profile.bytes! } };
+    });
 }
 
 const transactionKeys = ['config', 'ownership', 'profile'] as const;
@@ -368,13 +420,7 @@ export async function updateOc2NativeProfile(root: string, models?: readonly str
         mergeNativeAssets(merged.config, root, adapters.nativeAssetRoot);
         return profile.exists ? { ...readProfile(parseJson(profile.bytes!, 'Native model profile')), models: selected } : { schemaVersion: 2, models: selected, preferences: {}, instructions: null };
     }
-    const release = await acquire(paths, adapters.processIdentity ?? nativeProcessIdentity, adapters);
-    let committed = false;
-    try {
-        await adapters.afterLockAcquired?.();
-        await cleanupTransactionStaging(paths);
-        await recoverTransaction(paths);
-        const profileSnapshot = await snapshot(paths.profileState), configSnapshot = await snapshot(paths.configFile, !!adapters.nativePaths), managedSnapshot = await snapshot(paths.ownership);
+    return commitNativeTransaction(paths, adapters, async ({ config: configSnapshot, ownership: managedSnapshot, profile: profileSnapshot }) => {
         if (adapters.expectedModels !== undefined) {
             const observed = profileSnapshot.exists ? readProfile(parseJson(profileSnapshot.bytes!, 'OC2 native model profile')).models : null;
             if (!isDeepStrictEqual(observed, adapters.expectedModels)) throw new Error('Global native worker models changed while configuring; rerun model selection before saving');
@@ -399,9 +445,26 @@ export async function updateOc2NativeProfile(root: string, models?: readonly str
             ownership: Buffer.from(JSON.stringify(merged.managed, null, 2) + '\n'),
             profile: Buffer.from(JSON.stringify(next, null, 2) + '\n'),
         };
-        if (configSnapshot.exists && configSnapshot.bytes!.equals(values.config) && managedSnapshot.exists && managedSnapshot.bytes!.equals(values.ownership) && profileSnapshot.exists && profileSnapshot.bytes!.equals(values.profile)) return next;
+        const unchanged = configSnapshot.exists && configSnapshot.bytes!.equals(values.config) && managedSnapshot.exists && managedSnapshot.bytes!.equals(values.ownership) && profileSnapshot.exists && profileSnapshot.bytes!.equals(values.profile);
+        return { result: next, values: unchanged ? null : values };
+    });
+}
+
+type TransactionSnapshots = Record<TransactionEntry['key'], Snapshot>;
+type TransactionValues = Record<TransactionEntry['key'], Buffer>;
+// The single native write path: lock, recover any interrupted transaction, build the next config/ownership/profile
+// bytes from fresh snapshots, then commit all three through the recoverable transaction. `values: null` skips the write.
+async function commitNativeTransaction<T>(paths: Oc2NativePaths, adapters: NativeConfigAdapters, build: (snapshots: TransactionSnapshots) => Promise<{ result: T; values: TransactionValues | null }>): Promise<T> {
+    const release = await acquire(paths, adapters.processIdentity ?? nativeProcessIdentity, adapters);
+    let committed = false;
+    try {
+        await adapters.afterLockAcquired?.();
+        await cleanupTransactionStaging(paths);
+        await recoverTransaction(paths);
+        const originals: TransactionSnapshots = { profile: await snapshot(paths.profileState), config: await snapshot(paths.configFile, !!adapters.nativePaths), ownership: await snapshot(paths.ownership) };
+        const { result, values } = await build(originals);
+        if (!values) return result;
         await adapters.beforeConfigCommit?.();
-        const originals = { config: configSnapshot, ownership: managedSnapshot, profile: profileSnapshot };
         for (const key of transactionKeys) if (!same(originals[key], await snapshot(targetFor(paths, key), key === 'config' && !!adapters.nativePaths))) throw new Error(`${basename(targetFor(paths, key))} changed concurrently; refusing to start the transaction`);
         await prepareTransaction(paths, originals, values, adapters);
         await adapters.afterTransactionPublished?.();
@@ -416,10 +479,10 @@ export async function updateOc2NativeProfile(root: string, models?: readonly str
             let recovery: Awaited<ReturnType<typeof recoverTransaction>>;
             try { recovery = await recoverTransaction(paths); }
             catch (recoveryError) { throw new NativeProfileRecoveryRequiredError(paths.transaction, recoveryError); }
-            if (recovery === 'committed') { committed = true; return next; }
+            if (recovery === 'committed') { committed = true; return result; }
             throw error;
         }
-        return next;
+        return result;
     } catch (error) {
         if (error instanceof NativeProfileRecoveryRequiredError) throw error;
         try { await lstat(paths.transaction); }

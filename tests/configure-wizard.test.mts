@@ -6,11 +6,11 @@ import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { renderPromptValue, selectValidModels, TerminalWizardPrompt, WizardCancelled, type WizardPrompt } from '../tools/naru-lib/preview-wizard.mjs';
-import type { PreviewCatalogue } from '../tools/naru-lib/preview-process.mjs';
+import { renderPromptValue, selectValidModels, TerminalWizardPrompt, WizardCancelled, type WizardPrompt } from '../tools/naru-lib/configure-wizard.mjs';
+import type { HostCatalogue } from '../tools/naru-lib/host-process.mjs';
 
 const model = { id: 'tool_worker', providerID: 'fixture', name: 'Tool Worker', reference: 'fixture/tool_worker', capabilities: { tools: true, input: ['text'], output: ['text'] }, variantIDs: ['fast'] };
-const catalogue: PreviewCatalogue = { models: [model], providers: [{ id: 'fixture', name: 'Fixture', activation: 'enabled' }], observedAt: '2026-09-08T00:00:00.000Z', metadataFreshness: 'unknown', accountAccess: 'unknown' };
+const catalogue: HostCatalogue = { models: [model], providers: [{ id: 'fixture', name: 'Fixture', activation: 'enabled' }], observedAt: '2026-09-08T00:00:00.000Z', metadataFreshness: 'unknown', accountAccess: 'unknown' };
 const built = join(dirname(fileURLToPath(import.meta.url)), '..');
 const supportsPty = process.platform === 'darwin' || process.platform === 'linux';
 
@@ -126,7 +126,7 @@ test('native Clack model picker filters live, preserves hidden selections, toggl
     try {
         await cp(join(built, 'tools'), join(isolated, 'tools'), { recursive: true });
         await assert.rejects(lstat(join(isolated, 'node_modules')), { code: 'ENOENT' });
-        const module = pathToFileURL(join(isolated, 'tools', 'naru-lib', 'preview-wizard.mjs')).href;
+        const module = pathToFileURL(join(isolated, 'tools', 'naru-lib', 'configure-wizard.mjs')).href;
         const models = [
             { id: 'alpha', providerID: 'fixture', name: 'Alpha Worker', reference: 'fixture/alpha', variantIDs: [] },
             { id: 'beta', providerID: 'second', name: 'Beta Worker', reference: 'second/beta', variantIDs: [] },
@@ -144,7 +144,7 @@ console.log('NARU_RESULT:' + JSON.stringify({ value, raw: process.stdin.isRaw, l
 });
 
 test('native Clack offers all advertised variants only for catalogue models with variants', { skip: !supportsPty }, async () => {
-    const module = pathToFileURL(join(built, 'tools', 'naru-lib', 'preview-wizard.mjs')).href;
+    const module = pathToFileURL(join(built, 'tools', 'naru-lib', 'configure-wizard.mjs')).href;
     const source = `import { TerminalWizardPrompt, selectValidModels } from ${JSON.stringify(module)};
  const models=[{id:'plain',providerID:'fixture',name:'Plain Worker',reference:'fixture/plain',variantIDs:[]},{id:'fast',providerID:'fixture',name:'Fast Worker',reference:'fixture/fast',variantIDs:['none','low','high']}];
  const value=await selectValidModels(new TerminalWizardPrompt(),models,[]);
@@ -156,7 +156,7 @@ test('native Clack offers all advertised variants only for catalogue models with
 });
 
 test('native text, arrow menu, and safe-default confirmation use the expected terminal keys', { skip: !supportsPty }, async () => {
-    const module = pathToFileURL(join(built, 'tools', 'naru-lib', 'preview-wizard.mjs')).href;
+    const module = pathToFileURL(join(built, 'tools', 'naru-lib', 'configure-wizard.mjs')).href;
     const source = `import { TerminalWizardPrompt } from ${JSON.stringify(module)};
 const prompt = new TerminalWizardPrompt(); const path = await prompt.input('Repository path:');
 const access = await prompt.choose('Repository access policy:', [{ value: 'inspect', label: 'Inspect only' }, { value: 'write', label: 'Scoped edits' }]);

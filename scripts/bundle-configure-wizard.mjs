@@ -5,12 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const output = join(root, '.naru-build', 'tools', 'naru-lib', 'preview-wizard.mjs');
+const output = join(root, '.naru-build', 'tools', 'naru-lib', 'configure-wizard.mjs');
 const temporary = `${output}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`;
 
 try {
   await build({
-    entryPoints: [join(root, 'tools', 'naru-lib', 'preview-wizard.mts')],
+    entryPoints: [join(root, 'tools', 'naru-lib', 'configure-wizard.mts')],
     outfile: temporary,
     bundle: true,
     platform: 'node',

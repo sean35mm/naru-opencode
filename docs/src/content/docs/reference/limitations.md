@@ -70,6 +70,6 @@ Everything else, including file edits and ordinary shell commands, follows your 
 
 **Doctor.** `naru doctor` checks the package, agents, and registration on disk. It does not load the plugin or start a session.
 
-**Uninstall.** There is no native uninstall or rollback yet; see [installation](/naru-opencode/getting-started/installation/#uninstall).
+**Uninstall.** `naru uninstall` keeps Naru agents you edited after installing and never removes v1 files or the `naru` command. There is no native rollback; see [installation](/naru-opencode/getting-started/installation/#uninstall).
 
 See [agents and workers](/naru-opencode/workflows/agents/) for the permission rules and [review lane](/naru-opencode/workflows/review-lane/) for the posting contract.

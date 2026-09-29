@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { createCompatibilityEvidence, evaluateOpenCodeVersion, evaluatePlatformTarget, isCompatibilityProfile, sanitizeObservedVersion, } from '../tools/naru-lib/compatibility.mjs';
 import type { CompatibilityCheck, CompatibilityEvidence, CompatibilityProfile } from '../tools/naru-lib/compatibility.mjs';
 import { guardedRemoveDisposableRoot, PROCESS_TIMEOUT_MS, runBoundedProcess } from '../tools/naru-lib/bounded-process.mjs';
-import { startPreviewServer } from '../tools/naru-lib/preview-process.mjs';
+import { startHostServer } from '../tools/naru-lib/host-process.mjs';
 import { projectOc2NativeAgents } from '../tools/naru-lib/oc2-native-projection.mjs';
 export { runBoundedProcess } from '../tools/naru-lib/bounded-process.mjs';
 
@@ -253,10 +253,10 @@ export async function checkNativeHostRoutes(url: string, headers: Record<string,
 }
 async function checkNativeInstalledHost(opencode: string, project: string, env: NodeJS.ProcessEnv, root: string, configPath: string, pluginPath: string, models: readonly string[], timeoutMs: number): Promise<CompatibilityCheck[]> {
     const started = Date.now();
-    let server: Awaited<ReturnType<typeof startPreviewServer>> | undefined;
+    let server: Awaited<ReturnType<typeof startHostServer>> | undefined;
     try {
         const source = path.join(root, 'native-models.json');
-        server = await startPreviewServer(opencode, project, { ...env, OPENCODE_DISABLE_MODELS_FETCH: 'true', OPENCODE_MODELS_PATH: source }, 'catalogue');
+        server = await startHostServer(opencode, project, { ...env, OPENCODE_DISABLE_MODELS_FETCH: 'true', OPENCODE_MODELS_PATH: source }, 'catalogue');
         const startup: CompatibilityCheck = { id: 'native-host-startup', status: 'passed', durationMs: Date.now() - started, diagnostic: null };
         return [startup, ...await checkNativeHostRoutes(server.url, server.headers, project, configPath, pluginPath,
             models.length === 1 && models[0] === NATIVE_FIXTURE_WORKER ? [{ name: NATIVE_WORKER_NAME, model: NATIVE_HOST_MODEL }] : [], timeoutMs)];

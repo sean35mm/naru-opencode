@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultNativeConfigRoot, installNative, nativeModels, validateNativeExecutable, verifyNativeHostVersion } from './naru-lib/native-install.mjs';
-import { fetchPreviewCatalogue, startPreviewServer } from './naru-lib/preview-process.mjs';
-import { selectValidModels, TerminalWizardPrompt, WizardCancelled } from './naru-lib/preview-wizard.mjs';
+import { defaultNativeConfigRoot, installNative, nativeModels, uninstallNative, validateNativeExecutable, verifyNativeHostVersion } from './naru-lib/native-install.mjs';
+import { fetchHostCatalogue, startHostServer } from './naru-lib/host-process.mjs';
+import { selectValidModels, TerminalWizardPrompt, WizardCancelled } from './naru-lib/configure-wizard.mjs';
 import { projectOc2NativeAgents } from './naru-lib/oc2-native-projection.mjs';
 
 export async function runNative(argv: string[], sourceRoot: string): Promise<void> {
@@ -28,6 +28,12 @@ export async function runNative(argv: string[], sourceRoot: string): Promise<voi
     if (command === 'install') {
         if (args.length) throw new Error(`Unsupported native install option: ${args[0]}`);
         process.stdout.write(await installNative(root, sourceRoot, apply, undefined, {}, executable) + '\n');
+    } else if (command === 'uninstall') {
+        if (args.length) throw new Error(`Unsupported native uninstall option: ${args[0]}`);
+        const result = await uninstallNative(root, apply);
+        process.stdout.write(result.text + '\n');
+        // bin/naru reads 3 as "nothing to confirm" and exits 0.
+        if (!result.installed) process.exitCode = 3;
     } else if (command === 'models' || command === 'configure') {
         if (command === 'models' && args.length === 1 && args[0] === '--list') {
             const models = await nativeModels(root);
@@ -42,9 +48,9 @@ export async function runNative(argv: string[], sourceRoot: string): Promise<voi
             if (!selected.length || selected.some(value => !value)) throw new Error('models --set requires exact comma-separated references');
             projectOc2NativeAgents(selected);
         } else if (!args.length && process.stdin.isTTY && process.stdout.isTTY) {
-            const server = await startPreviewServer(executable, process.cwd(), catalogueEnv, 'catalogue');
+            const server = await startHostServer(executable, process.cwd(), catalogueEnv, 'catalogue');
             try {
-                const catalogue = await fetchPreviewCatalogue(server.url, process.cwd(), server.headers);
+                const catalogue = await fetchHostCatalogue(server.url, process.cwd(), server.headers);
                 const prompt = new TerminalWizardPrompt();
                 selected = await selectValidModels(prompt, catalogue.models, existing);
                 if (!await prompt.confirm('Save these native worker models?')) throw new WizardCancelled();

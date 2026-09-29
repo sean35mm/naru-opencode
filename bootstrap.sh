@@ -50,8 +50,8 @@ need node
 
 # Naru's installer runs on Node. Fail early rather than half-installing.
 node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
-if [ "$node_major" -lt 20 ]; then
-  echo "bootstrap: Node 20 or newer is required (found $(node -v 2>/dev/null || echo none))" >&2
+if [ "$node_major" -lt 24 ]; then
+  echo "bootstrap: Node 24 or newer is required; Naru targets Node 24 (found $(node -v 2>/dev/null || echo none))" >&2
   exit 1
 fi
 

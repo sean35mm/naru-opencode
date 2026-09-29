@@ -1,4 +1,4 @@
-import { isSafeCatalogueModelID } from './preview-process.mjs';
+import { isSafeCatalogueModelID } from './host-process.mjs';
 
 export const MAX_CATALOGUE_REFERENCE_LENGTH = 128 + 1 + 512 + 1 + 128;
 

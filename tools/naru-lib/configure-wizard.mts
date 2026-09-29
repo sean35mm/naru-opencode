@@ -1,12 +1,12 @@
 import { autocompleteMultiselect, confirm as clackConfirm, isCancel, select, text } from '@clack/prompts';
 import type { Readable, Writable } from 'node:stream';
-import type { PreviewCatalogueModel } from './preview-process.mjs';
+import type { HostCatalogueModel } from './host-process.mjs';
 export interface WizardPrompt {
     message(value: string): void;
     input(label: string): Promise<string>;
     choose<T extends string>(label: string, choices: Array<{ value: T; label: string }>): Promise<T>;
     confirm(label: string): Promise<boolean>;
-    selectModels(models: PreviewCatalogueModel[], initial: string[]): Promise<string[]>;
+    selectModels(models: HostCatalogueModel[], initial: string[]): Promise<string[]>;
 }
 
 export class WizardCancelled extends Error { constructor(readonly authenticationMayHaveChanged = false) { super('Naru setup cancelled'); } }
@@ -59,7 +59,7 @@ export class TerminalWizardPrompt implements WizardPrompt {
             input: this.inputStream, output: this.outputStream, signal,
         }));
     }
-    async selectModels(models: PreviewCatalogueModel[], initial: string[]): Promise<string[]> {
+    async selectModels(models: HostCatalogueModel[], initial: string[]): Promise<string[]> {
         const options = models.flatMap(model => [{ reference: model.reference, label: `${renderPromptValue(model.name)} · ${renderPromptValue(model.reference)}`, search: `${model.name} ${model.providerID} ${model.id} ${model.reference}` },
             ...(model.variantIDs.length ? [{ reference: allVariants(model.reference), label: `${renderPromptValue(model.name)} / all ${model.variantIDs.length} advertised variants · ${renderPromptValue(model.reference)}`, search: `${model.name} ${model.providerID} ${model.id} ${model.reference} all variants` }] : []),
             ...model.variantIDs.map(id => ({ reference: `${model.reference}#${id}`, label: `${renderPromptValue(model.name)} / ${renderPromptValue(id)} · ${renderPromptValue(model.reference)}#${renderPromptValue(id)}`, search: `${model.name} ${model.providerID} ${model.id} ${model.reference} ${id}` }))]);
@@ -77,7 +77,7 @@ export class TerminalWizardPrompt implements WizardPrompt {
     private visibleRows(): number { const rows = 'rows' in this.outputStream && typeof this.outputStream.rows === 'number' ? this.outputStream.rows : 20; return Math.max(1, Math.min(10, rows - 8)); }
 }
 
-function validateSelection(models: string[], catalogueModels: PreviewCatalogueModel[], trustedUnavailable: Iterable<string>): void {
+function validateSelection(models: string[], catalogueModels: HostCatalogueModel[], trustedUnavailable: Iterable<string>): void {
     const eligible = new Set(catalogueModels.flatMap(model => [model.reference, ...model.variantIDs.map(id => `${model.reference}#${id}`)]));
     const allowedUnavailable = new Set([...trustedUnavailable].filter(reference => !eligible.has(reference)));
     if (!models.length) throw new Error('Choose at least one worker reference.');
@@ -89,7 +89,7 @@ function validateSelection(models: string[], catalogueModels: PreviewCatalogueMo
     if (unavailable.length) throw new Error(`Worker references not offered by this catalogue and not previously approved as unavailable: ${unavailable.map(model => JSON.stringify(renderPromptValue(model))).join(', ')}.`);
 }
 
-export async function selectValidModels(prompt: WizardPrompt, catalogueModels: PreviewCatalogueModel[], retained: string[], trustedUnavailable: Iterable<string> = retained): Promise<string[]> {
+export async function selectValidModels(prompt: WizardPrompt, catalogueModels: HostCatalogueModel[], retained: string[], trustedUnavailable: Iterable<string> = retained): Promise<string[]> {
     const eligible = new Set(catalogueModels.flatMap(model => [model.reference, ...model.variantIDs.map(id => `${model.reference}#${id}`)]));
     const trusted = new Set(trustedUnavailable), groups = new Map(catalogueModels.filter(model => model.variantIDs.length).map(model => [allVariants(model.reference), model.variantIDs.map(id => `${model.reference}#${id}`)]));
     const allowed = new Set([...eligible, ...groups.keys(), ...[...trusted].filter(reference => !eligible.has(reference))]);

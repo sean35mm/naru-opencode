@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
-import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, truncate, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { copyVerificationSnapshot, fetchPreviewCatalogue, isSafeCatalogueModelID, isolatedCheck, nodeSpawner, cleanProcessEnvironment, runtimeReadRoot, startPreviewServer, waitForPreviewReadiness } from '../tools/naru-lib/preview-process.mjs';
-import { pathContains, protectedPathContains } from '../tools/naru-lib/safe-write.mjs';
+import { fetchHostCatalogue, isSafeCatalogueModelID, nodeSpawner, cleanProcessEnvironment, startHostServer, waitForHostReadiness } from '../tools/naru-lib/host-process.mjs';
 const built = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 test('native smoke scripts reject wrappers before execution or fixture root creation', { skip: process.platform !== 'darwin' }, async () => {
@@ -44,7 +43,7 @@ async function readinessApi(responses: unknown[]) {
 test('auth readiness waits for an interactive method and uses model discovery only as a hint', async () => {
     const api = await readinessApi([{ data: [] }, { data: [{ methods: [{ type: 'env', names: ['FIXTURE_KEY'] }] }] }, { data: [{ methods: [{ type: 'oauth', id: 'fixture' }] }] }]);
     try {
-        await waitForPreviewReadiness(api.url, '/synthetic/workspace', {}, 'auth', { deadlineMs: 1000, requestTimeoutMs: 100, pollIntervalMs: 5 });
+        await waitForHostReadiness(api.url, '/synthetic/workspace', {}, 'auth', { deadlineMs: 1000, requestTimeoutMs: 100, pollIntervalMs: 5 });
         assert.deepEqual(api.counts(), { integrationRequests: 3, modelRequests: 1 });
     } finally { await api.close(); }
 });
@@ -52,7 +51,7 @@ test('auth readiness waits for an interactive method and uses model discovery on
 test('auth readiness accepts every interactive method in the pinned beta schema', async () => {
     for (const type of ['command', 'key', 'oauth']) {
         const api = await readinessApi([{ data: [{ methods: [{ type }] }] }]);
-        try { await waitForPreviewReadiness(api.url, '/synthetic/workspace', {}, 'auth', { deadlineMs: 100, requestTimeoutMs: 20, pollIntervalMs: 5 }); }
+        try { await waitForHostReadiness(api.url, '/synthetic/workspace', {}, 'auth', { deadlineMs: 100, requestTimeoutMs: 20, pollIntervalMs: 5 }); }
         finally { await api.close(); }
     }
 });
@@ -60,7 +59,7 @@ test('auth readiness accepts every interactive method in the pinned beta schema'
 test('auth readiness fails closed at its deadline for empty and env-only catalogues', async () => {
     for (const response of [{ data: [] }, { data: [{ methods: [{ type: 'env', names: ['FIXTURE_KEY'] }] }] }]) {
         const api = await readinessApi([response]);
-        try { await assert.rejects(waitForPreviewReadiness(api.url, '/synthetic/workspace', {}, 'auth', { deadlineMs: 40, requestTimeoutMs: 20, pollIntervalMs: 5 }), /readiness timed out/); }
+        try { await assert.rejects(waitForHostReadiness(api.url, '/synthetic/workspace', {}, 'auth', { deadlineMs: 40, requestTimeoutMs: 20, pollIntervalMs: 5 }), /readiness timed out/); }
         finally { await api.close(); }
     }
 });
@@ -68,7 +67,7 @@ test('auth readiness fails closed at its deadline for empty and env-only catalog
 test('auth readiness rejects HTTP errors and malformed API responses', async () => {
     for (const response of ['http-error', 'malformed-json', { data: [{ methods: [{}] }] }, { data: [{ methods: [{ type: '' }] }] }, { data: [{ methods: [{ type: 'pending' }] }] }]) {
         const api = await readinessApi([response]);
-        try { await assert.rejects(waitForPreviewReadiness(api.url, '/synthetic/workspace', {}, 'auth', { deadlineMs: 100, requestTimeoutMs: 20, pollIntervalMs: 5 }), /auth readiness failed/); }
+        try { await assert.rejects(waitForHostReadiness(api.url, '/synthetic/workspace', {}, 'auth', { deadlineMs: 100, requestTimeoutMs: 20, pollIntervalMs: 5 }), /auth readiness failed/); }
         finally { await api.close(); }
     }
 });
@@ -82,7 +81,7 @@ test('catalogue readiness uses the authenticated public activation endpoint with
     await new Promise<void>(resolvePromise => server.listen(0, '127.0.0.1', resolvePromise));
     const address = server.address(); assert.ok(address && typeof address === 'object');
     try {
-        await waitForPreviewReadiness(`http://127.0.0.1:${address.port}`, '/synthetic workspace/ü', { authorization: 'Basic synthetic' }, 'catalogue', { deadlineMs: 100, requestTimeoutMs: 100 });
+        await waitForHostReadiness(`http://127.0.0.1:${address.port}`, '/synthetic workspace/ü', { authorization: 'Basic synthetic' }, 'catalogue', { deadlineMs: 100, requestTimeoutMs: 100 });
         assert.deepEqual(requests, [{ method: 'POST', url: '/api/plugin/await-activation?location%5Bdirectory%5D=%2Fsynthetic%20workspace%2F%C3%BC', authorization: 'Basic synthetic' }]);
     } finally { await new Promise<void>((resolvePromise, reject) => server.close(error => error ? reject(error) : resolvePromise())); }
 });
@@ -92,7 +91,7 @@ test('catalogue readiness requires an exact 204 response', async () => {
     const server = http.createServer((_request, response) => { response.writeHead(200).end('{}'); });
     await new Promise<void>(resolvePromise => server.listen(0, '127.0.0.1', resolvePromise));
     const address = server.address(); assert.ok(address && typeof address === 'object');
-    try { await assert.rejects(waitForPreviewReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', { deadlineMs: 100, requestTimeoutMs: 50 }), /activation failed \(200\)/); }
+    try { await assert.rejects(waitForHostReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', { deadlineMs: 100, requestTimeoutMs: 50 }), /activation failed \(200\)/); }
     finally { server.closeAllConnections(); await new Promise<void>(resolvePromise => server.close(() => resolvePromise())); }
 });
 
@@ -108,7 +107,7 @@ test('catalogue readiness waits for plugin activation when v2 omits the old endp
     await new Promise<void>(resolvePromise => server.listen(0, '127.0.0.1', resolvePromise));
     const address = server.address(); assert.ok(address && typeof address === 'object');
     try {
-        await waitForPreviewReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', { pollIntervalMs: 1 });
+        await waitForHostReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', { pollIntervalMs: 1 });
         assert.deepEqual(requests, ['POST /api/plugin/await-activation?location%5Bdirectory%5D=%2Ffixture', 'GET /api/plugin?location%5Bdirectory%5D=%2Ffixture', 'GET /api/plugin?location%5Bdirectory%5D=%2Ffixture']);
     } finally { await new Promise<void>(resolvePromise => server.close(() => resolvePromise())); }
 });
@@ -125,7 +124,7 @@ test('catalogue fallback retries stalled requests within its deadline, including
     await new Promise<void>(resolvePromise => server.listen(0, '127.0.0.1', resolvePromise));
     const address = server.address(); assert.ok(address && typeof address === 'object');
     try {
-        await waitForPreviewReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', { deadlineMs: 1000, requestTimeoutMs: 50, pollIntervalMs: 1 });
+        await waitForHostReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', { deadlineMs: 1000, requestTimeoutMs: 50, pollIntervalMs: 1 });
         assert.equal(polls, 3);
     } finally { server.closeAllConnections(); await new Promise<void>(resolvePromise => server.close(() => resolvePromise())); }
 });
@@ -141,7 +140,7 @@ test('catalogue fallback labels permanent timeouts and rejects auth failures wit
         await new Promise<void>(resolvePromise => server.listen(0, '127.0.0.1', resolvePromise));
         const address = server.address(); assert.ok(address && typeof address === 'object');
         try {
-            await assert.rejects(waitForPreviewReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', { deadlineMs: 120, requestTimeoutMs: 25, pollIntervalMs: 1 }), status === '401' ? /activation failed \(401\)/ : /catalogue activation timed out/);
+            await assert.rejects(waitForHostReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', { deadlineMs: 120, requestTimeoutMs: 25, pollIntervalMs: 1 }), status === '401' ? /activation failed \(401\)/ : /catalogue activation timed out/);
             if (status === '401') assert.equal(polls, 1);
             else assert.ok(polls > 1);
         } finally { server.closeAllConnections(); await new Promise<void>(resolvePromise => server.close(() => resolvePromise())); }
@@ -153,7 +152,7 @@ test('catalogue readiness bounds stalled requests by per-request and overall tim
         const server = (await import('node:http')).createServer((_request, response) => { setTimeout(() => response.writeHead(204).end(), 60); });
         await new Promise<void>(resolvePromise => server.listen(0, '127.0.0.1', resolvePromise));
         const address = server.address(); assert.ok(address && typeof address === 'object');
-        try { await assert.rejects(waitForPreviewReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', timing), /activation timed out/); }
+        try { await assert.rejects(waitForHostReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', timing), /activation timed out/); }
         finally { await new Promise<void>(resolvePromise => server.close(() => resolvePromise())); }
     }
 });
@@ -163,7 +162,7 @@ test('catalogue readiness rejects malformed HTTP responses', async () => {
     await new Promise<void>(resolvePromise => malformed.listen(0, '127.0.0.1', resolvePromise));
     const address = malformed.address(); assert.ok(address && typeof address === 'object');
     try {
-        await assert.rejects(waitForPreviewReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', { deadlineMs: 100, requestTimeoutMs: 50 }), /activation failed/);
+        await assert.rejects(waitForHostReadiness(`http://127.0.0.1:${address.port}`, '/fixture', {}, 'catalogue', { deadlineMs: 100, requestTimeoutMs: 50 }), /activation failed/);
     } finally { await new Promise<void>(resolvePromise => malformed.close(() => resolvePromise())); }
 });
 
@@ -185,7 +184,7 @@ test('structured catalogue uses providerID/id, filters ineligible entries, and r
     await new Promise<void>(resolvePromise => server.listen(0, '127.0.0.1', resolvePromise));
     const address = server.address(); assert.ok(address && typeof address === 'object');
     try {
-        const result = await fetchPreviewCatalogue(`http://127.0.0.1:${address.port}`, '/repo subdir', { authorization: 'Basic synthetic' });
+        const result = await fetchHostCatalogue(`http://127.0.0.1:${address.port}`, '/repo subdir', { authorization: 'Basic synthetic' });
         assert.deepEqual(result.models, [{ id: 'team/alpha', providerID: 'fixture', name: 'Tool Worker', reference: 'fixture/team/alpha', capabilities: { tools: true, input: ['text'], output: ['text'] }, variantIDs: ['fast'] }]);
         assert.equal(result.metadataFreshness, 'unknown'); assert.equal(result.accountAccess, 'unknown');
         assert.ok(requests.every(value => value.endsWith('location%5Bdirectory%5D=%2Frepo%20subdir')));
@@ -211,7 +210,7 @@ test('structured catalogue fails closed on duplicate IDs, malformed records, ove
         });
         await new Promise<void>(resolvePromise => server.listen(0, '127.0.0.1', resolvePromise));
         const address = server.address(); assert.ok(address && typeof address === 'object');
-        try { await assert.rejects(fetchPreviewCatalogue(`http://127.0.0.1:${address.port}`, '/repo', {}, { deadlineMs: 30, requestTimeoutMs: 20 }), /duplicate|invalid schema|byte limit|timed out/); }
+        try { await assert.rejects(fetchHostCatalogue(`http://127.0.0.1:${address.port}`, '/repo', {}, { deadlineMs: 30, requestTimeoutMs: 20 }), /duplicate|invalid schema|byte limit|timed out/); }
         finally { server.closeAllConnections(); await new Promise<void>(resolvePromise => server.close(() => resolvePromise())); }
     }
 });
@@ -234,7 +233,7 @@ test('structured catalogue rejects terminal control, ANSI, bidi, and incompatibl
         });
         await new Promise<void>(resolvePromise => server.listen(0, '127.0.0.1', resolvePromise));
         const address = server.address(); assert.ok(address && typeof address === 'object');
-        try { await assert.rejects(fetchPreviewCatalogue(`http://127.0.0.1:${address.port}`, '/repo', {}), /invalid schema/); }
+        try { await assert.rejects(fetchHostCatalogue(`http://127.0.0.1:${address.port}`, '/repo', {}), /invalid schema/); }
         finally { await new Promise<void>(resolvePromise => server.close(() => resolvePromise())); }
     }
 });
@@ -247,87 +246,12 @@ test('preview server keeps MCP readiness as its default and cleans up after auth
     await chmod(executable, 0o755);
     try {
         const environment = { ...process.env, PID_FILE: pidFile };
-        const server = await startPreviewServer(executable, root, environment, 'mcp', { deadlineMs: 1000, requestTimeoutMs: 100, pollIntervalMs: 110 });
+        const server = await startHostServer(executable, root, environment, 'mcp', { deadlineMs: 1000, requestTimeoutMs: 100, pollIntervalMs: 110 });
         server.stop();
-        await assert.rejects(startPreviewServer(executable, root, environment, 'auth', { deadlineMs: 50, requestTimeoutMs: 20, pollIntervalMs: 5 }), /readiness timed out|aborted due to timeout/);
-        const catalogue = await startPreviewServer(executable, root, environment, 'catalogue', { deadlineMs: 50, requestTimeoutMs: 20 }); catalogue.stop();
+        await assert.rejects(startHostServer(executable, root, environment, 'auth', { deadlineMs: 50, requestTimeoutMs: 20, pollIntervalMs: 5 }), /readiness timed out|aborted due to timeout/);
+        const catalogue = await startHostServer(executable, root, environment, 'catalogue', { deadlineMs: 50, requestTimeoutMs: 20 }); catalogue.stop();
         const pid = Number(await readFile(pidFile, 'utf8'));
         await new Promise(resolvePromise => setTimeout(resolvePromise, 20));
         assert.throws(() => process.kill(pid, 0));
-    } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('verification copies omit dependencies and every denied secret path, including aliases', async () => {
-    const root = await realpath(await mkdtemp('/tmp/naru-copy-policy-test-'));
-    try {
-        const repository = join(root, 'repo'), snapshot = join(root, 'snapshot');
-        await mkdir(join(repository, 'node_modules', 'fixture'), { recursive: true });
-        await mkdir(join(repository, 'secrets'), { recursive: true });
-        await mkdir(join(repository, 'credentials'), { recursive: true });
-        await writeFile(join(repository, 'source.txt'), 'source');
-        await writeFile(join(repository, '.env.example'), 'SAFE_TEMPLATE=true\n');
-        await writeFile(join(repository, '.env.production.local'), 'SYNTHETIC_DENIED=true\n');
-        await writeFile(join(repository, 'secrets', 'token.txt'), 'synthetic');
-        await writeFile(join(repository, 'credentials', 'service.json'), '{}');
-        await writeFile(join(repository, 'node_modules', 'fixture', 'index.js'), 'throw new Error()');
-        await symlink('.env.production.local', join(repository, 'environment-alias'));
-        await copyVerificationSnapshot(repository, snapshot);
-        assert.equal(await readFile(join(snapshot, 'source.txt'), 'utf8'), 'source');
-        assert.equal(await readFile(join(snapshot, '.env.example'), 'utf8'), 'SAFE_TEMPLATE=true\n');
-        for (const path of ['.env.production.local', 'secrets', 'credentials', 'node_modules', 'environment-alias']) {
-            await assert.rejects(lstat(join(snapshot, path)), { code: 'ENOENT' });
-        }
-        const oversized = join(repository, 'oversized.bin');
-        await writeFile(oversized, '');
-        await truncate(oversized, 512 * 1024 * 1024 + 1);
-        await assert.rejects(copyVerificationSnapshot(repository, join(root, 'too-large')), /exceeds preview limits/);
-    } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('path containment and verification snapshot boundaries handle filesystem roots', async () => {
-    assert.equal(pathContains('/', '/tmp/example'), true);
-    assert.equal(pathContains('/tmp/example', '/'), false);
-    assert.equal(pathContains('/tmp/example', '/tmp/example-child'), false);
-    assert.equal(protectedPathContains('runtime/state', 'RUNTIME/state/child'), true);
-    assert.equal(protectedPathContains('runtimé/state', `RUNTIM${'É'.normalize('NFD')}/state/child`), true);
-    assert.equal(protectedPathContains('runtime/state', 'runtime/state-sibling'), false);
-    const root = await mkdtemp('/tmp/naru-root-snapshot-test-');
-    try { await assert.rejects(copyVerificationSnapshot('/', join(root, 'snapshot')), /filesystem root.*narrower/i); }
-    finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('verification snapshots prune protected runtime and nested output before metadata reads', async () => {
-    const root = await realpath(await mkdtemp('/tmp/naru-copy-runtime-test-'));
-    try {
-        const source = join(root, 'source'), runtime = join(source, 'RUNTIME-STATE'), normalizedAlias = join(source, `runtim${'é'.normalize('NFD')}`), output = join(source, 'output-scratch'), snapshot = join(root, 'snapshot');
-        await mkdir(runtime, { recursive: true }); await mkdir(normalizedAlias); await mkdir(output); await writeFile(join(source, 'ordinary.txt'), 'ordinary'); await writeFile(join(runtime, 'marker.txt'), 'synthetic runtime marker'); await writeFile(join(normalizedAlias, 'marker.txt'), 'synthetic normalized marker'); await writeFile(join(output, 'partial.txt'), 'partial');
-        await copyVerificationSnapshot(source, snapshot, ['runtime-state', 'runtimé', 'output-scratch']);
-        assert.equal(await readFile(join(snapshot, 'ordinary.txt'), 'utf8'), 'ordinary');
-        await assert.rejects(lstat(join(snapshot, 'RUNTIME-STATE')), { code: 'ENOENT' });
-        await assert.rejects(lstat(join(snapshot, `runtim${'é'.normalize('NFD')}`)), { code: 'ENOENT' });
-        await assert.rejects(lstat(join(snapshot, 'output-scratch')), { code: 'ENOENT' });
-    } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('runtime read roots reject shallow executables but allow the current Node installation', async () => {
-    const root = await realpath(await mkdtemp('/tmp/naru-runtime-root-test-'));
-    try {
-        const shallow = join(root, 'node'); await writeFile(shallow, 'synthetic runtime');
-        await assert.rejects(runtimeReadRoot(shallow), /too broad/);
-        const current = await runtimeReadRoot(process.execPath);
-        assert.ok(process.execPath.startsWith(current + '/'));
-    } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('isolated checks may change their copy but cannot change/read outside files or use the network', { skip: process.platform !== 'darwin' }, async () => {
-    const root = await realpath(await mkdtemp('/tmp/naru-containment-test-'));
-    try {
-        const repository = join(root, 'repo'); await mkdir(repository);
-        await writeFile(join(repository, 'source.txt'), 'original');
-        const outside = join(root, 'outside'); await writeFile(outside, 'private');
-        const code = `const fs=require('fs'),assert=require('assert/strict'); fs.writeFileSync('source.txt','copy-only'); for(const f of [()=>fs.readFileSync(${JSON.stringify(outside)}),()=>fs.writeFileSync(${JSON.stringify(join(repository, 'source.txt'))},'escaped')]) assert.throws(f); const s=require('net').connect(1,'127.0.0.1');s.on('connect',()=>process.exit(9));s.on('error',e=>{assert.ok(['EPERM','EACCES'].includes(e.code));console.log('contained')});`;
-        const result = await isolatedCheck(repository, [process.execPath, '-e', code], process.execPath, join(root, 'scratch'));
-        assert.equal(result.ok, true, JSON.stringify(result)); assert.match(result.stdout, /contained/);
-        assert.equal(await readFile(join(repository, 'source.txt'), 'utf8'), 'original');
     } finally { await rm(root, { recursive: true, force: true }); }
 });

@@ -1,19 +1,16 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { access, cp, lstat, mkdir, mkdtemp, readlink, realpath, rm } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
+import { access, rm } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import type { Spawn } from './transport.mjs';
-import { isSafeRelativePath } from './validate.mjs';
-import { pathContains, protectedPathContains } from './safe-write.mjs';
 
 const active = new Set<number>();
-export type PreviewReadinessMode = 'mcp' | 'auth' | 'catalogue';
-export interface PreviewReadinessTiming { deadlineMs?: number; requestTimeoutMs?: number; pollIntervalMs?: number; requiredMcpNames?: string[]; readyFiles?: string[] }
-export interface PreviewCatalogueModel { id: string; providerID: string; name: string; reference: string; capabilities: { tools: boolean; input: string[]; output: string[] }; variantIDs: string[] }
-export type PreviewCatalogueExclusion = 'provider-disabled' | 'model-disabled' | 'deprecated' | 'tools-unsupported' | 'text-input-unsupported' | 'text-output-unsupported';
-export interface PreviewCatalogueEntry { id: string; providerID: string; upstreamModelID: string; name: string; reference: string; variantIDs: string[]; capabilities: { tools: boolean; input: string[]; output: string[] }; limit: { context: number; input?: number; output?: number }; releasedAt: number; eligibility: 'eligible' | 'excluded'; reason?: PreviewCatalogueExclusion }
-export interface PreviewCatalogue { models: PreviewCatalogueModel[]; providers: Array<{ id: string; name: string; activation: 'auto' | 'enabled' | 'disabled' }>; entries?: PreviewCatalogueEntry[]; observedAt: string; metadataFreshness: 'unknown'; accountAccess: 'unknown'; source?: { management: 'host-managed-unverified' | 'naru-snapshot'; digest?: string; completedAt?: string; upstreamFreshness: 'unknown' } }
+export type HostReadinessMode = 'mcp' | 'auth' | 'catalogue';
+export interface HostReadinessTiming { deadlineMs?: number; requestTimeoutMs?: number; pollIntervalMs?: number; requiredMcpNames?: string[]; readyFiles?: string[] }
+export interface HostCatalogueModel { id: string; providerID: string; name: string; reference: string; capabilities: { tools: boolean; input: string[]; output: string[] }; variantIDs: string[] }
+export type HostCatalogueExclusion = 'provider-disabled' | 'model-disabled' | 'deprecated' | 'tools-unsupported' | 'text-input-unsupported' | 'text-output-unsupported';
+export interface HostCatalogueEntry { id: string; providerID: string; upstreamModelID: string; name: string; reference: string; variantIDs: string[]; capabilities: { tools: boolean; input: string[]; output: string[] }; limit: { context: number; input?: number; output?: number }; releasedAt: number; eligibility: 'eligible' | 'excluded'; reason?: HostCatalogueExclusion }
+export interface HostCatalogue { models: HostCatalogueModel[]; providers: Array<{ id: string; name: string; activation: 'auto' | 'enabled' | 'disabled' }>; entries?: HostCatalogueEntry[]; observedAt: string; metadataFreshness: 'unknown'; accountAccess: 'unknown'; source?: { management: 'host-managed-unverified' | 'naru-snapshot'; digest?: string; completedAt?: string; upstreamFreshness: 'unknown' } }
 
 export function nodeSpawner(env: NodeJS.ProcessEnv): Spawn {
     return async (argv, options = {}) => new Promise(resolve => {
@@ -48,46 +45,6 @@ export function nodeSpawner(env: NodeJS.ProcessEnv): Spawn {
 }
 export function cleanProcessEnvironment(node: string): NodeJS.ProcessEnv {
     return { PATH: `${dirname(node)}:/usr/bin:/bin`, LANG: 'C', NO_COLOR: '1', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
-}
-export async function runtimeReadRoot(node: string): Promise<string> {
-    if (!isAbsolute(node)) throw new Error('Node runtime path must be absolute');
-    const canonicalNode = await realpath(node);
-    const root = await realpath(dirname(dirname(canonicalNode)));
-    const home = await realpath(homedir()).catch(() => resolve(homedir()));
-    const broadRoots = new Set(['/', '/Applications', '/Library', '/System', '/Users', '/Volumes', '/bin', '/opt', '/private', '/private/tmp', '/private/var', '/sbin', '/tmp', '/usr', '/usr/local', '/var']);
-    if (!pathContains(root, canonicalNode) || broadRoots.has(root) || pathContains(root, home)) {
-        throw new Error('Node runtime read root is too broad for isolated checks');
-    }
-    return root;
-}
-async function verificationSource(directory: string): Promise<string> {
-    const source = await realpath(directory);
-    if (source === parse(source).root) throw new Error('Isolated checks cannot snapshot the filesystem root; choose a narrower enrolled directory');
-    return source;
-}
-export async function copyVerificationSnapshot(directory: string, snapshot: string, excludedPaths: string[] = []): Promise<void> {
-    directory = await verificationSource(directory);
-    const exclusions = [...excludedPaths];
-    const snapshotPath = resolve(snapshot);
-    if (pathContains(directory, snapshotPath)) exclusions.push(relative(directory, snapshotPath));
-    let files = 0, bytes = 0;
-    await cp(directory, snapshot, { recursive: true, dereference: false, verbatimSymlinks: true, filter: async source => {
-        const file = relative(directory, source);
-        if (file) {
-            if (exclusions.some(excluded => protectedPathContains(excluded, file))) return false;
-            const parts = file.split(sep);
-            if (parts.includes('node_modules') || !isSafeRelativePath(file)) return false;
-        }
-        const info = await lstat(source);
-        if (++files > 50000 || (bytes += info.isFile() ? info.size : 0) > 512 * 1024 * 1024) throw new Error('Verification snapshot exceeds preview limits');
-        if (info.isSymbolicLink()) {
-            const link = await readlink(source);
-            const target = await realpath(source).catch(() => '');
-            const targetPath = relative(directory, target);
-            return !isAbsolute(link) && pathContains(directory, target) && isSafeRelativePath(targetPath);
-        }
-        return info.isDirectory() || info.isFile();
-    } });
 }
 function readinessUrl(url: string, path: string, cwd: string): string {
     return url + path + '?location%5Bdirectory%5D=' + encodeURIComponent(cwd);
@@ -130,7 +87,7 @@ const variantCatalogueID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const unsafeDisplay = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 const displayText = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max && !unsafeDisplay.test(value);
 const stringArray = (value: unknown): value is string[] => Array.isArray(value) && value.length <= 32 && value.every(item => displayText(item, 64));
-export async function fetchPreviewCatalogue(url: string, cwd: string, headers: Record<string, string>, timing: PreviewReadinessTiming = {}): Promise<PreviewCatalogue> {
+export async function fetchHostCatalogue(url: string, cwd: string, headers: Record<string, string>, timing: HostReadinessTiming = {}): Promise<HostCatalogue> {
     const deadline = Date.now() + (timing.deadlineMs ?? 20000), requestTimeoutMs = timing.requestTimeoutMs ?? 5000;
     const get = async (path: string, message: string, maxBytes = 1024 * 1024) => {
         try { return await boundedResponseJson(await fetch(readinessUrl(url, path, cwd), { headers, signal: requestSignal(deadline, requestTimeoutMs) }), message, maxBytes); }
@@ -143,7 +100,7 @@ export async function fetchPreviewCatalogue(url: string, cwd: string, headers: R
     const modelValue = await get('/api/model', 'OpenCode model catalogue failed', 16 * 1024 * 1024);
     if (!providerValue || typeof providerValue !== 'object' || !('location' in providerValue) || !('data' in providerValue) || !Array.isArray(providerValue.data)
         || !modelValue || typeof modelValue !== 'object' || !('location' in modelValue) || !('data' in modelValue) || !Array.isArray(modelValue.data)) throw new Error('OpenCode catalogue response has an invalid schema');
-    const providers: PreviewCatalogue['providers'] = []; const providerIDs = new Set<string>();
+    const providers: HostCatalogue['providers'] = []; const providerIDs = new Set<string>();
     for (const value of providerValue.data) {
         if (!value || typeof value !== 'object') throw new Error('OpenCode provider catalogue response has an invalid schema');
         const provider = value as Record<string, unknown>;
@@ -152,7 +109,7 @@ export async function fetchPreviewCatalogue(url: string, cwd: string, headers: R
         providerIDs.add(provider.id); providers.push({ id: provider.id, name: provider.name, activation: provider.activation });
     }
     const providerMap = new Map(providers.map(provider => [provider.id, provider]));
-    const models: PreviewCatalogueModel[] = []; const entries: PreviewCatalogueEntry[] = []; const references = new Set<string>();
+    const models: HostCatalogueModel[] = []; const entries: HostCatalogueEntry[] = []; const references = new Set<string>();
     for (const value of modelValue.data) {
         if (!value || typeof value !== 'object') throw new Error('OpenCode model catalogue response has an invalid schema');
         const model = value as Record<string, unknown>, capabilities = model.capabilities, limit = model.limit;
@@ -172,11 +129,11 @@ export async function fetchPreviewCatalogue(url: string, cwd: string, headers: R
         references.add(reference);
         const capability = capabilities as Record<string, unknown>, provider = providerMap.get(model.providerID);
         if (!provider) throw new Error('OpenCode model catalogue references an unknown provider');
-        const reason: PreviewCatalogueExclusion | undefined = provider.activation === 'disabled' ? 'provider-disabled'
+        const reason: HostCatalogueExclusion | undefined = provider.activation === 'disabled' ? 'provider-disabled'
             : !model.enabled ? 'model-disabled' : model.status === 'deprecated' ? 'deprecated' : !capability.tools ? 'tools-unsupported'
                 : !(capability.input as string[]).includes('text') ? 'text-input-unsupported' : !(capability.output as string[]).includes('text') ? 'text-output-unsupported' : undefined;
         const normalizedLimit = limit as Record<string, unknown>;
-        const entry: PreviewCatalogueEntry = { id: model.id, providerID: model.providerID, upstreamModelID: model.modelID, name: model.name, reference, variantIDs,
+        const entry: HostCatalogueEntry = { id: model.id, providerID: model.providerID, upstreamModelID: model.modelID, name: model.name, reference, variantIDs,
             capabilities: { tools: capability.tools as boolean, input: [...capability.input as string[]], output: [...capability.output as string[]] },
             limit: { context: normalizedLimit.context as number, ...(typeof normalizedLimit.input === 'number' ? { input: normalizedLimit.input } : {}), ...(typeof normalizedLimit.output === 'number' ? { output: normalizedLimit.output } : {}) },
             releasedAt: (model.time as Record<string, unknown>).released as number, eligibility: reason ? 'excluded' : 'eligible', ...(reason ? { reason } : {}) };
@@ -191,7 +148,7 @@ export async function fetchPreviewCatalogue(url: string, cwd: string, headers: R
 
 const authMethodTypes = new Set(['command', 'env', 'key', 'oauth']);
 const interactiveAuthMethodTypes = new Set(['command', 'key', 'oauth']);
-export async function waitForPreviewReadiness(url: string, cwd: string, headers: Record<string, string>, mode: PreviewReadinessMode, timing: PreviewReadinessTiming = {}): Promise<void> {
+export async function waitForHostReadiness(url: string, cwd: string, headers: Record<string, string>, mode: HostReadinessMode, timing: HostReadinessTiming = {}): Promise<void> {
     const deadline = Date.now() + (timing.deadlineMs ?? 20000);
     const requestTimeoutMs = timing.requestTimeoutMs ?? 5000;
     const pollIntervalMs = timing.pollIntervalMs ?? 200;
@@ -277,7 +234,7 @@ export async function waitForPreviewReadiness(url: string, cwd: string, headers:
     }
     throw new Error('Naru MCP readiness timed out');
 }
-export async function startPreviewServer(executable: string, cwd: string, environment: NodeJS.ProcessEnv, readiness: PreviewReadinessMode = 'mcp', timing: PreviewReadinessTiming = {}) {
+export async function startHostServer(executable: string, cwd: string, environment: NodeJS.ProcessEnv, readiness: HostReadinessMode = 'mcp', timing: HostReadinessTiming = {}) {
     const password = randomBytes(32).toString('hex');
     const env: NodeJS.ProcessEnv = { ...environment, OPENCODE_PASSWORD: password };
     if (readiness === 'mcp') for (const path of (env.NARU_PREVIEW_MCP_READY_FILES ?? '').split(':').filter(Boolean)) await rm(path, { force: true });
@@ -302,35 +259,10 @@ export async function startPreviewServer(executable: string, cwd: string, enviro
             });
         });
         const headers = { authorization: 'Basic ' + Buffer.from(`opencode:${password}`).toString('base64') };
-        await waitForPreviewReadiness(url, cwd, headers, readiness, { ...timing,
+        await waitForHostReadiness(url, cwd, headers, readiness, { ...timing,
             requiredMcpNames: (env.NARU_PREVIEW_REQUIRED_MCP ?? 'naru').split(',').filter(Boolean),
             readyFiles: (env.NARU_PREVIEW_MCP_READY_FILES ?? '').split(':').filter(Boolean),
         });
         return { url, env, headers, stop };
     } catch (error) { stop(); throw error; }
-}
-export async function isolatedCheck(directory: string, argv: string[], node: string, scratchRoot: string, excludedPaths: string[] = []) {
-    if (process.platform !== 'darwin') throw new Error('Isolated checks are unavailable: this platform has not passed containment certification');
-    if (!Array.isArray(argv) || argv.length === 0 || argv.length > 64 || argv.some(arg => typeof arg !== 'string' || arg.length > 8192 || arg.includes('\0'))) throw new Error('Invalid check argv');
-    directory = await verificationSource(directory);
-    const scratchInsideSource = pathContains(directory, resolve(scratchRoot));
-    if (!scratchInsideSource) await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
-    const temporary = await realpath(await mkdtemp(scratchInsideSource ? join(tmpdir(), 'naru-check-') : join(scratchRoot, 'check-')));
-    const snapshot = join(temporary, 'workspace');
-    try {
-        await copyVerificationSnapshot(directory, snapshot, excludedPaths);
-        const tmp = join(temporary, 'tmp');
-        await mkdir(tmp, { mode: 0o700 });
-        const executableRoot = await runtimeReadRoot(node);
-        const quote = (value: string) => JSON.stringify(value);
-        const profile = `(version 1)
-(deny default)
-(import "system.sb")
-(allow syscall* mach-bootstrap process-exec process-fork sysctl-read file-read-metadata)
-(allow signal (target self))
-(allow file-read* file-map-executable (subpath "/System") (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/Library") (subpath "/private/var/db") (subpath "/dev") (subpath ${quote(executableRoot)}) (subpath ${quote(temporary)}))
-(allow file-write* (subpath ${quote(temporary)}) (literal "/dev/null"))`;
-        return await nodeSpawner({ ...cleanProcessEnvironment(node), HOME: tmp, TMPDIR: tmp, TMP: tmp, TEMP: tmp })(
-            ['/usr/bin/sandbox-exec', '-p', profile, ...argv], { cwd: snapshot, timeout: 30000, maxBytes: 128 * 1024 });
-    } finally { await rm(temporary, { recursive: true, force: true }); }
 }

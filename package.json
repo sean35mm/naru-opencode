@@ -2,7 +2,7 @@
   "name": "naru-opencode",
   "private": true,
   "scripts": {
-    "build": "npm run clean && tsc --project tsconfig.json && node scripts/bundle-preview-prompts.mjs && node scripts/copy-build-assets.mjs",
+    "build": "npm run clean && tsc --project tsconfig.json && node scripts/bundle-configure-wizard.mjs && node scripts/copy-build-assets.mjs",
     "clean": "node --eval \"require('node:fs').rmSync('.naru-build', { force: true, recursive: true })\"",
     "doctor": "npm run build && node .naru-build/tools/naru-doctor.js",
     "test": "npm run build && npm run test:node",
