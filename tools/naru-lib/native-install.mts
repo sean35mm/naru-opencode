@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { loadOc2NativeModelProfile, NativeProfileRecoveryRequiredError, updateOc2NativeProfile, type NativeConfigAdapters } from './oc2-native-config.mjs';
+import { loadOc2NativeModelProfile, NativeProfileRecoveryRequiredError, removeOc2NativeRegistration, updateOc2NativeProfile, type NativeConfigAdapters, type NativeRemovalPlan } from './oc2-native-config.mjs';
 import { evaluateOpenCodeVersion } from './compatibility.mjs';
 import type { Oc2NativePaths } from './oc2-profile.mjs';
 
@@ -164,4 +164,52 @@ export async function nativeModels(configRoot: string, models?: readonly string[
     if (await regular(join(configRoot, 'opencode.jsonc'))) throw new Error('Ambiguous OpenCode JSON and JSONC configuration; refusing to change native workers');
     await verifyNativeHostVersion(executable);
     return (await updateOc2NativeProfile(configRoot, models, { nativePaths: profilePaths(configRoot), nativeAssetRoot: paths.packageRoot, ...(expectedModels !== undefined ? { expectedModels } : {}) })).models;
+}
+
+// v1 files the native uninstall reports but never removes (0.9.0 `naru uninstall --legacy` owns them).
+const V1_ASSETS = ['.naru-install.json', 'agents/naru.md', 'agents/naru-orchestrator.md', 'commands/naru.md', 'plugins/naru-dispatch.js'];
+const STATE_ENTRIES = new Set(['package', 'manifest.json', 'ownership.json', 'profile.json']);
+async function uninstallableState(state: string, allowTransaction: boolean): Promise<void> {
+    // Lock and transaction files are handled by the shared locked write path; anything else is not ours to delete.
+    const unexpected = (await readdir(state)).filter(name => !STATE_ENTRIES.has(name) && !(allowTransaction && name.startsWith('.native-profile')));
+    if (unexpected.length) throw new Error(`${state} contains unexpected entries (${unexpected.sort().join(', ')}); resolve them before uninstalling. No files were removed.`);
+}
+function describeRemoval(plan: NativeRemovalPlan, state: string, done: boolean): string {
+    const verb = (present: string, past: string) => done ? past : present;
+    const lines: Array<[string, string[]]> = [
+        [`${verb('remove', 'removed')} agents`, plan.removedAgents],
+        [`${verb('keep', 'kept')} agents edited since install (now yours; Naru refuses to overwrite them if it needs the name again)`, plan.keptAgents],
+        ['agents already absent', plan.absentAgents],
+        [`${verb('remove', 'removed')} plugins entries`, plan.removedPlugins],
+        [`${verb('remove', 'removed')} skills entries`, plan.removedSkills],
+    ];
+    return [...lines.filter(([, names]) => names.length).map(([label, names]) => `  ${label}: ${names.join(', ')}`),
+        `  ${verb('delete', 'deleted')}: ${state} (package, profile, ownership, manifest)`,
+        '  keep: every other opencode.json setting, and the naru command itself'].join('\n');
+}
+export async function uninstallNative(configRoot: string, apply: boolean, env: NodeJS.ProcessEnv = process.env): Promise<{ installed: boolean; text: string }> {
+    const paths = getNativeInstallPaths(configRoot);
+    const rootExists = await safeDirectory(configRoot);
+    const v1: string[] = [];
+    if (rootExists) for (const name of V1_ASSETS) if (await occupied(join(configRoot, name))) v1.push(name);
+    const v1Note = v1.length ? `Naru v1 files remain (${v1.join(', ')}). Native uninstall does not remove them: run naru uninstall --legacy from Naru 0.9.0, or delete them by hand.` : '';
+    if (!rootExists || !await safeDirectory(paths.state, true)) {
+        if (await regular(paths.configPath) && (await readFile(paths.configPath, 'utf8')).includes(JSON.stringify(paths.packageRoot).slice(1, -1))) throw new Error(`${paths.state} is missing but opencode.json still references ${paths.packageRoot}; remove those plugins/skills entries and the naru agents by hand. No files were changed.`);
+        if (v1.length) throw new Error(`Native Naru is not installed in ${configRoot}. ${v1Note} No files were changed.`);
+        return { installed: false, text: `Native Naru is not installed in ${configRoot}. Nothing to remove; no files were changed.` };
+    }
+    await uninstallableState(paths.state, true);
+    if (!await verifyNativePackage(paths) || !await regular(paths.ownershipPath) || !await regular(paths.profilePath)) throw new Error(`Native install in ${paths.state} is incomplete (package, manifest, ownership, or profile missing); refusing to guess what to remove. No files were changed.`);
+    const plan = await removeOc2NativeRegistration({ nativePaths: profilePaths(configRoot), nativeAssetRoot: paths.packageRoot, preview: !apply });
+    const footer = v1Note ? `\n${v1Note}` : '';
+    if (!apply) return { installed: true, text: `Native uninstall preview: ${configRoot}\n${describeRemoval(plan, paths.state, false)}\nPreview only; no files changed. Rerun with --apply.${footer}` };
+    await uninstallableState(paths.state, false);
+    // Rename first so the state directory disappears atomically; a failed rm leaves only an inert sibling.
+    // ponytail: the profile lock is released before this rename; a concurrent naru install in that window could re-register agents.
+    const removing = join(configRoot, `.naru-native.removing-${process.pid}`);
+    await rename(paths.state, removing);
+    try { await rm(removing, { recursive: true }); }
+    catch (error) { throw new Error(`opencode.json no longer references Naru, but ${removing} could not be deleted; delete it by hand`, { cause: error }); }
+    const naruHome = env.NARU_HOME ?? join(env.HOME ?? homedir(), '.naru');
+    return { installed: true, text: `Removed native Naru from ${configRoot}. Restart OpenCode to unload it.\n${describeRemoval(plan, paths.state, true)}\nThe naru command is still installed. To remove it, delete ${naruHome} and remove ${join(naruHome, 'bin')} from PATH.${footer}` };
 }

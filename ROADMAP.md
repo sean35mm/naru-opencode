@@ -33,15 +33,13 @@ service, a provider-wide control plane, or a proven speedup.
 
 **Status:** `Mostly done`
 
-Checksum-verified releases, `bootstrap.sh`, and the `naru` CLI (`install`, `configure`,
-`models`, `upgrade`, `doctor`, `version`) exist. Naru targets OpenCode v2 only; the v1
+Checksum-verified releases, `bootstrap.sh`, and the `naru` CLI (`install`, `uninstall`,
+`configure`, `models`, `upgrade`, `doctor`, `version`) exist. Naru targets OpenCode v2 only; the v1
 installer shipped for the last time in 0.9.0.
 
 ### Remaining
 
-1. **Native uninstall and rollback.** `naru uninstall` and `naru rollback` currently print
-   manual removal steps. They should preview and remove exactly what
-   `.naru-native/ownership.json` and `manifest.json` record.
+1. **Native rollback.** `naru rollback` is not available for native installs.
 2. **Release matrix evidence.** Record the qualified OpenCode, Node, and platform
    combinations per release.
 

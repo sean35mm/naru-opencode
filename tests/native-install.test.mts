@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { getNativeInstallPaths, installNative, nativeModels } from '../tools/naru-lib/native-install.mjs';
+import { getNativeInstallPaths, installNative, nativeModels, uninstallNative } from '../tools/naru-lib/native-install.mjs';
 
 const source = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const run = promisify(execFile);
@@ -60,6 +60,14 @@ test('normal CLI honors explicit --dir and previews before apply', async () => {
         const applied = await run(command, ['install', '--dir', root, '--apply'], { env });
         assert.match(applied.stdout, /Installed native Naru/);
         assert.equal(JSON.parse(await readFile(getNativeInstallPaths(root).configPath, 'utf8')).agents.naru.mode, 'primary');
+        const uninstallPreview = await run(command, ['uninstall', '--dir', root], { env });
+        assert.match(uninstallPreview.stdout, /Native uninstall preview.*remove agents: naru.*Not an interactive terminal/s);
+        await lstat(getNativeInstallPaths(root).state);
+        const removed = await run(command, ['uninstall', '--dir', root, '--apply'], { env });
+        assert.match(removed.stdout, /Removed native Naru/);
+        assert.deepEqual(JSON.parse(await readFile(getNativeInstallPaths(root).configPath, 'utf8')), {});
+        for (const args of [['uninstall', '--dir', root], ['uninstall', '--dir', root, '--apply']]) assert.match((await run(command, args, { env })).stdout, /not installed.*Nothing to remove/);
+        await assert.rejects(run(command, ['rollback'], { env }), (error: { code?: number; stderr?: string }) => error.code === 2 && /not available.*Nothing was changed/.test(error.stderr ?? ''));
     } finally { await rm(tmp, { recursive: true, force: true }); }
 });
 
@@ -130,6 +138,9 @@ test('real 2.0.15 previews without fixture writes and saves explicit references 
         for (const [index, path] of [getNativeInstallPaths(root).configPath, getNativeInstallPaths(root).profilePath].entries()) assert.deepEqual(await readFile(path), before[index]);
         await run(cli, ['models', '--dir', root, '--set', refs, '--apply', '--opencode', process.env.NARU_NATIVE_TEST_REAL_OPENCODE!], { env });
         assert.deepEqual(await nativeModels(root), refs.split(','));
+        await run(cli, ['uninstall', '--dir', root, '--apply'], { env });
+        assert.deepEqual(JSON.parse(await readFile(getNativeInstallPaths(root).configPath, 'utf8')), {});
+        await assert.rejects(lstat(getNativeInstallPaths(root).state), { code: 'ENOENT' });
     } finally { await rm(tmp, { recursive: true, force: true }); }
 });
 
@@ -293,5 +304,83 @@ test('unresolved upgrade keeps both package generations and the new manifest', a
         assert.equal((await lstat(join(paths.state, `package-backup-${process.pid}`))).ino, prior.ino);
         assert.equal(JSON.parse(await readFile(paths.manifestPath, 'utf8')).schemaVersion, 1);
         await lstat(join(paths.state, '.native-profile-transaction'));
+    } finally { process.env.PATH = oldPath; await rm(tmp, { recursive: true, force: true }); }
+});
+
+test('native uninstall previews, removes only unmodified owned registration, and round-trips', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'naru-native-uninstall-'));
+    const bin = join(tmp, 'bin'), root = join(tmp, 'config'), paths = getNativeInstallPaths(root), oldPath = process.env.PATH;
+    try {
+        await mkdir(bin); await mkdir(root);
+        const host = join(bin, 'opencode'); await writeFile(host, '#!/bin/sh\nprintf "2.0.15\\n"\n'); await chmod(host, 0o700);
+        process.env.PATH = `${bin}:${oldPath}`;
+        assert.match((await uninstallNative(root, true)).text, /not installed/);
+        assert.deepEqual(await readdir(root), []);
+        const user = { theme: 'user-theme', agent: { custom: { mode: 'subagent' } }, agents: { mine: { mode: 'subagent', prompt: 'keep' } }, plugins: ['user-plugin', { package: 'user-package', options: { level: 1 } }], skills: ['/user/skills'], provider: { fixture: { key: 'public-placeholder' } } };
+        await writeFile(paths.configPath, JSON.stringify(user), { mode: 0o644 });
+        await installNative(root, source, true);
+        await nativeModels(root, ['fixture/model#fast']);
+        const installed = JSON.parse(await readFile(paths.configPath, 'utf8'));
+        const workers = Object.keys(installed.agents).filter(name => name.startsWith('naru-worker-'));
+        assert.equal(workers.length, 1);
+        installed.agents[workers[0]!].description = 'edited by the user';
+        await writeFile(paths.configPath, JSON.stringify(installed, null, 2));
+        const snapshot = async () => Promise.all([paths.configPath, paths.ownershipPath, paths.profilePath, paths.manifestPath].map(path => readFile(path)));
+        const before = await snapshot(), stateBefore = await readdir(paths.state);
+        const preview = await uninstallNative(root, false);
+        assert.match(preview.text, /Preview only; no files changed/);
+        assert.match(preview.text, new RegExp(`keep agents edited since install.*${workers[0]}`));
+        assert.deepEqual(await snapshot(), before);
+        assert.deepEqual(await readdir(paths.state), stateBefore);
+        const applied = await uninstallNative(root, true);
+        assert.match(applied.text, /Removed native Naru/);
+        assert.match(applied.text, /removed agents: naru\b/);
+        assert.match(applied.text, new RegExp(`kept agents edited since install.*${workers[0]}`));
+        await assert.rejects(lstat(paths.state), { code: 'ENOENT' });
+        assert.deepEqual(await readdir(root), ['opencode.json']);
+        const after = JSON.parse(await readFile(paths.configPath, 'utf8'));
+        assert.deepEqual(after, { ...user, agents: { mine: user.agents.mine, [workers[0]!]: installed.agents[workers[0]!] } });
+        assert.equal((await stat(paths.configPath)).mode & 0o777, 0o644);
+        assert.match((await uninstallNative(root, false)).text, /not installed/);
+        await installNative(root, source, true);
+        await assert.rejects(nativeModels(root, ['fixture/model#fast']), /collides/);
+        const reinstalled = JSON.parse(await readFile(paths.configPath, 'utf8'));
+        delete reinstalled.agents[workers[0]!];
+        await writeFile(paths.configPath, JSON.stringify(reinstalled));
+        await nativeModels(root, ['fixture/model#fast']);
+        await uninstallNative(root, true);
+        const roundTrip = JSON.parse(await readFile(paths.configPath, 'utf8'));
+        assert.deepEqual(roundTrip, user);
+    } finally { process.env.PATH = oldPath; await rm(tmp, { recursive: true, force: true }); }
+});
+
+test('native uninstall fails closed on partial state, dangling registration, and v1 leftovers', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'naru-native-uninstall-refusal-'));
+    const bin = join(tmp, 'bin'), root = join(tmp, 'config'), paths = getNativeInstallPaths(root), oldPath = process.env.PATH;
+    try {
+        await mkdir(bin);
+        const host = join(bin, 'opencode'); await writeFile(host, '#!/bin/sh\nprintf "2.0.15\\n"\n'); await chmod(host, 0o700);
+        process.env.PATH = `${bin}:${oldPath}`;
+        await installNative(root, source, true);
+        const config = await readFile(paths.configPath);
+        await writeFile(join(paths.state, 'package-backup-1'), 'unknown');
+        for (const apply of [false, true]) await assert.rejects(uninstallNative(root, apply), /unexpected entries \(package-backup-1\)/);
+        await rm(join(paths.state, 'package-backup-1'));
+        const ownership = await readFile(paths.ownershipPath);
+        await rm(paths.ownershipPath);
+        for (const apply of [false, true]) await assert.rejects(uninstallNative(root, apply), /incomplete/);
+        await writeFile(paths.ownershipPath, '{"schemaVersion":1', { mode: 0o600 });
+        for (const apply of [false, true]) await assert.rejects(uninstallNative(root, apply), /malformed JSON/);
+        await writeFile(paths.ownershipPath, ownership, { mode: 0o600 });
+        await writeFile(join(paths.packageRoot, 'tools', 'package.json'), 'modified');
+        await assert.rejects(uninstallNative(root, true), /modified/);
+        assert.deepEqual(await readFile(paths.configPath), config);
+        await rm(paths.state, { recursive: true });
+        await assert.rejects(uninstallNative(root, true), /still references/);
+        assert.deepEqual(await readFile(paths.configPath), config);
+        await writeFile(paths.configPath, '{}');
+        await writeFile(join(root, '.naru-install.json'), '{}');
+        await assert.rejects(uninstallNative(root, true), /v1 files remain \(\.naru-install\.json\).*--legacy/);
+        assert.equal(await readFile(join(root, '.naru-install.json'), 'utf8'), '{}');
     } finally { process.env.PATH = oldPath; await rm(tmp, { recursive: true, force: true }); }
 });

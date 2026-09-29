@@ -1,5 +1,5 @@
 #!/bin/sh
-# The Naru command. A thin front door over install.sh and naru-doctor.js:
+# The Naru command. A thin front door over install.sh, naru-native.mjs and naru-doctor.js:
 # every mutating subcommand previews first and asks before changing anything.
 set -eu
 
@@ -19,6 +19,7 @@ done
 ROOT=$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd -P)
 INSTALLER="${ROOT}/install.sh"
 DOCTOR="${ROOT}/tools/naru-doctor.js"
+NATIVE="${ROOT}/tools/naru-native.mjs"
 
 usage() {
   cat <<'EOF'
@@ -29,16 +30,17 @@ Usage: naru <command> [options]
   install [opts]     Install Naru into OpenCode (previews, then asks)
   configure          Select normal native worker models interactively
   models --list|--set REF[,REF]  Inspect or change native worker pool
+  uninstall [opts]   Remove Naru from OpenCode (previews, then asks)
   upgrade [opts]     Fetch the latest release, then install it
   doctor             Report local install and configuration health
   version            Show installed and latest available versions
   help               Show this message
 
-Install/upgrade options are passed through to the installer:
+Install/upgrade/uninstall options:
   --apply            Skip the confirmation prompt (for non-interactive use)
   --preview          Print the plan and exit without prompting or applying
-  --opencode PATH    Use this absolute OpenCode executable
-  --dir PATH         Install into an exact directory
+  --opencode PATH    Use this absolute OpenCode executable (install/upgrade)
+  --dir PATH         Use an exact OpenCode config directory
 
 Everything that changes your machine previews first. Nothing is written
 until you confirm, or pass --apply.
@@ -65,11 +67,26 @@ latest_version() {
     || true
 }
 
-# Runs the installer in preview mode, then asks. `--apply` anywhere in the
-# caller's arguments skips the prompt and applies directly.
-run_installer() {
+install_step() {
+  [ -f "$INSTALLER" ] || { echo "naru: installer not found at ${INSTALLER}" >&2; exit 1; }
+  sh "$INSTALLER" "$@"
+}
+uninstall_step() {
+  # The native uninstaller exits 3 when Naru is not installed: nothing to confirm.
+  status=0
+  node "$NATIVE" uninstall "$@" || status=$?
+  [ "$status" -ne 3 ] || { nothing=true; return 0; }
+  return "$status"
+}
+
+# Runs a step in preview mode, then asks. `--apply` anywhere in the caller's
+# arguments skips the prompt and applies directly.
+run_previewed() {
+  step=$1
+  shift
   apply=false
   preview=false
+  nothing=false
   for arg in "$@"; do
     [ "$arg" = --apply ] && apply=true
     [ "$arg" = --preview ] && preview=true
@@ -78,15 +95,14 @@ run_installer() {
     echo "naru: --preview and --apply cannot be combined" >&2
     exit 2
   fi
-  [ -f "$INSTALLER" ] || { echo "naru: installer not found at ${INSTALLER}" >&2; exit 1; }
 
   if [ "$apply" = true ]; then
     # Caller already opted in; pass through untouched.
-    sh "$INSTALLER" "$@"
+    "$step" "$@"
     return
   fi
-  sh "$INSTALLER" --preview "$@"
-  [ "$preview" = false ] || return 0
+  "$step" --preview "$@"
+  [ "$preview" = false ] && [ "$nothing" = false ] || return 0
 
   if [ ! -t 0 ]; then
     echo
@@ -99,7 +115,7 @@ run_installer() {
   case "$reply" in
     y|Y|yes|YES)
       echo
-      sh "$INSTALLER" --apply "$@"
+      "$step" --apply "$@"
       ;;
     *) echo "Cancelled. Nothing was changed." ;;
   esac
@@ -111,11 +127,17 @@ command=${1:-help}
 case "$command" in
   configure|models)
     need node
-    [ -f "${ROOT}/tools/naru-native.mjs" ] || { echo "naru: compiled native installer is unavailable" >&2; exit 1; }
-    exec node "${ROOT}/tools/naru-native.mjs" "$command" "$@"
+    [ -f "$NATIVE" ] || { echo "naru: compiled native installer is unavailable" >&2; exit 1; }
+    exec node "$NATIVE" "$command" "$@"
     ;;
   install)
-    run_installer "$@"
+    run_previewed install_step "$@"
+    ;;
+
+  uninstall)
+    need node
+    [ -f "$NATIVE" ] || { echo "naru: compiled native installer is unavailable" >&2; exit 1; }
+    run_previewed uninstall_step "$@"
     ;;
 
   upgrade)
@@ -131,7 +153,7 @@ case "$command" in
       echo "Naru ${current} is already the latest release."
       echo "Reinstalling the current version:"
       echo
-      run_installer "$@"
+      run_previewed install_step "$@"
       exit 0
     fi
     echo "Upgrading Naru ${current} -> ${plain}"
@@ -156,20 +178,9 @@ case "$command" in
     node "$DOCTOR" "$@"
     ;;
 
-  uninstall|rollback)
-    config="${XDG_CONFIG_HOME:-"${HOME}/.config"}/opencode"
-    cat >&2 <<EOF
-naru: ${command} is not available for native installs yet. The v1 installer
-that provided it has been removed. Nothing was changed.
-
-To remove native Naru by hand (use your --dir instead of ${config}
-if you installed elsewhere), quit OpenCode, then:
-  1. In ${config}/opencode.json, delete the "agents" entries named in
-     ${config}/.naru-native/ownership.json, and the "plugins" and
-     "skills" entries that point into ${config}/.naru-native/package.
-  2. Delete ${config}/.naru-native.
-  3. Optionally delete ${NARU_HOME} and remove ${NARU_HOME}/bin from PATH.
-EOF
+  rollback)
+    echo "naru: rollback is not available for native installs. Nothing was changed." >&2
+    echo "Run 'naru uninstall' to remove Naru, or 'naru install' to reinstall this release." >&2
     exit 2
     ;;
 
