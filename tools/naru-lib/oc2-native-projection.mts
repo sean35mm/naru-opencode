@@ -7,11 +7,18 @@ export interface NativeAgent {
     mode: 'primary' | 'subagent';
     hidden?: true;
     model?: { providerID: string; model: string; variant?: string };
+    permissions: NativePermissionRule[];
     system: string;
 }
+export interface NativePermissionRule { action: string; effect: 'allow' | 'ask' | 'deny'; resource: string }
 export interface NativeProjection { agents: Record<string, NativeAgent>; workers: Array<{ name: string; reference: string }> }
 
 export const NATIVE_MODEL_LIMIT = 32;
+const rule = (action: string, effect: NativePermissionRule['effect']) => (resource: string): NativePermissionRule => ({ action, effect, resource });
+// Host rules resolve last-match-wins after global config, so these re-allow Naru skills under a global skill deny.
+const SKILL_RULES = ['naru-*', 'unslop'].map(rule('skill', 'allow'));
+// ponytail: prefix globs over parsed shell commands; `git -C x push` or wrapper commands evade them. Upgrade path: a permission.evaluate hook or a tighter sandbox.
+const WORKER_RULES = [...SKILL_RULES, ...['git push*', 'gh pr create*', 'gh pr merge*', 'gh pr review*', 'gh pr comment*', 'gh issue create*', 'gh issue comment*', 'gh release create*', 'gh release delete*', 'gh release edit*', 'gh release upload*'].map(rule('shell', 'deny')), rule('shell', 'ask')('gh api*')];
 
 function safeReferences(references: readonly string[]): string[] {
     if (references.length > NATIVE_MODEL_LIMIT) throw new Error(`Native model pool supports at most ${NATIVE_MODEL_LIMIT} exact references`);
@@ -27,7 +34,7 @@ function safeReferences(references: readonly string[]): string[] {
 function agentName(reference: string): string {
     const parsed = parseCatalogueReference(reference);
     const label = `${parsed.providerID}-${parsed.model}${parsed.variant ? `-${parsed.variant}` : ''}`
-        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(-30) || 'model';
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '').slice(-30).replace(/^-+/, '') || 'model';
     return `naru-worker-${label}-${createHash('sha256').update(reference).digest('hex').slice(0, 10)}`;
 }
 
@@ -84,9 +91,9 @@ export function projectOc2NativeAgents(references: readonly string[], instructio
         workers.push({ name, reference });
         agents[name] = {
             description: `Reusable native Naru subagent on ${reference}; assign investigation, editing, checks, or review as needed. Model and effort are fixed by this reference.`,
-            mode: 'subagent', model: parseCatalogueReference(reference), system: workerPrompt(reference, instructions),
+            mode: 'subagent', model: parseCatalogueReference(reference), permissions: WORKER_RULES, system: workerPrompt(reference, instructions),
         };
     }
-    agents.naru = { description: 'Model-independent native Naru coordinator for delegation, direct work, evaluation, and synthesis.', mode: 'primary', system: orchestratorPrompt(workers, instructions) };
+    agents.naru = { description: 'Model-independent native Naru coordinator for delegation, direct work, evaluation, and synthesis.', mode: 'primary', permissions: SKILL_RULES, system: orchestratorPrompt(workers, instructions) };
     return { agents: { naru: agents.naru, ...agents }, workers };
 }

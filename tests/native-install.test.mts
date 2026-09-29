@@ -73,14 +73,14 @@ test('explicit --opencode selects v2 while PATH remains v1, with a read-only CLI
         await writeFile(v2, '#!/bin/sh\nprintf "opencode v2.0.15\\n"\n'); await chmod(v2, 0o700);
         const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: tmp, XDG_CONFIG_HOME: join(tmp, 'xdg') };
         const cli = join(source, 'bin', 'naru');
-        await assert.rejects(run(cli, ['install', '--preview'], { env }), /exact OpenCode 2.0.15/);
+        await assert.rejects(run(cli, ['install', '--preview'], { env }), /requires OpenCode 2.0.15/);
         const { stdout } = await run(cli, ['install', '--preview', '--opencode', v2], { env });
         assert.match(stdout, /Native install preview/);
         assert.ok(stdout.includes(root));
         assert.doesNotMatch(stdout, /Apply these changes\?/);
         await assert.rejects(lstat(root), { code: 'ENOENT' });
         for (const args of [['--opencode'], ['--opencode', 'relative/path'], ['--opencode', join(tmp, 'missing')], ['--opencode', v1]]) {
-            await assert.rejects(run(cli, ['install', '--preview', ...args], { env }), /--opencode|exact OpenCode 2.0.15/);
+            await assert.rejects(run(cli, ['install', '--preview', ...args], { env }), /--opencode|requires OpenCode 2.0.15/);
         }
         await assert.rejects(run(cli, ['install', '--preview', '--apply', '--opencode', v2], { env }), /cannot be combined/);
         await assert.rejects(lstat(root), { code: 'ENOENT' });
@@ -151,7 +151,7 @@ process.exit(1);
         await run(command, ['install', '--dir', root, '--apply', '--opencode', host], { env });
         const before = await run(command, ['models', '--dir', root, '--list'], { env });
         assert.match(before.stdout, /No native workers selected/);
-        await assert.rejects(run(command, ['models', '--dir', root, '--set', 'fixture/model#fast', '--preview'], { env }), /exact OpenCode 2.0.15/);
+        await assert.rejects(run(command, ['models', '--dir', root, '--set', 'fixture/model#fast', '--preview'], { env }), /requires OpenCode 2.0.15/);
         const paths = getNativeInstallPaths(root), original = await Promise.all([paths.configPath, paths.profilePath].map(path => readFile(path)));
         const refs = 'fixture/model#fast,absent/previously-working';
         const preview = await run(command, ['models', '--dir', root, '--set', refs, '--opencode', host], { env });
@@ -179,10 +179,10 @@ test('native preflight rejects v1 collisions, JSONC ambiguity, user agent collis
     try {
         await mkdir(bin); await mkdir(root); process.env.PATH = `${bin}:${oldPath}`;
         const host = join(bin, 'opencode'); await writeFile(host, '#!/bin/sh\nprintf "1.18.28\\n"\n'); await chmod(host, 0o700);
-        await assert.rejects(installNative(root, source, true), /exact OpenCode 2.0.15/);
-        for (const version of ['2.0.16', '2.0.15-beta.1', 'opencode v2.0.15 extra']) {
+        await assert.rejects(installNative(root, source, true), /requires OpenCode 2.0.15/);
+        for (const version of ['2.1.0', '2.0.16-beta.1', 'opencode v2.0.15 extra']) {
             await writeFile(host, `#!/bin/sh\nprintf "${version}\\n"\n`);
-            await assert.rejects(installNative(root, source, false), /exact OpenCode 2.0.15/);
+            await assert.rejects(installNative(root, source, false), /requires OpenCode 2.0.15/);
         }
         await writeFile(host, '#!/bin/sh\nprintf "2.0.15\\n"\n');
         const manualAgent = join(root, 'agents', 'naru.md');

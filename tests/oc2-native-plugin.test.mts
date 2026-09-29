@@ -21,7 +21,7 @@ function result(stdout = ''): ProcessResult {
     return { ok: true, code: 0, stdout, stderr: '', stdoutTruncated: false, stderrTruncated: false };
 }
 
-async function registered(adapters: Parameters<typeof createOc2NativePlugin>[0] = {}, resolvedDirectory?: string): Promise<Map<string, RegisteredTool>> {
+async function registered(adapters: Parameters<typeof createOc2NativePlugin>[0] = {}, resolvedDirectory = process.cwd()): Promise<Map<string, RegisteredTool>> {
     const tools = new Map<string, RegisteredTool>();
     await createOc2NativePlugin(adapters).setup({
         session: {
@@ -68,26 +68,25 @@ test('OC2 native tools use trusted host identity and reject argument impersonati
     const fakeInput = { input: { agent: 'naru', reviewResult: {} } };
 
     const worker = JSON.parse((await review.execute(fakeInput, {
-        agent: 'naru-writer-fixture', sessionID: 'worker-session', directory: process.cwd(), worktree: process.cwd(),
+        agent: 'naru-writer-fixture', sessionID: 'worker-session',
     })).content);
     assert.match(worker.error, /caller agent identity mismatch/);
 
     const parent = JSON.parse((await review.execute(fakeInput, {
-        agent: 'naru', sessionID: 'parent-session', directory: process.cwd(), worktree: process.cwd(),
+        agent: 'naru', sessionID: 'parent-session',
     })).content);
     assert.match(parent.error, /invalid input/);
     assert.doesNotMatch(parent.error, /identity mismatch/);
     assert.equal(spawnCalls, 0);
 });
 
-test('OC2 native tools propagate trusted direct and session-resolved directories and never accept a model cwd', async () => {
+test('OC2 native tools use the trusted session directory and never accept a model or context cwd', async () => {
     const calls: Array<{ argv: string[]; options: SpawnOptions }> = [];
     const spawn: Spawn = async (argv, options = {}) => {
         calls.push({ argv, options });
         return result(' M fixture.txt\n');
     };
-    const tools = await registered({ spawn });
-    const git = tools.get('naru-git-read')!;
+    const git = (await registered({ spawn }, '/trusted/resolved/directory')).get('naru-git-read')!;
     const content = JSON.parse((await git.execute({
         input: { operation: 'status' },
         directory: '/model/supplied/directory',
@@ -95,21 +94,16 @@ test('OC2 native tools propagate trusted direct and session-resolved directories
     }, {
         agent: 'naru-reader-fixture',
         sessionID: 'trusted-session',
-        directory: '/trusted/session/directory',
-        worktree: '/trusted/session/worktree',
+        directory: '/context/directory',
+        worktree: '/context/worktree',
     })).content);
     assert.equal(content.ok, true);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0]!.options.cwd, '/trusted/session/worktree');
+    assert.equal(calls[0]!.options.cwd, '/trusted/resolved/directory');
 
-    const resolved = await registered({ spawn }, '/trusted/resolved/directory');
-    await resolved.get('naru-git-read')!.execute({ input: { operation: 'status' }, directory: '/model/cwd' }, {
-        agent: 'naru-reader-fixture', sessionID: 'resolved-session',
-    });
-    assert.equal(calls[1]!.options.cwd, '/trusted/resolved/directory');
-
+    const unresolved = (await registered({ spawn }, '')).get('naru-git-read')!;
     await assert.rejects(
-        git.execute({ input: { operation: 'status' } }, { agent: 'naru', sessionID: 'missing-cwd' }),
+        unresolved.execute({ input: { operation: 'status' } }, { agent: 'naru', sessionID: 'missing-cwd' }),
         /per-session directory/,
     );
 });
@@ -120,7 +114,7 @@ test('OC2 worktree adapter uses beta-local runtime defaults without probing stab
         input: { operation: 'snapshot', runId: 'missing-run' },
         runtimeConfigPath: '/model/cannot/select/stable.json',
     }, {
-        agent: 'naru', sessionID: 'parent-session', directory: process.cwd(), worktree: process.cwd(),
+        agent: 'naru', sessionID: 'parent-session',
     })).content);
     assert.equal(snapshot.ok, false);
     assert.match(snapshot.error, /unknown worktree run/);
