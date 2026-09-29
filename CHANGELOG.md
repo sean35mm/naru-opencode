@@ -2,6 +2,17 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.12.0](https://github.com/sean35mm/naru-opencode/compare/v0.11.0...v0.12.0) (2026-09-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* mutating naru commands no longer preview and prompt by default; they apply straight away, so scripts and habits that relied on the preview-first flow will now change the machine. Use --dry-run for the old preview output. --preview is kept as an alias for --dry-run and --apply is accepted as a no-op; combining --dry-run (or --preview) with --apply is an error. naru upgrade --dry-run reports the pending upgrade without downloading. All existing safety checks (fail-closed validation, locking and transactions, host version check, kept-modified-agent reporting) are unchanged.
+
+### Features
+
+* apply naru changes by default; add --dry-run ([c85708b](https://github.com/sean35mm/naru-opencode/commit/c85708b31d1bc870c15cd1ebd48a42ab9d7b2c81))
+
 ## [0.11.0](https://github.com/sean35mm/naru-opencode/compare/v0.10.0...v0.11.0) (2026-09-29)
 
 
