@@ -82,28 +82,10 @@ jobs:
           bun-version: 1.3.9
       - name: Run Bun transport smoke test
         run: npm run test:bun:built
-      - name: Run installer tests
-        run: npm run test:installer:built
       - name: Install documentation dependencies
         run: npm ci --prefix docs
       - name: Build documentation
         run: npm run build --prefix docs
-      - name: Run historical v1 OpenCode compatibility smoke
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install --prefix "$RUNNER_TEMP/opencode-linux-x64-1.18.28" --no-save --package-lock=false --ignore-scripts --omit=dev --no-audit --no-fund opencode-linux-x64@1.18.28
-          package_root="$(realpath "$RUNNER_TEMP/opencode-linux-x64-1.18.28")"
-          package_json="$package_root/node_modules/opencode-linux-x64/package.json"
-          test "$(node -p 'require(process.argv[1]).version' "$package_json")" = "1.18.28"
-          opencode_path="$(realpath "$package_root/node_modules/opencode-linux-x64/bin/opencode")"
-          case "$opencode_path" in
-            "$package_root"/*) ;;
-            *) exit 1 ;;
-          esac
-          test -f "$opencode_path"
-          test -x "$opencode_path"
-          node .naru-build/scripts/naru-compat-smoke.mjs --profile stable --opencode "$opencode_path" --source "$GITHUB_WORKSPACE/.naru-build" --json
       - name: Run pinned OpenCode v2 native smoke
         shell: bash
         run: |

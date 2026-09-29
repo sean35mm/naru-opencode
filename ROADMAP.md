@@ -1,11 +1,11 @@
 # Naru Roadmap
 
-**Status — 2026-08-06.** Planning document. Nothing here is evidence that a phase,
+**Status — 2026-09-28.** Planning document. Nothing here is evidence that a phase,
 check, benchmark, or release has been completed.
 
 Naru is thin hard walls and a free interior. The walls stand at the irreversible
-edges and are mechanical rather than advisory; inside them the orchestrator is
-trusted to plan and fan out on its own judgment. This roadmap is about making that
+edges and are mechanical rather than advisory; inside them the coordinator is
+trusted to plan and delegate on its own judgment. This roadmap is about making that
 trustworthy to strangers, then proving it is worth using.
 
 ## Product direction
@@ -31,38 +31,23 @@ service, a provider-wide control plane, or a proven speedup.
 
 ## Phase 1 — A stranger can install it and it works
 
-**Status:** `Not started` · **Blocks everything else**
+**Status:** `Mostly done`
 
-Today a stranger must clone the repo, run a shell script, and then discover that all
-agents are pinned to `openai/gpt-5.6-*` models they may not have. Both halves of that
-are fatal to adoption.
+Checksum-verified releases, `bootstrap.sh`, and the `naru` CLI (`install`, `configure`,
+`models`, `upgrade`, `doctor`, `version`) exist. Naru targets OpenCode v2 only; the v1
+installer shipped for the last time in 0.9.0.
 
-### Work
+### Remaining
 
-1. **Releases.** No git tag or GitHub release exists. Tag `v0.2.0`; add a workflow
-   that, on tag, verifies CI is green, builds a tarball of the installable asset set
-   (`agents/`, `skills/`, `tools/`, `install.sh`, `naru-runtime.example.json`,
-   `VERSION`), and attaches it with a SHA-256 checksum.
-2. **`bootstrap.sh`.** Small, auditable, curl-able. Installs exactly one file —
-   `~/.naru/bin/naru` — and touches nothing else. Prints the line to add to `PATH`;
-   edits a shell profile only with an explicit `--modify-path`.
-3. **`naru` CLI.** A thin front door over the existing installer and doctor, not a
-   reimplementation: `install`, `upgrade`, `doctor`, `uninstall`, `rollback`,
-   `version`. Every mutating command previews and prompts; `--apply` is available for
-   non-interactive use. Versions live at `~/.naru/versions/<v>` with `current` as a
-   symlink, so rollback is a pointer flip.
-4. **Provider neutrality.** Drop `model:` and `variant:` from the agent frontmatter so
-   agents inherit the user's configured default model. Remove `naru-reader-deep`; with
-   no model difference it is indistinguishable from `naru-reader`, and a lens belongs
-   in the dispatch prompt. Final roster: `naru`, `naru-reader`,
-   `naru-runner`, `naru-writer`.
-5. **Docs.** Curl install as the primary path, clone-and-run as the alternative, and a
-   section on overriding any agent's model or permissions through the native
-   `agent` block in `opencode.json`.
+1. **Native uninstall and rollback.** `naru uninstall` and `naru rollback` currently print
+   manual removal steps. They should preview and remove exactly what
+   `.naru-native/ownership.json` and `manifest.json` record.
+2. **Release matrix evidence.** Record the qualified OpenCode, Node, and platform
+   combinations per release.
 
-**Exit criteria:** on a machine with only OpenCode, Node 24, and a configured model of
-any provider, `curl … | sh` followed by `naru install` yields a working Naru, and
-`naru upgrade` moves it to a newer release and back via `naru rollback`.
+**Exit criteria:** on a machine with only OpenCode 2.0.x, Node 24, and a configured model of
+any provider, `curl … | sh` followed by `naru install` and `naru configure` yields a working
+Naru, and `naru upgrade` and a native uninstall both work without hand edits.
 
 ## Phase 2 — Trustworthy at rest
 
@@ -71,8 +56,8 @@ any provider, `curl … | sh` followed by `naru install` yields a working Naru, 
 The credibility layer that makes someone comfortable pointing Naru at a real
 repository.
 
-- **Stability contract.** State which agent IDs, tool names, and configuration keys
-  are public API, and what a breaking change to them requires.
+- **Stability contract.** State which agent names, tool IDs, and `.naru-native` file
+  schemas are public API, and what a breaking change to them requires.
 - **Semver discipline.** `VERSION` is the source of truth; `CHANGELOG.md` records only
   user-visible, evidence-backed claims tied to real tags.
 - **Supply-chain honesty.** Checksum verification on every download. Document exactly
@@ -105,31 +90,19 @@ names where it does not help is more trustworthy than one that claims to always 
 **Exit criteria:** a published, reproducible comparison that a skeptical reader can
 re-run, including the cases where Naru lost.
 
-## Phase 4 — OpenCode v2
-
-**Status:** `Blocked on upstream`
-
-Fully specified in the
-[v2 migration plan](docs/src/content/docs/reference/opencode-v2-migration.md).
-The v-next simplification deleted the deepest v1 couplings — the Protocol 3 scheduler,
-the delegate plugin, the dashboard — so what remains is agent definitions, five custom
-tools, and one worktree adapter.
-
-Permission inheritance is the gate. Naru's entire safety model rests on only
-`naru-writer` holding `edit`. Verify that first; if it does not hold, nothing else is
-worth migrating.
-
 ## Residual risks
 
 1. **Prompt policy is not enforcement.** Checkpoints, scope discipline, and evidence
-   requirements are instructions to a model. Only the permission map, the posting tool's
-   orchestrator-only boundary and derivation of `COMMENT`, `APPROVE`, or `REQUEST_CHANGES`
-   from asserted current-message policy plus final evidence gates, and worktree path containment
-   are mechanical.
+   requirements are instructions to a model. Only the per-agent permission rules, the
+   posting tool's `naru`-only boundary and derivation of `COMMENT`, `APPROVE`, or
+   `REQUEST_CHANGES` from asserted current-message policy plus final evidence gates, and
+   worktree path containment are mechanical. The worker shell denies are prefix globs and
+   can be evaded by wrapper commands.
 2. **Naru is not a sandbox.** It does not contain repository code, package scripts, or
    shell commands.
 3. **One maintainer.** Response times and support scope are bounded by that.
-4. **Upstream churn.** OpenCode v2 may change agent, tool, or permission contracts.
+4. **Upstream churn.** OpenCode 2.x may change agent, tool, or permission contracts; Naru
+   accepts only 2.0.x until a newer minor is tested.
 
 ## Non-goals
 

@@ -3,8 +3,7 @@
 // model dispatch, and explicitly opted-in configured MCP policy.
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename } from 'node:path';
 const MAX_CONFIG_BYTES = 64 * 1024;
 const WORKSPACE_MODES = Object.freeze(['auto', 'shared', 'worktree'] as const);
 const REVIEW_PROFILES = Object.freeze(['standard', 'release-critical'] as const);
@@ -98,9 +97,8 @@ export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
     if (implementation.cleanWorkspaceRequired !== undefined && implementation.cleanWorkspaceRequired !== true) {
         throw new Error('implementation.cleanWorkspaceRequired must be true');
     }
-    // The optional models block is validated by tools/naru-lib/dispatch.mjs,
-    // which is its only consumer; here it only needs to be a plain object so
-    // that a typo cannot break the worktree tool or doctor.
+    // The optional models block has no consumer; it only needs to be a plain
+    // object so that a typo cannot break the worktree tool.
     if (value.models !== undefined && !isPlainObject(value.models)) {
         throw new Error('models must be a plain object of model classes');
     }
@@ -127,27 +125,6 @@ export function parseRuntimeConfig(value: unknown = undefined): RuntimeConfig {
             defaultOutput: enumOption(review.defaultOutput, DEFAULT_RUNTIME_CONFIG.review.defaultOutput, REVIEW_OUTPUTS, 'review.defaultOutput'),
         },
     };
-}
-function mergeRawRuntimeValue(base: unknown, overlay: unknown): unknown {
-    if (!isPlainObject(base) || !isPlainObject(overlay)) return overlay;
-    const result: UnknownRecord = {};
-    const set = (key: string, value: unknown) => Object.defineProperty(result, key, { configurable: true, enumerable: true, value, writable: true });
-    for (const [key, value] of Object.entries(base)) set(key, value);
-    for (const [key, value] of Object.entries(overlay)) {
-        if (key === 'models' && isPlainObject(value) && Object.keys(value).length === 0) set(key, {});
-        else set(key, mergeRawRuntimeValue(result[key], value));
-    }
-    return result;
-}
-export function mergeRuntimeConfigLayers(layers: readonly unknown[]): RuntimeConfig {
-    let merged: unknown = {};
-    for (const layer of layers) {
-        if (layer === undefined || layer === null) continue;
-        // Validate every layer before it can be hidden by a later override.
-        parseRuntimeConfig(layer);
-        merged = mergeRawRuntimeValue(merged, layer);
-    }
-    return parseRuntimeConfig(merged);
 }
 function hasControl(value: string): boolean {
     for (let index = 0; index < value.length; index += 1) {
@@ -206,20 +183,3 @@ async function loadRawRuntimeConfigFile(path: string, optional: boolean): Promis
         await handle.close();
     }
 }
-export async function loadRuntimeConfigLayers(paths: readonly string[]): Promise<RuntimeConfig> {
-    const values: unknown[] = [];
-    const seen = new Set<string>();
-    for (const path of paths) {
-        const canonical = resolve(path);
-        if (seen.has(canonical)) continue;
-        seen.add(canonical);
-        const value = await loadRawRuntimeConfigFile(canonical, true);
-        if (value !== undefined) values.push(value);
-    }
-    return mergeRuntimeConfigLayers(values);
-}
-export function globalRuntimeConfigPath(env: Readonly<Record<string, string | undefined>> = process.env, home = homedir()): string {
-    const configHome = env.XDG_CONFIG_HOME;
-    return join(configHome && configHome.length > 0 ? resolve(configHome) : join(resolve(home), '.config'), 'opencode', 'naru-runtime.json');
-}
-export const IMPLEMENTATION_WORKSPACE_MODES = WORKSPACE_MODES;

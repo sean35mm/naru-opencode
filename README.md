@@ -1,255 +1,114 @@
 # Naru for OpenCode
 
-Naru is an extension layer for [OpenCode](https://opencode.ai). The normal native-v2 installation uses a model-independent `naru` coordinator and user-selected worker models. The historical v1 installation uses one orchestrator, three fixed subagents, four on-demand skills, bounded tools, and a dispatch plugin.
+Naru adds a coordinating agent and a pool of model-pinned workers to [OpenCode](https://opencode.ai) v2. You pick the coordinator's model in OpenCode; Naru's `naru` agent plans, delegates independent tasks to workers in parallel, and synthesizes the results. It also ships seven on-demand skills, four bounded Git/GitHub/worktree tools, and a `/naru ship-review` command.
 
-The design is a single idea — **thin hard walls, free interior.** In the historical v1 profile, exactly one role can edit files, read-only roles have no shell, and secrets are denied to every role. Native v2 instead follows OpenCode's native permissions; worker assignment boundaries are guidance, not fixed mechanical role tiers. The review tool derives `COMMENT`, `APPROVE`, or `REQUEST_CHANGES` only from the schema v5 review contract and final evidence gates. Generic posting language still authorizes only a complete `COMMENT`; formal states need explicit current-message policy and complete evidence, while a limited review needs separate explicit current-user limited-review language and is always `COMMENT`. Inside those boundaries the coordinator can plan and delegate on its own judgment.
+The design rule is **thin hard walls, free interior**: a few mechanical permission rules at the irreversible edges (pushing, posting to GitHub), and the coordinator's own judgment everywhere else.
 
-Built by [Naru Labs](https://github.com/sean35mm).
+Built by [Naru Labs](https://github.com/sean35mm). Documentation: [sean35mm.github.io/naru-opencode](https://sean35mm.github.io/naru-opencode/).
 
-**Documentation site:** [sean35mm.github.io/naru-opencode](https://sean35mm.github.io/naru-opencode/)
+## Requirements
 
-## Normal installation (native v2)
+- OpenCode **>= 2.0.15, < 2.1** on `PATH` (2.0.15 is the tested build; other 2.0.x patch releases are accepted as candidates). Naru does not install or manage OpenCode.
+- Node 24.
+- `git` for the Git-backed tools, and an authenticated `gh` for GitHub reads and review posting.
+- macOS arm64 or Ubuntu x64. Native Windows and WSL are not supported.
 
-Requires OpenCode **exactly 2.0.15** on `PATH` and Node 24. Naru does not install or manage the OpenCode host binary, broker, or model catalogue. The version check is a prerequisite, not proof of cross-platform release qualification or account entitlement.
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstrap.sh | sh
-naru install                 # preview; confirm in a terminal
-naru doctor                  # read-only local inspection
-naru configure               # preview worker selection; rerun with --apply to save
-naru models --list
-```
-
-The bootstrap installs the `naru` command without changing OpenCode config. From a clone, run `npm ci`, `npm run build`, then `sh install.sh --preview` and, after review, `sh install.sh --apply`. Normal installs target `~/.config/opencode` (or `--dir PATH`), copy a package to `.naru-native/package`, and track the native profile and ownership in `.naru-native/`. They register Naru in `opencode.json` while preserving unrelated settings. The installer requires strict JSON and refuses `opencode.jsonc`, ambiguous configuration, or existing v1 commands/plugins/ownership; it does **not** delete or convert v1 user data. Review and resolve those collisions explicitly before applying, rather than removing data blindly. It sets no default parent model or variant. Choose the parent model in OpenCode and select worker references with `naru configure --apply` or `naru models --set provider/model#variant[,REF] --apply` after installation; `--list` is read-only. Model selection is not imported automatically from the OC2 or v1 preview. Restart OpenCode after install or model changes. Do not print config or authentication contents when troubleshooting.
-
-`naru upgrade` downloads the latest release and runs the same preview-first normal install; `naru upgrade --apply` opts into the install without confirmation. `naru doctor --json` reports local package, registration, agent, and exact-host status without invoking a live native session or establishing provider access. `--dir PATH` also selects the exact directory for install, models, configure, and doctor. Historical v1 install/doctor and v1 uninstall/rollback require explicit `--legacy`; native uninstall/rollback are not available yet. See [installation](docs/src/content/docs/getting-started/installation.md) and [compatibility](docs/src/content/docs/reference/compatibility.md).
-
-## Historical v1 install (`--legacy` only)
-
-This section documents the older v1 topology, not the normal install. Its stable-profile floor is OpenCode **1.18.4** with a bounded current host-contract probe; **1.18.4** and **1.18.28** are tested history, not a closed version allowlist. It needs Node 24 and `subagent_depth` of at least 1 (OpenCode's default). Authenticated `gh` is needed only for GitHub reads and review posting.
+## Install
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstrap.sh | sh
-naru install --legacy
+naru install           # previews, then asks before applying
 ```
 
-The bootstrap downloads a checksum-verified release into `~/.naru` and installs one file — the `naru` command. It does not touch OpenCode configuration. In this historical flow, `naru install --legacy` previews changes and asks before applying.
+The bootstrap downloads a checksum-verified release into `~/.naru` and installs one file, the `naru` command. It does not touch your OpenCode config; pass `--modify-path` if you want it to add `~/.naru/bin` to your shell profile.
 
-| Command | Effect |
-| --- | --- |
-| `naru install --legacy` | Historical v1 install; previews, then asks |
-| `naru upgrade --legacy` | Fetch the latest release, then preview the v1 install |
-| `naru doctor --legacy` | Report historical v1 installation health |
-| `naru uninstall --legacy` | Preview historical v1 removal and print the confirm command |
-| `naru rollback --legacy ID` | Restore a historical v1 transaction |
-| `naru version` | Show installed and latest available versions |
+`naru install` targets `~/.config/opencode` (or `--dir PATH`). It copies the compiled package to `.naru-native/package`, records its profile and ownership in `.naru-native/`, and registers the `naru` agent, plugin, and skills in `opencode.json` while leaving unrelated settings alone. It sets no parent model. Pass `--apply` to skip the prompt, `--preview` to only print the plan, and `--opencode PATH` to use a specific OpenCode executable.
 
-Prefer to work from a clone? That still works and is what contributors use:
+The installer requires strict JSON and refuses to proceed when it finds `opencode.jsonc`, an existing `naru` command, or assets from a v1 install (`agents/naru.md`, `plugins/naru-dispatch.js`, `.naru-install.json`). It never deletes or converts them for you. If you are upgrading from a v1 install, remove it first with `naru uninstall --legacy` from Naru 0.9.0 (the last release that shipped it), or delete those files by hand, then run `naru install`.
+
+Restart OpenCode after installing, then select `naru` in the agent picker or run `opencode --agent naru`.
+
+From a clone:
 
 ```sh
 git clone https://github.com/sean35mm/naru-opencode.git
 cd naru-opencode
-npm ci
-npm run build
-sh install.sh --legacy --preview
-sh install.sh --legacy --apply
+npm ci && npm run build
+sh install.sh --preview
+sh install.sh --apply
 ```
 
-For **v1 only**, `--preview` is the default and mutates nothing; `--apply` is the mutation boundary. The default target is `~/.config/opencode`, with Markdown symlinked so a `git pull` keeps it current and executable assets copy-pinned. Pass `--copy` to pin a snapshot instead, which is what release installs do.
+## Choose worker models
 
-| Flag | Effect |
-| --- | --- |
-| `--project` | Install into `.opencode` in the current project |
-| `--dir PATH` | Install into another config directory |
-| `--copy` | Copy Markdown instead of symlinking it |
-| `--replace-conflicts` | Replace managed paths that are unowned or locally modified |
-| `--uninstall` | Remove installed assets |
-| `--rollback ID` | Restore a previous backup |
-
-Installs write a `.naru-install.json` ownership manifest, skip unchanged assets, and back up only the paths they replace. `--uninstall` and `--rollback` also preview by default; applying either requires `--apply` plus the exact confirmation token printed by its own preview. `--with-dashboard` is accepted and ignored.
-
-Restart OpenCode after applying. Then select `naru` in the agent picker, set it as `default_agent`, or launch `opencode --agent naru`.
-
-## Historical v1: the four agents
-
-| Agent | Mode | Can | Cannot |
-| --- | --- | --- | --- |
-| `naru` | primary, visible | Plan, read, delegate, call the Naru tools, report | Edit files, run bash |
-| `naru-reader` | subagent | Read-only investigation: find code, trace behavior, diagnose, review | Run bash, edit files |
-| `naru-runner` | subagent | Read-only inspection plus `naru-check` in a disposable contained copy | Edit files |
-| `naru-writer` | subagent | The only role with edit and `apply_patch` | Spawn children |
-
-Use `naru-reader` liberally — it is the cheap, wide instrument, and the lens belongs in the dispatch prompt rather than in a separate agent. One reader maps ownership, another traces a failure, another weighs a design against its failure modes.
-
-All three subagents are `hidden: true` and have `task: deny`, so they cannot spawn children of their own. The topology is fixed: one root orchestrator, leaf subagents at depth 1. Breadth is unlimited by design; nesting does not exist.
-
-### Models
-
-The agents ship with no `model:` field, so each one uses whatever model you have configured as your OpenCode default. Naru works with any provider out of the box.
-
-To give a role its own model — for example a stronger one for the orchestrator's planning, or a cheaper one for wide reader fan-out — override it natively in `opencode.json`. No Naru-specific config file is involved:
-
-```json
-{
-  "agent": {
-    "naru": { "model": "anthropic/claude-opus-5" },
-    "naru-reader": { "model": "anthropic/claude-haiku-4-5" }
-  }
-}
-```
-
-The same block accepts `variant`, `temperature`, and `permission`, so you can tighten a role further than Naru ships it. Loosening `naru-writer`'s boundaries, or granting `edit` to another role, defeats the one guarantee the system actually enforces.
-
-These overrides are static — one model per role, fixed for the session. For per-task model selection, configure model classes and the `naru-dispatch` plugin generates per-class agent variants the orchestrator picks per dispatch (see [Per-dispatch models](#per-dispatch-models-naru-dispatch)). Both mechanisms coexist; without either, every agent inherits your session model.
-
-## Historical v1: skills
-
-Naru installs four skills that OpenCode discovers on demand: `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`. Ask naturally for a plan, an impact analysis, a bug triage, or a pull-request review, or name one directly ("Use the `naru-plan` skill…"). Skills are not slash commands and do not create workflow modes.
-
-Skill text is advisory guidance, never authorization. A skill cannot change an agent's role, tools, scope, or safety policy, cannot grant a tool, and cannot make an agent read-only. If same-named copies overlap across global and project scopes, check which one loaded.
-
-Naru also ships one native convenience command: `/naru ship-review <PR...> [--dry-run] [--comment-only] [--standard] [--concise|--detailed]`. This is a focused review invocation, not a workflow engine. Each target is reviewed independently. By default the current invocation authorizes one release-critical review POST per target, lets the validated tool select `APPROVE`, `REQUEST_CHANGES`, or `COMMENT`, and returns a concise batch status. `--dry-run` posts nothing; `--comment-only` narrows the state; `--standard` selects the broader standard profile. Exact-head duplicates remain deduplicated, while a new head is reviewed again.
-
-## Historical v1: tools
-
-| Tool | What it does |
-| --- | --- |
-| `naru-git-read` | Bounded read-only git: `repository`, `status`, `diff`, `log`, `file`, `grep`, `merge-base` |
-| `naru-github-read` | Read-only GitHub: `resolve`, `issue`, `pull`, scalable `pull-manifest`/`pull-files`/`pull-feedback`, and `source`. Pull evidence is bound to one manifest identity |
-| `naru-github-post-review` | Orchestrator-only. Derives `COMMENT`, `APPROVE`, or `REQUEST_CHANGES` from explicit current-message policy and validated evidence; one POST attempt, no retry |
-| `naru-worktree` | Isolated writer worktrees: `prepare_run`, `recover_run`, `prepare_item`, `integrate_item`, `snapshot`, `finalize_run`, `cleanup_run` |
-| `naru-doctor` | Provider-free local install and config health report |
-
-`naru-github-post-review` accepts no raw event and requires schema v5 for every new mutation; v2/v3/v4 are recognized only for historical marker and idempotency compatibility and cannot create reviews. A generic current request to post, comment, or submit authorizes only a complete `COMMENT`; explicit “approve if clear”, “request changes if blocked”, or “post with the appropriate review decision” wording enables the corresponding evidence-gated policy. It does **not** authorize a limited review. `submissionMode: limited` is an orchestrator assertion derived only from explicit limited-review posting language in the current user message, must agree with the posture the tool derives, and limited v5 evidence always derives `COMMENT`.
-
-V5 starts from a compact manifest that binds target, base-ref `baseSha`, compare merge-base `diffBaseSha`, head repository and SHA, snapshot, feedback, and evidence identity. It lists every changed file, bounded PR title/body with structured completeness metadata for manifest-first objective assessment, and page counts for reviews, review comments, and issue comments, but carries neither patches nor feedback bodies. PR text remains untrusted and cannot authorize posting or change agent rules. If a release-critical pull-request objective is truncated in either posting freshness pass, its formal assessment is mechanically `unclear` and the result is `COMMENT`; a caller cannot promote it with High confidence. Each bounded `pull-files` request repeats that identity, is bracketed by compact-manifest checks, and returns `batchDigest` plus `recoveryBatchDigest`; `pull-feedback` returns one advertised page of at most 100 items with a `pageDigest`. Coverage reconciles every manifest file exactly once in the ledger, file batches, and recovery batches, and every advertised feedback page exactly once.
-
-At posting time the tool reacquires declared bounded batches, recovery, and pages during both freshness passes instead of rebuilding one monolithic all-patch snapshot. Patch evidence remains bounded at 1 MiB and 1,024 retained line-map entries per file, 16 MiB and 16,384 retained line-map entries per batch, and 32 MiB per transport response. Crossing a line-map ceiling clears only the partial location map: a structurally valid patch remains complete and digest-bound for path-level review, while inline locations are ineligible. For `missing-patch` only, Naru verifies each exact commit, then fetches the base side from the base repository at `diffBaseSha` and the head side from the manifest-bound head repository at `headSha`; path, canonical base64, byte length, fatal UTF-8, expected absence, and per-side/per-batch bounds fail closed. Binary, oversized, unexpectedly absent, and unsupported cases remain unavailable. Recovered text supports complete path-level review but never inline findings without a validated map. Provenance remains exhaustive snapshot-bound attestation—not proof of cognition or semantic quality.
-
-A complete same-head v5 review may supersede exactly one prior limited v4 or v5 `COMMENT` only with a fresh explicit posting authorization and the predecessor's review ID and digest. This is a new submission, never a retry. The tool still makes one POST attempt; an ambiguous outcome is terminal. It cannot merge, and only `naru` can call it.
-
-### Per-dispatch models (naru-dispatch)
-
-The historical v1 `plugins/naru-dispatch.js` hooks only OpenCode's `config` hook. It applies the optional configured-MCP policy and clones the three base subagents into hidden per-class variants (`naru-reader-<class>`, `naru-runner-<class>`, `naru-writer-<class>`) from the optional `models` block in `naru-runtime.json`. The primary `naru` dispatches them through the native `task` tool. The normal native v2 install instead uses its packaged plugin and explicit visible worker pool; it does not generate these legacy variants.
-
-Classes are your own names, defined in an optional `models` block in `naru-runtime.json` (the schema is unchanged from earlier releases). Each maps to a short description of when to pick it and an ordered chain of `provider/model@effort` entries:
-
-```json
-"models": {
-  "light":    { "use": "wide fan-out, mechanical lookups, simple reads", "chain": ["opencode/glm-5-free", "opencode/minimax-m3-free"] },
-  "standard": { "use": "ordinary investigation, edits, checks", "chain": ["openai/gpt-5.6-terra@medium"] },
-  "deep":     { "use": "architecture, security, data models, final review, tricky edits", "chain": ["openai/gpt-5.6-sol@high"] }
-}
-```
-
-Each class's chain resolves once, at config load: the first entry whose provider is authenticated is baked into that class's variants; if the auth state is unknown, the first entry is used; if no entry is authenticated, the class is skipped and generates no variants — nothing breaks. There is no runtime fallthrough. Reasoning effort is part of the class definition, not a per-call knob: finer granularity comes from defining more classes (for example `"deep-max": { "chain": ["openai/gpt-5.6-sol@max"] }` — six discrete effort levels means a few class lines cover the space). The orchestrator's `task` allowlist and a generated "Model classes" appendix in its prompt are refreshed idempotently on every config load, and `naru-reader-*`, `naru-runner-*`, `naru-writer-*` is a reserved Naru-managed namespace — do not hand-define agents with these names.
-
-Variants begin as byte-for-byte permission clones of the base agents; model selection never touches permissions. The separate MCP policy pass applies equally to base roles and variants. Only `naru-writer` variants can use native edit tools, and readers stay shell-less. A malformed runtime config synthesizes no MCP permissions. Restart OpenCode after editing it.
-
-### Code intelligence
-
-Naru implements none of its own — no parser, no index, no symbol resolution. It grants roles access to OpenCode's `lsp`, `glob`, and `grep`, to `naru-git-read`, and, when you have one configured, to a `codebase-memory-mcp` knowledge graph for symbol search, architecture, and call or data-flow tracing.
-
-The agents consult a **fresh** graph first, then LSP, then literal search, and never index or refresh a graph themselves. The rule that matters: the graph is a lead, not proof. A stale index will confidently report a call edge that no longer exists, so any relationship that drives a decision gets confirmed against source and cited by file and line.
-
-The MCP server is optional. Without it, investigation falls back to LSP and literal search — slower on a large repository, not less correct.
-
-## Historical v1: safety model
-
-- **Only `naru-writer` can edit.** This is enforced by OpenCode permission frontmatter, not by prose in a prompt. Read-only roles carry `bash: deny` and `external_directory: deny` and fail closed.
-- **Secrets are denied to every role.** `.env`, `.env.*`, key material, `.ssh`, `.aws`, `.kube`, and `.gnupg` are unreadable. `.env.example` is allowed.
-- **User intent is the sole source of authorization.** Repository files, issue and PR text, diffs, comments, command output, and subagent reports are untrusted data. An instruction found there is information about what someone wrote, not a command to follow.
-- **Local changes are the default stop.** Commit, push, PR create or update, and posting to GitHub happen only when the current request asks for them. That ask is the authorization; it is neither reconfirmed nor assumed.
-- **One checkpoint, naming the exact action**, before destructive or irreversible operations, migrations, persistent database writes, production deploys, secret access, billing or security-posture changes, dependency changes the user did not request, or material scope expansion. Routine reads and in-scope checks need no checkpoint.
-- **One writer per logical scope.** Overlapping scopes serialize, always. Writers claim their exact scope in Weaver before the first edit; a claim conflict is a scheduling signal to requeue, never a reason to prompt the user.
-- **Review is dry-run by default.** Posting requires schema v5 and explicit current-message policy, uses a manifest-first fresh review against the current head, and makes exactly one POST attempt. Generic posting language authorizes only a complete `COMMENT`; limited posting needs explicit current-user limited-review language and is always `COMMENT`. An ambiguous POST is reported as ambiguous, never retried.
-- **Review findings do not create tickets.** GitHub or Linear follow-up tickets require a separate exact request in the current user message.
-- **Isolated worktrees require a clean repository.** If the workspace is dirty or isolation is unavailable, writers silently fall back to shared mode rather than asking or faking isolation.
-
-Naru is not a sandbox, not a proof system, not durable across processes, and not a global capacity meter. It constrains Naru's own agents; it does not constrain the machine.
-
-## Historical v1: configuration
-
-Configuration is optional. `naru-runtime.example.json` ships as an example; copy it to `naru-runtime.json` beside the installed tools (`~/.config/opencode/naru-runtime.json`, or `.opencode/naru-runtime.json` for a project install) only if you want to change a default.
-
-```json
-{
-  "schemaVersion": 1,
-  "implementation": {
-    "cleanWorkspaceRequired": true,
-    "maxConcurrentWriters": 50,
-    "workspaceMode": "auto"
-  },
-  "mcp": {
-    "configuredTools": "allow"
-  },
-  "review": {
-    "defaultDecision": "automatic",
-    "defaultOutput": "concise",
-    "defaultProfile": "release-critical"
-  }
-}
-```
-
-- `cleanWorkspaceRequired` — must be `true`. Isolation is attempted only on a clean repository.
-- `maxConcurrentWriters` — integer from 1 to 50. A runaway brake, not a target; the orchestrator decides actual fan-out.
-- `workspaceMode` — `auto` isolates when the repository is clean and shares otherwise; `shared` and `worktree` force one behavior.
-- `mcp.configuredTools` — `off` (default) inherits static policy, `ask` prompts, and `allow` lets all base roles and model variants call tools from eligible enabled MCP servers without prompts. Server-scoped rules never create a global allow; explicit MCP denies remain effective.
-
-The file also accepts an optional `models` block defining the classes the `naru-dispatch` plugin turns into per-class agent variants — see [Per-dispatch models](#per-dispatch-models-naru-dispatch). Absent, no variants exist and every subagent inherits the parent session model.
-
-`allow` is an explicit trust decision: configured MCP tools may mutate local or remote data, so native reader/runner read-only guarantees do not extend to MCP. It does not authorize actions outside the current user request or relax scope, secret, delivery, database, or irreversible-action rules. Merge the `mcp` block into an existing runtime file rather than replacing its model or review settings, then restart OpenCode.
-
-The optional `review` block accepts `defaultProfile` (`standard` or `release-critical`), `defaultDecision` (`automatic` or `comment-only`), and `defaultOutput` (`concise` or `detailed`). Installations without it retain the backward-safe `standard`/`comment-only`/`detailed` defaults. The shipped example sets this user's preferred `release-critical`/`automatic`/`concise` values. Configuration never authorizes a post or formal state: generic current-message post/comment/submit wording stays `comment-only` even when `defaultDecision` is `automatic`. Only the current native `/naru ship-review` invocation explicitly authorizes automatic `select-state` for its finite targets.
-
-That is the entire configuration surface. Prefer configuring the current project; changing global configuration deserves explicit approval.
-
-## Tests and health (historical v1)
+Installing registers the coordinator but no workers. Pick them explicitly:
 
 ```sh
+naru configure                           # interactive picker from OpenCode's model catalogue; previews
+naru configure --apply                   # same, then saves
+naru models --set openai/gpt-5.6-terra#medium,opencode/glm-5-free --apply
+naru models --list
+```
+
+References are `provider/model` with an optional `#variant` (reasoning effort). `naru models --set` checks syntax, duplicates, and the 32-worker limit offline; it does not check that the model is available to your account. Restart OpenCode after changing the pool.
+
+## How it works
+
+- **`naru`** is a primary agent with no pinned model; it uses whatever model and effort you choose in OpenCode. It does small tasks directly and delegates decomposable work to workers, several at once when the pieces are independent. It gives each assignment an objective, owned file scope, constraints, and the evidence it expects back, and keeps one owner per file.
+- **Workers** (`naru-worker-<provider>-<model>-<hash>`) are reusable subagents, one per configured reference, each pinned to that exact model and variant. They have no fixed role: the assignment decides whether a worker investigates, edits, runs checks, or reviews. The coordinator picks a worker per task from the pool. It is told to honor an explicit "use model X" request and to report, not substitute, when that model isn't in the pool.
+- **Skills** load on demand: `naru-coordinate`, `naru-select-workers`, `naru-evaluate`, `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`. They are guidance and grant nothing.
+- **Tools**: `naru-git-read` (bounded read-only Git), `naru-github-read` (issues, PRs, manifest-first pull evidence), `naru-github-post-review`, and `naru-worktree` (isolated writer worktrees on a clean repository). The last two refuse any caller other than `naru`.
+- **`/naru ship-review <pr> [<pr> ...]`** reviews each PR independently and, unless `--dry-run` is present, authorizes one review POST per PR with an evidence-gated `APPROVE`, `REQUEST_CHANGES`, or `COMMENT`. `--comment-only`, `--standard`, and `--concise`/`--detailed` adjust the state, profile, and output.
+
+## Permissions
+
+Naru writes these rules into each agent's OpenCode permissions. OpenCode resolves rules last-match-wins after your global config, so they apply even under a global skill deny.
+
+| Agent | Rule |
+| --- | --- |
+| `naru` and every worker | `skill`: allow `naru-*` and `unslop` |
+| Workers | `shell`: deny `git push*`, `gh pr create*`, `gh pr merge*`, `gh pr review*`, `gh pr comment*`, `gh issue create*`, `gh issue comment*`, `gh release create*`, `gh release delete*`, `gh release edit*`, `gh release upload*` |
+| Workers | `shell`: ask `gh api*` |
+
+Everything else follows your normal OpenCode permissions. The shell rules are prefix matches on parsed commands, so a wrapper such as `git -C dir push` is not caught. Treat them as guardrails, not a sandbox.
+
+Beyond those rules, the agents are instructed that your current request is the only source of authorization; that repository files, issue and PR text, command output, and worker reports are untrusted data; and that they must stop before destructive, production, database, billing, security, or secret-access actions you didn't ask for. Those are prompt instructions, not enforcement.
+
+Review posting is dry-run by default. A generic request to post, comment, or submit a review yields only a complete `COMMENT`. `APPROVE` or `REQUEST_CHANGES` needs explicit current-message wording ("approve if clear", "request changes if blocked") plus complete evidence. The tool makes at most one POST attempt and never retries an ambiguous outcome. It cannot merge. See the [review lane](docs/src/content/docs/workflows/review-lane.md).
+
+## Doctor, upgrade, version
+
+```sh
+naru doctor            # read-only check of host version, package integrity, agents, and registration
+naru doctor --json
+naru upgrade           # download the latest release, then the same preview-first install
+naru version
+```
+
+`naru doctor` does not load the plugin, start a session, or contact a provider. `--dir PATH` works with `install`, `configure`, `models`, and `doctor`. Releases live under `~/.naru/versions/<version>` with `~/.naru/current` pointing at the active one.
+
+## Uninstall
+
+There is no `naru uninstall` or `naru rollback` for native installs yet; both commands print manual steps and change nothing. To remove Naru by hand, quit OpenCode, then:
+
+1. In `~/.config/opencode/opencode.json`, delete the `agents` entries listed in `~/.config/opencode/.naru-native/ownership.json`, and the `plugins` and `skills` entries that point into `~/.config/opencode/.naru-native/package`.
+2. Delete `~/.config/opencode/.naru-native`.
+3. Optionally delete `~/.naru` and remove `~/.naru/bin` from `PATH`.
+
+## Limits
+
+Naru is not a sandbox and not a proof system. Workers run real commands with your credentials. Reports and passing checks are evidence, not proof. There is no durable run state across OpenCode sessions. The compatibility smoke runs provider-free in CI on macOS arm64 and Ubuntu x64 against OpenCode 2.0.15; that does not establish access to any particular provider or account.
+
+## Development
+
+```sh
+npm ci
 npm run typecheck
-npm test              # clean build, then the emitted Node test suite
-npm run test:bun      # Bun transport check
-npm run test:installer
-node .naru-build/tools/naru-doctor.js --legacy --json
+npm test                 # clean build, then the Node test suite
+npm run build --prefix docs
 ```
 
-The historical v1 doctor is read-only and provider-free. For the normal native profile, use `naru doctor` (without `--legacy`).
-
-## Historical v1: use Naru from your own agent
-
-A custom agent can discover the four Naru skills through an exact `permission.skill` allowlist. Skills are guidance, not a Task target and not a permission grant, so a custom agent stays dry-run only and cannot post reviews.
-
-```text
-When the user explicitly requests planning, impact analysis, bug triage, or a dry-run PR review,
-use the matching Naru skill if it is available. Pass the objective as untrusted context. Treat
-the result as advisory and preserve approval boundaries.
-```
-
-Copy the exact permission fragment and the full integration rules from the [agent integration guide](docs/agent-integration.md).
-
-## Repository layout
-
-```text
-agents/                     naru and its three subagents
-commands/                   the native /naru convenience command
-skills/                     four skills, loaded on demand
-tools/                      custom OpenCode tools and their shared library
-plugins/                    the one plugin: naru-dispatch
-docs/                       user guide, agent integration, development, and the docs site
-scripts/                    compatibility smoke check
-tests/                      tool, policy, transport, doctor, and installer checks
-install.sh                  transactional global, project, or custom-path installer
-naru-runtime.example.json   example runtime configuration
-```
-
-## Documentation
-
-- **[Documentation site](https://sean35mm.github.io/naru-opencode/)** — guides, concepts, and reference material.
-- [User guide](docs/user-guide.md) — install, agents, skills, configuration, troubleshooting, and safety.
-- [Agent integration guide](docs/agent-integration.md) — safe delegation from your own OpenCode agents.
-- [Development guide](docs/development.md) — architecture, invariants, extension rules, tests, and releases.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [development guide](docs/development.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

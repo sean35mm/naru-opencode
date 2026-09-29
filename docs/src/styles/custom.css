@@ -218,7 +218,7 @@ starlight-toc h2 {
 }
 
 .hero .copy::before {
-  content: 'Adaptive multi-agent · OpenCode 1.18.4+';
+  content: 'Coordinator and worker pool · OpenCode 2.0.x';
   font-family: var(--sl-font-mono);
   font-size: 0.72rem;
   font-weight: 500;

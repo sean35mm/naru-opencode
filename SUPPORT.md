@@ -6,7 +6,7 @@ Naru is a solo-maintainer, local-first project for OpenCode. Support is limited 
 
 - Use [GitHub Issues](https://github.com/sean35mm/naru-opencode/issues) for non-confidential questions, reproducible bugs, documentation corrections, and feature proposals.
 - Use the [private security advisory route](SECURITY.md) for vulnerabilities or anything that could expose secrets or enable an exploit. Do not use a public issue for security reports.
-- Start with the [README](README.md), [user guide](docs/user-guide.md), and [development guide](docs/development.md) for documented installation, usage, safety, and check instructions.
+- Start with the [README](README.md), [documentation site](https://sean35mm.github.io/naru-opencode/), and [development guide](docs/development.md) for documented installation, usage, safety, and check instructions.
 
 The existing [compatibility reference](docs/src/content/docs/reference/compatibility.md) defines the release target, exclusions, and what provider-free observations count as evidence. It does not claim that the compatibility matrix passed; this page likewise makes no support claim beyond the explicitly documented target and evidence boundary.
 

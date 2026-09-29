@@ -2,7 +2,7 @@ import { cp, mkdir } from 'node:fs/promises';
 
 const outputRoot = new URL('../.naru-build/', import.meta.url);
 
-for (const directory of ['agents', 'bin', 'commands', 'skills']) {
+for (const directory of ['bin', 'commands']) {
   await cp(new URL(`../${directory}/`, import.meta.url), new URL(`${directory}/`, outputRoot), {
     recursive: true,
   });
@@ -12,8 +12,6 @@ for (const file of [
   'bootstrap.sh',
   'install.sh',
   'LICENSE',
-  'naru-runtime.example.json',
-  'naru-visual-guide.html',
   'README.md',
   'THIRD_PARTY_NOTICES',
   'VERSION',
@@ -24,7 +22,6 @@ for (const file of [
 for (const file of [
   'docs/src/content/docs/workflows/agents.md',
   'docs/src/content/docs/workflows/review-lane.md',
-  'docs/user-guide.md',
 ]) {
   const destination = new URL(file, outputRoot);
   await mkdir(new URL('./', destination), { recursive: true });
@@ -38,4 +35,3 @@ await mkdir(new URL('tools/oc2-native-plugin/', outputRoot), { recursive: true }
 await cp(new URL('../tools/oc2-native-plugin/package.json', import.meta.url), new URL('tools/oc2-native-plugin/package.json', outputRoot));
 await cp(new URL('../commands/naru.md', import.meta.url), new URL('tools/oc2-native-plugin/command.md', outputRoot));
 await cp(new URL('../tools/oc2-native-plugin/skills/', import.meta.url), new URL('tools/oc2-native-plugin/skills/', outputRoot), { recursive: true });
-await cp(new URL('../tests/install.test.sh', import.meta.url), new URL('tests/install.test.sh', outputRoot));

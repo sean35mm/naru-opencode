@@ -21,7 +21,6 @@
     "scripts/copy-build-assets.mjs"
   ],
   "include": [
-    "plugins/**/*.ts",
     "scripts/**/*.mts",
     "tests/**/*.mts",
     "tools/**/*.ts",

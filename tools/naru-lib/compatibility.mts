@@ -1,16 +1,15 @@
-export const COMPATIBILITY_SCHEMA_VERSION = 3;
+export const COMPATIBILITY_SCHEMA_VERSION = 4;
 const COMPATIBILITY_COMPONENTS = ['opencode', 'node', 'bun', 'git', 'gh'] as const;
 const CHECK_STATUSES = ['passed', 'failed', 'omitted'] as const;
-const COMPATIBILITY_PROFILES = ['stable', 'native-v2'] as const;
+const COMPATIBILITY_PROFILES = ['native-v2'] as const;
 type UnknownRecord = Record<string, unknown>;
 export type CompatibilityComponent = typeof COMPATIBILITY_COMPONENTS[number];
 export type CompatibilityCheckStatus = typeof CHECK_STATUSES[number];
 export type CompatibilityProfile = typeof COMPATIBILITY_PROFILES[number];
 export const REQUIRED_COMPATIBILITY_CHECKS: Readonly<Record<CompatibilityProfile, readonly string[]>> = Object.freeze({
-    stable: Object.freeze(['target-platform', 'opencode-version', 'install-preview', 'install-apply', 'naru-doctor', 'opencode-help', 'opencode-debug-paths', 'opencode-debug-config', 'core-config', 'mcp-contract', 'opencode-agent-list', 'opencode-startup', 'cleanup']),
     'native-v2': Object.freeze(['target-platform', 'opencode-version', 'install-preview', 'install-apply', 'models-preview', 'models-apply', 'native-worker-pool', 'naru-doctor', 'native-package', 'native-agents', 'native-registration', 'native-host-startup', 'native-config-source', 'native-host-agents', 'native-host-plugin', 'native-host-skills', 'native-host-command', 'cleanup']),
 });
-export type CompatibilityQualification = 'stable' | 'native-v2';
+export type CompatibilityQualification = 'native-v2';
 export type ObservedVersionStatus = 'unrecognized' | 'recorded' | 'supported' | 'candidate' | 'unsupported' | 'targeted' | 'non-target';
 
 export interface ParsedSemver {
@@ -23,7 +22,7 @@ export interface ParsedSemver {
 }
 
 export interface CompatibilityRequirement {
-    kind: 'stable-floor-probe' | 'explicit-builds' | 'major-target' | 'exact-target' | 'feature-prerequisite';
+    kind: 'explicit-builds' | 'major-target' | 'exact-target' | 'feature-prerequisite';
     version: string | null;
     builds?: readonly string[];
 }
@@ -33,23 +32,12 @@ export interface ObservedVersionEvaluation {
     observed: string | null;
     status: ObservedVersionStatus;
     requirement: CompatibilityRequirement;
-    exactCurrent?: boolean;
 }
 
 export interface PlatformEvaluation {
     id: string;
     status: 'targeted' | 'unverified' | 'unsupported';
     reason: string | null;
-}
-
-export interface DashboardEvidence {
-    requested: boolean;
-    status: 'omitted' | 'partial' | 'failed';
-    bun: { status: ObservedVersionStatus | 'omitted'; observed: string | null };
-    syntax: CompatibilityCheckStatus;
-    registration: CompatibilityCheckStatus;
-    nativeTuiLoad: 'omitted';
-    limitation: string;
 }
 
 export interface CompatibilityCheck {
@@ -68,16 +56,16 @@ export interface CompatibilityVersionEvaluations {
 }
 
 export interface CompatibilityEvidence {
-    schemaVersion: 3;
+    schemaVersion: 4;
     kind: 'naru-compatibility-evidence';
-    policyVersion: 3;
+    policyVersion: 4;
     providerFree: true;
     profile: CompatibilityProfile;
     qualification: CompatibilityQualification;
     releaseQualification: 'not-established';
     candidateIdentity: 'unverified';
     versionEvidence: {
-        classification: 'historical-tested' | 'current-target' | 'candidate-probe-required' | 'rejected';
+        classification: 'current-target' | 'rejected';
         localProbe: 'passed' | 'failed';
         releaseMatrix: 'not-established';
     };
@@ -85,14 +73,6 @@ export interface CompatibilityEvidence {
     platform: PlatformEvaluation | undefined;
     versions: CompatibilityVersionEvaluations;
     checks: CompatibilityCheck[];
-    capabilities: {
-        dashboard: DashboardEvidence;
-        hostContract: {
-            coreConfig: CompatibilityCheckStatus;
-            mcpPermissions: CompatibilityCheckStatus;
-            limitation: string;
-        };
-    };
 }
 export const COMPATIBILITY_LIMITS = Object.freeze({
     maxChecks: 24,
@@ -122,23 +102,8 @@ function isRecord(value: unknown): value is UnknownRecord {
 }
 export const COMPATIBILITY_POLICY = deepFreeze({
     schemaVersion: COMPATIBILITY_SCHEMA_VERSION,
-    policyVersion: 3,
-    release: {
-        opencode: {
-            floor: '1.18.4',
-            current: '1.18.28',
-            testedBuilds: ['1.18.4', '1.18.28'],
-            // Kept as an informational schema-v2 alias for existing consumers.
-            recognizedBuilds: ['1.18.4', '1.18.28'],
-        },
-    },
+    policyVersion: 4,
     profiles: {
-        stable: {
-            qualification: 'stable',
-            testedBuilds: ['1.18.4', '1.18.28'],
-            recognizedBuilds: ['1.18.4', '1.18.28'],
-            acceptance: 'stable-at-or-above-floor-with-probe',
-        },
         'native-v2': {
             qualification: 'native-v2',
             recognizedBuilds: ['2.0.15'],
@@ -161,16 +126,10 @@ export const COMPATIBILITY_POLICY = deepFreeze({
             required: ['opencode', 'node'],
             git: { prerequisite: true, versionFloor: null },
             providerCalls: false,
-            minimumSubagentDepth: 1,
         },
         reviewPosting: {
             git: { prerequisite: true, versionFloor: null },
             gh: { prerequisite: true, versionFloor: null },
-        },
-        dashboard: {
-            availability: 'optional-full-tui-only',
-            bunTarget: '1.3.9',
-            miniTui: 'excluded',
         },
     },
     exclusions: {
@@ -268,32 +227,17 @@ export function evaluateOpenCodeVersion(profile: unknown, output: unknown): Obse
     const selected = profilePolicy(profile);
     const observed = sanitizeObservedVersion(output);
     const parsed = observed === null ? null : parseSemver(observed);
-    let status: ObservedVersionStatus;
-    let requirement: CompatibilityRequirement;
-    if (profile === 'stable') {
-        const testedBuilds = COMPATIBILITY_POLICY.profiles.stable.testedBuilds;
-        status = parsed === null
-            ? 'unrecognized'
-            : parsed.prerelease.length > 0 || compareSemver(parsed, COMPATIBILITY_POLICY.release.opencode.floor) < 0
-                ? 'unsupported'
-                : testedBuilds.some(build => build === observed) ? 'supported' : 'candidate';
-        requirement = { kind: 'stable-floor-probe', version: COMPATIBILITY_POLICY.release.opencode.floor, builds: testedBuilds };
-    }
-    else {
-        const range = 'candidateRange' in selected ? selected.candidateRange : null;
-        status = observed !== null && selected.recognizedBuilds.some(build => build === observed) ? 'supported' : observed === null ? 'unrecognized'
-            : range && parsed && parsed.prerelease.length === 0 && compareSemver(parsed, range.floor) >= 0 && compareSemver(parsed, range.below) < 0 ? 'candidate' : 'unsupported';
-        requirement = { kind: 'explicit-builds', version: null, builds: selected.recognizedBuilds };
-    }
+    const range = selected.candidateRange;
+    const status: ObservedVersionStatus = observed !== null && selected.recognizedBuilds.some(build => build === observed) ? 'supported' : observed === null ? 'unrecognized'
+        : parsed && parsed.prerelease.length === 0 && compareSemver(parsed, range.floor) >= 0 && compareSemver(parsed, range.below) < 0 ? 'candidate' : 'unsupported';
     return {
         component: 'opencode',
         observed,
         status,
-        requirement,
-        exactCurrent: profile === 'stable' && observed === COMPATIBILITY_POLICY.release.opencode.current,
+        requirement: { kind: 'explicit-builds', version: null, builds: selected.recognizedBuilds },
     };
 }
-export function evaluateObservedVersion(component: unknown, output: unknown, profile: CompatibilityProfile = 'stable'): ObservedVersionEvaluation {
+export function evaluateObservedVersion(component: unknown, output: unknown, profile: CompatibilityProfile = 'native-v2'): ObservedVersionEvaluation {
     if (!isCompatibilityComponent(component)) {
         throw new TypeError('unknown compatibility component');
     }
@@ -321,7 +265,7 @@ export function evaluateObservedVersion(component: unknown, output: unknown, pro
 }
 function requirementFor(component: CompatibilityComponent): CompatibilityRequirement {
     if (component === 'opencode')
-        return { kind: 'stable-floor-probe', version: COMPATIBILITY_POLICY.release.opencode.floor, builds: COMPATIBILITY_POLICY.profiles.stable.testedBuilds };
+        return { kind: 'explicit-builds', version: null, builds: COMPATIBILITY_POLICY.profiles['native-v2'].recognizedBuilds };
     if (component === 'node')
         return { kind: 'major-target', version: '24' };
     if (component === 'bun')
@@ -346,35 +290,6 @@ export function evaluatePlatformTarget({ platform, arch, osId = null, wsl = fals
     }
     return { id: target.id, status: 'targeted', reason: null };
 }
-export function classifyDashboardEvidence({ requested, bun, syntax, registration }: {
-    requested?: unknown;
-    bun?: unknown;
-    syntax?: unknown;
-    registration?: unknown;
-}): DashboardEvidence {
-    if (!requested) {
-        return deepFreeze({
-            requested: false,
-            status: 'omitted',
-            bun: { status: 'omitted', observed: null },
-            syntax: 'omitted',
-            registration: 'omitted',
-            nativeTuiLoad: 'omitted',
-            limitation: 'dashboard-not-requested',
-        });
-    }
-    const bunEvaluation = evaluateObservedVersion('bun', bun ?? '');
-    const failed = bunEvaluation.status !== 'targeted' || syntax !== 'passed' || registration !== 'passed';
-    return deepFreeze({
-        requested: true,
-        status: failed ? 'failed' : 'partial',
-        bun: { status: bunEvaluation.status, observed: bunEvaluation.observed },
-        syntax: syntax === 'passed' ? 'passed' : 'failed',
-        registration: registration === 'passed' ? 'passed' : 'failed',
-        nativeTuiLoad: 'omitted',
-        limitation: 'native-full-tui-load-not-proven',
-    });
-}
 function boundedCheck(value: unknown): CompatibilityCheck {
     if (!isRecord(value))
         throw new TypeError('check must be an object');
@@ -392,12 +307,11 @@ function boundedCheck(value: unknown): CompatibilityCheck {
         : null;
     return { id: check.id, status: check.status, durationMs, diagnostic: diagnostic || null };
 }
-export function createCompatibilityEvidence({ profile, platform, versions, checks, dashboard }: {
+export function createCompatibilityEvidence({ profile, platform, versions, checks }: {
     profile: CompatibilityProfile;
     platform?: PlatformEvaluation;
     versions?: unknown;
     checks: unknown;
-    dashboard?: DashboardEvidence;
 }): CompatibilityEvidence {
     const selectedProfile = profilePolicy(profile);
     if (!Array.isArray(checks) || checks.length > COMPATIBILITY_LIMITS.maxChecks) {
@@ -414,14 +328,11 @@ export function createCompatibilityEvidence({ profile, platform, versions, check
         git: evaluateObservedVersion('git', versionRecord?.git ?? ''),
         gh: evaluateObservedVersion('gh', versionRecord?.gh ?? ''),
     };
-    const dashboardEvidence = dashboard ?? classifyDashboardEvidence({ requested: false });
-    const checkStatus = (id: string): CompatibilityCheckStatus => boundedChecks.find(check => check.id === id)?.status ?? 'omitted';
     const successful = platform?.status === 'targeted'
-        && (evaluatedVersions.opencode.status === 'supported' || (profile === 'stable' && evaluatedVersions.opencode.status === 'candidate'))
+        && evaluatedVersions.opencode.status === 'supported'
         && evaluatedVersions.node.status === 'targeted'
         && REQUIRED_COMPATIBILITY_CHECKS[profile].every(id => boundedChecks.some(check => check.id === id && check.status === 'passed'))
-        && boundedChecks.every(check => check.status !== 'failed')
-        && dashboardEvidence.status !== 'failed';
+        && boundedChecks.every(check => check.status !== 'failed');
     const passed = successful ? 'passed-local-smoke' : 'failed-local-smoke';
     const result: CompatibilityEvidence = {
         schemaVersion: COMPATIBILITY_SCHEMA_VERSION,
@@ -433,10 +344,7 @@ export function createCompatibilityEvidence({ profile, platform, versions, check
         releaseQualification: 'not-established',
         candidateIdentity: 'unverified',
         versionEvidence: {
-            classification: profile === 'native-v2' ? evaluatedVersions.opencode.status === 'supported' ? 'current-target' : 'rejected'
-                : evaluatedVersions.opencode.status === 'candidate' ? 'candidate-probe-required'
-                    : evaluatedVersions.opencode.exactCurrent ? 'current-target'
-                        : evaluatedVersions.opencode.status === 'supported' ? 'historical-tested' : 'rejected',
+            classification: evaluatedVersions.opencode.status === 'supported' ? 'current-target' : 'rejected',
             localProbe: successful ? 'passed' : 'failed',
             releaseMatrix: 'not-established',
         },
@@ -444,14 +352,6 @@ export function createCompatibilityEvidence({ profile, platform, versions, check
         platform,
         versions: evaluatedVersions,
         checks: boundedChecks,
-        capabilities: {
-            dashboard: dashboardEvidence,
-            hostContract: {
-                coreConfig: checkStatus('core-config'),
-                mcpPermissions: checkStatus('mcp-contract'),
-                limitation: 'Bounded OpenCode scheduling with a loopback synthetic provider; no external provider, credentials, account, approval response, or MCP tool execution',
-            },
-        },
     };
     if (Buffer.byteLength(JSON.stringify(result), 'utf8') > COMPATIBILITY_LIMITS.maxResultBytes) {
         throw new Error('compatibility evidence exceeded its bounded schema');

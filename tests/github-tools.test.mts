@@ -3688,20 +3688,15 @@ test('same-head limited v5 can be superseded once, while legacy predecessors are
 });
 
 test('review policy docs lock authorization, formal gates, and one-POST terminal behavior', async () => {
-  const [orchestrator, skill, command, readme, userGuide, agentsGuide, reviewLane, visualGuide] = await Promise.all([
-    readFile(new URL('../agents/naru.md', import.meta.url), 'utf8'),
-    readFile(new URL('../skills/naru-review/SKILL.md', import.meta.url), 'utf8'),
+  const [command, agentsGuide, reviewLane] = await Promise.all([
     readFile(new URL('../commands/naru.md', import.meta.url), 'utf8'),
-    readFile(new URL('../README.md', import.meta.url), 'utf8'),
-    readFile(new URL('../docs/user-guide.md', import.meta.url), 'utf8'),
     readFile(new URL('../docs/src/content/docs/workflows/agents.md', import.meta.url), 'utf8'),
     readFile(new URL('../docs/src/content/docs/workflows/review-lane.md', import.meta.url), 'utf8'),
-    readFile(new URL('../naru-visual-guide.html', import.meta.url), 'utf8'),
   ]);
 
   assert.match(command, /native command invocation itself explicitly authorizes automatic `select-state`/i);
   assert.match(command, /generic post\/comment\/submit wording remains comment-only/i);
-  for (const policy of [orchestrator, skill, readme, userGuide, reviewLane]) {
+  for (const policy of [reviewLane]) {
     assert.match(policy, /defaultDecision[\s\S]{0,400}automatic[\s\S]{0,200}(?:only|never)/i);
     assert.match(
       policy,
@@ -3710,19 +3705,19 @@ test('review policy docs lock authorization, formal gates, and one-POST terminal
     assert.match(policy, /truncat[\s\S]{0,180}(?:Low-confidence )?`?unclear`?[\s\S]{0,180}`?COMMENT`?/i);
   }
 
-  for (const publicDoc of [readme, userGuide, visualGuide]) {
+  for (const publicDoc of [agentsGuide, reviewLane]) {
     assert.doesNotMatch(publicDoc, /tool that posts a pull-request review can only leave a comment/i);
     assert.doesNotMatch(publicDoc, /One `COMMENT`-only attempt/i);
     assert.doesNotMatch(publicDoc, /comment-only (?:<b>by construction<\/b>|tool|posting tool)/i);
   }
 
-  for (const policy of [orchestrator, skill, readme, userGuide, reviewLane]) {
+  for (const policy of [reviewLane]) {
     assert.match(policy, /never create|do not create|never creates/i);
     assert.match(policy, /GitHub or Linear|GitHub\/Linear|follow-up tickets/i);
     assert.match(policy, /separate(?:ly)? (?:exact )?(?:current )?(?:user )?(?:message|request|action)/i);
   }
 
-  for (const policy of [orchestrator, skill, readme, userGuide, agentsGuide, reviewLane]) {
+  for (const policy of [agentsGuide, reviewLane]) {
     assert.match(policy, /dry-run (?:is (?:the )?|by )default/i);
     assert.match(policy, /post[\s\S]{0,80}comment[\s\S]{0,80}submit/i);
     assert.match(policy, /approve if clear/i);
@@ -3731,14 +3726,14 @@ test('review policy docs lock authorization, formal gates, and one-POST terminal
     assert.match(policy, /limited(?: v3| v4| v5| patch)? evidence[\s\S]{0,100}`?COMMENT`?/i);
   }
 
-  for (const policy of [orchestrator, skill, reviewLane]) {
+  for (const policy of [reviewLane]) {
     assert.match(policy, /`comment-only`/);
     assert.match(policy, /`approve-if-clear`/);
     assert.match(policy, /`request-changes-if-blocked`/);
     assert.match(policy, /`select-state`/);
   }
 
-  for (const policy of [orchestrator, skill, userGuide, reviewLane]) {
+  for (const policy of [reviewLane]) {
     assert.match(policy, /prior-message intent/i);
     assert.match(policy, /PR, diff/i);
     assert.match(policy, /no raw event|never include a raw `event`|never supply a raw GitHub event|contains no raw event/i);
@@ -3758,26 +3753,17 @@ test('review policy docs lock authorization, formal gates, and one-POST terminal
     assert.match(policy, /formal[\s\S]{0,80}(?:gate|ineligib)[\s\S]{0,80}(?:downgrade|downgrades)[\s\S]{0,40}`COMMENT`/i);
     assert.match(policy, /inventory[\s\S]{0,80}feedback[\s\S]{0,100}(?:refus|unpostable)/i);
   }
-  for (const policy of [userGuide, reviewLane]) {
+  for (const policy of [reviewLane]) {
     assert.match(policy, /(?:schema )?v5[\s\S]{0,100}(?:required|only contract)[\s\S]{0,80}new (?:review )?mutation|only contract[\s\S]{0,80}new review/i);
     assert.match(policy, /(?:historical[\s\S]{0,160}v2\/v3\/v4|v2\/v3\/v4[\s\S]{0,120}historical)[\s\S]{0,80}compatibility/i);
   }
-  for (const policy of [orchestrator, skill]) {
-    assert.match(policy, /v2\/v3\/v4[\s\S]{0,100}(?:historical|compatibility)/i);
-    assert.match(policy, /v5[\s\S]{0,80}(?:canonical|only contract)/i);
-    assert.match(policy, /(?:current-user[\s\S]{0,160}submissionMode|submissionMode[\s\S]{0,200}current user)/i);
-  }
 
-  for (const policy of [orchestrator, skill, userGuide, agentsGuide]) {
+  for (const policy of [agentsGuide]) {
     assert.match(policy, /(?:Make |allows )?[Aa]t most one GitHub POST attempt(?: is allowed)?, not one tool invocation/);
     assert.match(policy, /`postAttempted: false` and `correctable: true`/);
     assert.match(policy, /[Ww]rong-agent/);
     assert.match(policy, /`postAttempted: true`/);
     assert.match(policy, /`outcomeUnknown: true`/);
   }
-  for (const policy of [orchestrator, skill]) {
-    assert.match(policy, /Never (retry or\nuse|use) another/);
-    assert.match(policy, /orchestrator-only/);
-  }
-  for (const policy of [userGuide, agentsGuide]) assert.match(policy, /Never use another posting mechanism/);
+  assert.match(agentsGuide, /Never use another posting mechanism/);
 });

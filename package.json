@@ -8,9 +8,7 @@
     "test": "npm run build && npm run test:node",
     "test:bun": "npm run build && npm run test:bun:built",
     "test:bun:built": "bun .naru-build/tests/bun-transport.test.mjs",
-    "test:compat": "npm run build && node .naru-build/scripts/naru-compat-smoke.mjs --profile stable --source .naru-build",
-    "test:installer": "npm run build && npm run test:installer:built",
-    "test:installer:built": "sh .naru-build/tests/install.test.sh",
+    "test:compat": "npm run build && node .naru-build/scripts/naru-compat-smoke.mjs --profile native-v2 --source .naru-build",
     "test:node": "node --test --test-concurrency=1 .naru-build/tests/*.test.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
