@@ -67,6 +67,11 @@ test('normal CLI honors explicit --dir and previews before apply', async () => {
         assert.match(removed.stdout, /Removed native Naru/);
         assert.deepEqual(JSON.parse(await readFile(getNativeInstallPaths(root).configPath, 'utf8')), {});
         for (const args of [['uninstall', '--dir', root], ['uninstall', '--dir', root, '--apply']]) assert.match((await run(command, args, { env })).stdout, /not installed.*Nothing to remove/);
+        await assert.rejects(run(command, ['doctor', '--dir', root, '--json'], { env }), (error: { stdout?: string }) => {
+            const report = JSON.parse(error.stdout ?? '{}');
+            assert.deepEqual([report.native.installed, report.native.package, report.native.agents, report.native.registration], [false, 'absent', 'absent', 'absent']);
+            return true;
+        });
         await assert.rejects(run(command, ['rollback'], { env }), (error: { code?: number; stderr?: string }) => error.code === 2 && /not available.*Nothing was changed/.test(error.stderr ?? ''));
     } finally { await rm(tmp, { recursive: true, force: true }); }
 });

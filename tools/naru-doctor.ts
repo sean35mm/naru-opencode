@@ -175,7 +175,8 @@ export async function buildDoctorReport(options: DoctorOptions): Promise<DoctorR
     } catch (error) {
         const message = error instanceof Error && 'code' in error && error.code === 'ENOENT' ? 'native install is missing or incomplete' : 'native install is invalid, modified, or collides with user configuration';
         addIssue(issues, 'native-install', 'global', message);
-        if (native.package === 'absent' && !(error instanceof Error && 'code' in error && error.code === 'ENOENT' && !native.installed)) native.package = 'invalid';
+        const notInstalled = error instanceof Error && 'code' in error && error.code === 'ENOENT' && !native.installed;
+        if (native.package === 'absent') { if (!notInstalled) native.package = 'invalid'; }
         else if (native.agents === 'absent') native.agents = 'invalid';
         else native.registration = 'invalid';
     }
