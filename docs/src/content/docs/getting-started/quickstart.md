@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Install Naru, select the orchestrator, ask for something, and see what happens.
+description: Install Naru, pick worker models, select the coordinator, and ask for something.
 ---
 
 ## 1. Install
@@ -10,63 +10,38 @@ curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstr
 naru install
 ```
 
-The bootstrap installs only the `naru` command; `naru install` shows a full preview of every change and asks before applying it. The default target is `~/.config/opencode`; use `--project` or `--dir PATH` for another target. Naru requires OpenCode 1.18.4+ and Node 24, and works at OpenCode's default `subagent_depth` of `1`.
+The bootstrap installs only the `naru` command. `naru install` previews every change to `~/.config/opencode` and asks before applying it. You need OpenCode 2.0.15 or a later 2.0.x patch release on `PATH`, and Node 24.
 
-Prefer to read the source first? Clone and run the installer directly — same flags, same preview:
+## 2. Pick workers
 
 ```sh
-git clone https://github.com/sean35mm/naru-opencode.git
-cd naru-opencode
-npm ci
-npm run build
-sh install.sh --preview
-sh install.sh --apply
+naru configure --apply
 ```
 
-Restart OpenCode after the applied install.
+This offers models from OpenCode's catalogue and saves the ones you choose as workers. For a non-interactive setup, use `naru models --set provider/model#variant[,REF] --apply`.
 
-## 2. Select the orchestrator
+## 3. Select the coordinator
 
-Pick **`naru`** in OpenCode's agent picker, set it as `default_agent`, or start OpenCode with it:
+Restart OpenCode, choose a model for the coordinator as you normally would, then pick **`naru`** in the agent picker or start OpenCode with it:
 
 ```sh
 opencode --agent naru
 ```
 
-## 3. Ask for something
-
-Ask in plain language. No mode flags, no ceremony.
+## 4. Ask for something
 
 ```text
 Rate limiting drops valid requests after a deploy. Find out why and fix it.
 ```
 
-## 4. What happens
+The coordinator decides how to split the work. Independent pieces go to workers in parallel; small ones it does itself. It reports what changed, which files it touched, and which checks actually ran.
 
-The orchestrator plans, then fans out to subagents on its own judgment:
+Work stops at local changes. Workers can't push or post to GitHub, and the coordinator is told to act on delivery only when your current request asks for it.
 
-- **`naru-reader`** investigates — finds the code, traces behavior, diagnoses. Read-only.
-- **`naru-runner`** runs tests, typecheck, lint, build, and reproductions. Read-only plus bash; it cannot edit.
-- **`naru-writer`** applies the change. It is the only role with edit permission.
+## 5. Optional
 
-The orchestrator itself cannot edit files and cannot run bash. Those walls are OpenCode permission frontmatter, not instructions. Subagents cannot spawn their own children, so the shape is always one orchestrator over a flat set of workers.
+- **Skills.** Ask for a plan, an impact analysis, a triage, or a review, or name a skill: "Use `naru-plan` to plan …".
+- **PR review.** `/naru ship-review 123 --dry-run` reviews a pull request without posting. Drop `--dry-run` to post one evidence-gated review.
+- **Health.** `naru doctor` checks the install without starting a session.
 
-Work stops at local changes. Commit, push, pull-request creation, and review posting happen only when your current request explicitly asks for them. Before anything destructive or irreversible — migrations, persistent database writes, production deploys, secret access, unrequested dependency changes — you get one checkpoint that names the exact action.
-
-## 5. Optional extras
-
-**Skills.** `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review` are advisory guidance you can invoke by name. They shape approach; they grant no tools and relax no permissions.
-
-```text
-Use the `naru-plan` skill to plan <your objective>
-```
-
-**Health check.** A provider-free, read-only report of local install and config state:
-
-```sh
-node ~/.config/opencode/tools/naru-doctor.js --json
-```
-
-**Runtime config.** Copy `naru-runtime.example.json` to `naru-runtime.json` only if you need to change writer workspace behavior or define model classes — an optional `models` block that generates per-class agent variants the orchestrator picks per task (cheap for wide fan-out, strong for hard problems). Without it, every subagent inherits your session model. See [runtime configuration](/naru-opencode/reference/runtime-config/).
-
-Continue with [installation](/naru-opencode/getting-started/installation/) for project targets, lifecycle previews, conflicts, and backups, or see the [user guide](/naru-opencode/user-guide/) for full operational detail.
+Continue with [installation](/naru-opencode/getting-started/installation/) for conflicts, v1 cutover, and uninstall, or [agents and workers](/naru-opencode/workflows/agents/) for how delegation and permissions work.

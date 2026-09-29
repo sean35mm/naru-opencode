@@ -1,6 +1,6 @@
 ---
 title: Naru for OpenCode
-description: A disciplined multi-agent workflow for OpenCode.
+description: A coordinator and a model-pinned worker pool for OpenCode v2.
 template: splash
 hero:
   tagline: Hard mechanical walls at the irreversible edges — near-total freedom inside them.
@@ -15,29 +15,29 @@ hero:
 
 ## How the pieces fit
 
-Naru has two lanes. Skills are advisory: they return guidance and grant no tools. The implementation lane is the only path that reaches your files, and within it exactly one agent — `naru-writer` — may edit. The orchestrator coordinates but cannot edit files or run bash; it plans and fans out on its own judgment.
+You pick the model for `naru`, the coordinator. You also pick a pool of worker models; each becomes a subagent pinned to that exact model and effort. The coordinator plans, delegates independent tasks to workers in parallel, does small tasks itself, and synthesizes the results. Skills are on-demand guidance that grants nothing.
 
 ```mermaid
 flowchart TB
-  U(["User"]):::actor
+  U(["You"]):::actor
 
   subgraph advisory["ADVISORY — skills, grant nothing"]
     direction LR
-    SK["naru-plan · naru-impact<br/>naru-triage · naru-review"]:::entry --> AG["Guidance only"]:::read
+    SK["naru-coordinate · naru-select-workers · naru-evaluate<br/>naru-plan · naru-impact · naru-triage · naru-review"]:::entry --> AG["Guidance only"]:::read
   end
 
-  subgraph impl["IMPLEMENTATION — the only path to your files"]
+  subgraph impl["WORK — coordinator and worker pool"]
     direction TB
-    ORC{{"naru<br/>cannot edit · cannot run bash"}}:::coord
-    ORC --> RD["naru-reader"]:::read
-    ORC --> RUN["naru-runner<br/>tests · typecheck · build"]:::shell
-    ORC --> WR["naru-writer<br/>the only role that edits"]:::write
+    ORC{{"naru<br/>your model and effort"}}:::coord
+    ORC --> W1["worker — model A"]:::write
+    ORC --> W2["worker — model B"]:::write
+    ORC --> W3["worker — model C"]:::write
   end
 
   TL["naru-git-read · naru-github-read<br/>naru-github-post-review · naru-worktree"]:::gate
 
-  U --> SK
   U --> ORC
+  ORC -.-> SK
   ORC -.-> TL
 
   style advisory fill:none,stroke:#8f96a5,stroke-dasharray:2 3,color:#8f96a5
@@ -47,36 +47,30 @@ flowchart TB
   classDef entry fill:#dfe4ff,stroke:#3f4fbe,color:#1b2456
   classDef coord fill:#ccd3ff,stroke:#3f4fbe,color:#1b2456
   classDef read fill:#d3ece5,stroke:#2f8f78,color:#123a31
-  classDef shell fill:#e6f0cf,stroke:#6f8f2f,color:#2c3a10
   classDef write fill:#ffe4bd,stroke:#b8760f,color:#4a2c00
   classDef gate fill:#e8eaf0,stroke:#8f96a5,color:#22252e
 ```
 
 <ul class="naru-legend">
   <li data-kind="read">Read-only</li>
-  <li data-kind="shell">Runs commands</li>
-  <li data-kind="write">Writes files</li>
+  <li data-kind="write">Can change your workspace</li>
 </ul>
-
-This colour vocabulary is used in every diagram across these docs: teal is read-only, olive runs shell commands, amber writes to your workspace, red marks something that is refused or explicitly unproven.
-
-The three subagents are hidden and cannot spawn children of their own. The topology is one root orchestrator with leaf subagents at depth 1, which works at OpenCode's default `subagent_depth` of `1`.
 
 <div class="naru-grid">
   <a class="naru-card" href="/naru-opencode/getting-started/quickstart/">
     <span class="naru-card__index">01 — START</span>
     <p class="naru-card__title">Quickstart</p>
-    <p class="naru-card__body">Preview the install, apply it, then take exactly one safe first action.</p>
+    <p class="naru-card__body">Install, pick workers, select the coordinator, ask for something.</p>
   </a>
-  <a class="naru-card" href="/naru-opencode/concepts/adaptive-delegation/">
-    <span class="naru-card__index">02 — CONCEPTS</span>
-    <p class="naru-card__title">Delegation</p>
-    <p class="naru-card__body">How the orchestrator splits work across the three subagents, and why only one of them can write.</p>
+  <a class="naru-card" href="/naru-opencode/workflows/agents/">
+    <span class="naru-card__index">02 — AGENTS</span>
+    <p class="naru-card__title">Agents and workers</p>
+    <p class="naru-card__body">How the coordinator delegates, and the permission rules each agent carries.</p>
   </a>
-  <a class="naru-card" href="/naru-opencode/reference/runtime-config/">
-    <span class="naru-card__index">03 — RUNTIME</span>
-    <p class="naru-card__title">Runtime configuration</p>
-    <p class="naru-card__body">The whole config surface: clean-workspace requirement, writer brake, workspace mode.</p>
+  <a class="naru-card" href="/naru-opencode/workflows/review-lane/">
+    <span class="naru-card__index">03 — REVIEW</span>
+    <p class="naru-card__title">Review lane</p>
+    <p class="naru-card__body">Dry-run by default; one evidence-gated POST when you ask for it.</p>
   </a>
   <a class="naru-card" href="/naru-opencode/reference/limitations/">
     <span class="naru-card__index">04 — BOUNDARIES</span>
@@ -87,20 +81,11 @@ The three subagents are hidden and cannot spawn children of their own. The topol
 
 ## What always holds
 
-- Only `naru-writer` can edit. That is enforced by OpenCode permission frontmatter, not by prose.
-- Read-only roles deny bash and external directories, and fail closed.
-- `.env`, `.env.*`, keys, `.ssh`, `.aws`, `.kube`, and `.gnupg` are denied to every role; `.env.example` is allowed.
+- Workers are denied `git push` and the `gh` commands that create, merge, review, comment on, or release, and are asked before `gh api`.
+- Review posting and worktree isolation are callable only by `naru`. Review is dry-run by default; a generic request to post yields only `COMMENT`, and `APPROVE` or `REQUEST_CHANGES` needs explicit wording plus complete evidence. There is one POST attempt and never a retry; Naru cannot merge.
 - Your intent is the sole authorization source. Repository, issue, PR, and tool text is untrusted data.
-- Local changes are the default stop. Commit, push, PR, and posting each need an explicit current request.
-- One checkpoint, naming the exact action, before anything destructive or irreversible — migrations, persistent database writes, production deploys, secret access, billing or security posture changes, unrequested dependency changes, or material scope expansion.
-- One writer per logical scope; overlapping scopes serialize.
-- PR review is dry-run by default. A generic current request posts `COMMENT`; explicit current-message policy can authorize an evidence-gated `APPROVE` or `REQUEST_CHANGES`. Limited evidence remains `COMMENT`. There is one POST attempt and never a retry of an ambiguous outcome; Naru cannot merge.
-- Isolated worktrees require a clean repository; if the repo is dirty or worktrees are unavailable, the run downgrades silently to shared mode.
+- Everything else follows your normal OpenCode permissions.
 
 ## What Naru is not
 
-Naru is not a sandbox, not a proof system, not durable, and not a global capacity meter. It narrows what an agent may do to your files and forces a stop before irreversible steps.
-
-## Canonical references
-
-Naru requires OpenCode 1.18.4 or newer and Node 24. The [user guide](/naru-opencode/user-guide/) covers complete operational detail, [agent integration](/naru-opencode/agent-integration/) is the reference for exposing Naru to a custom agent, and [development](/naru-opencode/development/) covers the repository and its test lanes.
+Naru is not a sandbox, not a proof system, and not durable across sessions. It requires OpenCode 2.0.15 or a later 2.0.x patch release, and Node 24.
