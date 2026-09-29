@@ -1,7 +1,6 @@
 import { lstat, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
-import { evaluateOpenCodeVersion } from '../tools/naru-lib/compatibility.mjs';
-import { PREVIEW_VERSION } from '../tools/naru-lib/preview-host.mjs';
+import { COMPATIBILITY_POLICY, evaluateOpenCodeVersion } from '../tools/naru-lib/compatibility.mjs';
 import { cleanProcessEnvironment, nodeSpawner } from '../tools/naru-lib/preview-process.mjs';
 
 const nativeSignatures = new Set(['cffaedfe', 'feedfacf', 'cefaedfe', 'feedface', 'cafebabe', 'cafebabf', 'bfbafeca', '7f454c46']);
@@ -22,7 +21,7 @@ export async function validateSmokeNative(target: string): Promise<string> {
         const environment = { ...cleanProcessEnvironment(process.execPath), HOME: temporary, XDG_CONFIG_HOME: temporary, XDG_DATA_HOME: temporary, XDG_CACHE_HOME: temporary, XDG_STATE_HOME: temporary, TMPDIR: temporary,
             OPENCODE_DB: join(temporary, 'opencode.db'), OPENCODE_DISABLE_AUTOUPDATE: 'true', OPENCODE_DISABLE_PROJECT_CONFIG: 'true' };
         const result = await nodeSpawner(environment)(['/usr/bin/sandbox-exec', '-p', noEgressProfile, native, '--version'], { cwd: temporary, timeout: 10_000 });
-        if (!result.ok || evaluateOpenCodeVersion('v2-beta-exploratory', result.stdout).status !== 'supported') throw new Error(`Smoke target must be the exact native OpenCode ${PREVIEW_VERSION} binary`);
+        if (!result.ok || evaluateOpenCodeVersion('native-v2', result.stdout).status !== 'supported') throw new Error(`Smoke target must be the exact native OpenCode ${COMPATIBILITY_POLICY.profiles['native-v2'].recognizedBuilds.join(', ')} binary`);
     } finally { await rm(temporary, { recursive: true, force: true }); }
     return native;
 }

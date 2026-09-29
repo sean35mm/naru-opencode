@@ -74,12 +74,8 @@ export const OPENCODE_SAFE_COMMANDS: readonly SafeCommand[] = Object.freeze([
     }),
     Object.freeze({ id: 'opencode-startup', args: Object.freeze(['serve', '--hostname', '127.0.0.1', '--port', '<ephemeral>']) }),
 ]);
-export const OPENCODE_V2_EXPLORATORY_COMMANDS: readonly SafeCommand[] = Object.freeze([
-    Object.freeze({ id: 'opencode-version', args: Object.freeze(['--version']) }),
-    Object.freeze({ id: 'opencode-help', args: Object.freeze(['--help']) }),
-]);
 function usage() {
-    return 'Usage: node scripts/naru-compat-smoke.mjs --profile stable|v2-beta-exploratory|native-v2 --opencode PATH --source PATH [--json] [--output PATH] [--dashboard --bun PATH]\n';
+    return 'Usage: node scripts/naru-compat-smoke.mjs --profile stable|native-v2 --opencode PATH --source PATH [--json] [--output PATH] [--dashboard --bun PATH]\n';
 }
 function parseArgs(argv: string[]): CompatibilityCliOptions {
     const options: CompatibilityCliOptions = { bunPath: null, dashboard: false, json: false, opencodePath: null, output: null, profile: null, sourcePath: null };
@@ -400,7 +396,7 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
                 await mkdir(directory, { recursive: true, mode: 0o700 });
             }
             await symlink(opencode, path.join(privateBin, 'opencode'));
-            const versionCommand = options.profile === 'stable' ? OPENCODE_SAFE_COMMANDS[0] : OPENCODE_V2_EXPLORATORY_COMMANDS[0];
+            const versionCommand = OPENCODE_SAFE_COMMANDS[0];
             if (!versionCommand)
                 throw new Error('OpenCode version command is unavailable');
             let result = await runBoundedProcess(opencode, versionCommand.args, { cwd: project, env: versionEnv, timeoutMs });
@@ -413,13 +409,6 @@ export async function runCompatibilitySmoke(options: CompatibilitySmokeOptions, 
                 durationMs: result.durationMs,
                 diagnostic: result.status !== 'passed' ? `opencode-version-${result.reason}` : versionAccepted ? null : versionEvaluation.status === 'unrecognized' ? 'opencode-version-invalid' : 'opencode-version-not-eligible-for-profile',
             });
-            if (result.status === 'passed' && versionEvaluation.status === 'supported' && options.profile === 'v2-beta-exploratory') {
-                const helpCommand = OPENCODE_V2_EXPLORATORY_COMMANDS[1];
-                if (!helpCommand)
-                    throw new Error('OpenCode exploratory help command is unavailable');
-                result = await runBoundedProcess(opencode, helpCommand.args, { cwd: project, env: versionEnv, timeoutMs });
-                checks.push(commandCheck(helpCommand.id, result));
-            }
             if (result.status === 'passed' && versionEvaluation.status === 'supported' && options.profile === 'native-v2') {
                 const cli = path.join(source, 'bin', 'naru');
                 const invoke = (args: string[]) => runBoundedProcess('/bin/sh', [cli, ...args], { cwd: project, env, timeoutMs });
@@ -678,7 +667,7 @@ async function main() {
             process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
         else
             process.stdout.write(`Naru compatibility smoke: ${report.status}; profile ${report.profile}; qualification ${report.qualification}; release qualification ${report.releaseQualification}\n`);
-        if (report.status !== 'passed-local-smoke' && report.status !== 'passed-exploratory-smoke')
+        if (report.status !== 'passed-local-smoke')
             process.exitCode = 1;
     }
     catch {

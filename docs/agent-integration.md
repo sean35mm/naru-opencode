@@ -131,22 +131,6 @@ Naru installs five custom OpenCode tools. The Git/GitHub/worktree tools return t
 
 The installed `tools/naru-doctor.js` is a local CLI, not an agent-callable tool. From a source checkout, `npm run doctor -- --json` builds first and runs the emitted CLI; an installed copy can be invoked directly with Node. Its schemaVersion 2 report identifies the diagnostic, provider-free/read-only posture, overall status, stable OpenCode compatibility and runtime, effective subagent depth, installation scopes, and issues. It reads local state only: no providers, credentials, or network calls.
 
-## Plugin-free v2 preview integration
-
-The beta `oc2` launcher is separate from this stable plugin surface. Bare `oc2`
-routes ordinary arguments to the isolated vanilla OpenCode v2 wrapper. Only
-`oc2 naru ...` routes to the Naru preview command. Preview agents deny native host
-tools and can call only the broker MCP with broker-issued capabilities; an MCP
-session ID is correlation metadata, never authorization. The broker owns repository
-enrollment, exact model allowlists, secret-path denial, isolated worktrees, and
-terminal-confirmed integration of the exact captured bundle bytes. It exposes no
-commit, push, release, or posting operation.
-
-This containment protects enrolled repositories from preview workers; it does not
-claim to sandbox a malicious or compromised host executable. The pinned beta and
-mock-provider smoke are development evidence only. Semantic routing, full DAG gates,
-failure recovery, Claude Code support, and delivery remain unavailable.
-
 ### Model-class agent variants (the naru-dispatch plugin)
 
 `naru-dispatch` is a plugin, not a tool. It registers no tools, creates no sessions, and does not use the JSON envelope above; it hooks only OpenCode's `config` hook. At startup it reads the optional `models` block in `naru-runtime.json` and clones the three base subagents into hidden per-class variants — `naru-reader-<class>`, `naru-runner-<class>`, `naru-writer-<class>` — with the class's model and reasoning effort baked in. The orchestrator dispatches a variant by name through OpenCode's native `task` tool; there is no dispatch envelope and no custom result format.

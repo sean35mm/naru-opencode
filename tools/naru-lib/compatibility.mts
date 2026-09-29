@@ -1,17 +1,16 @@
 export const COMPATIBILITY_SCHEMA_VERSION = 3;
 const COMPATIBILITY_COMPONENTS = ['opencode', 'node', 'bun', 'git', 'gh'] as const;
 const CHECK_STATUSES = ['passed', 'failed', 'omitted'] as const;
-const COMPATIBILITY_PROFILES = ['stable', 'v2-beta-exploratory', 'native-v2'] as const;
+const COMPATIBILITY_PROFILES = ['stable', 'native-v2'] as const;
 type UnknownRecord = Record<string, unknown>;
 export type CompatibilityComponent = typeof COMPATIBILITY_COMPONENTS[number];
 export type CompatibilityCheckStatus = typeof CHECK_STATUSES[number];
 export type CompatibilityProfile = typeof COMPATIBILITY_PROFILES[number];
 export const REQUIRED_COMPATIBILITY_CHECKS: Readonly<Record<CompatibilityProfile, readonly string[]>> = Object.freeze({
     stable: Object.freeze(['target-platform', 'opencode-version', 'install-preview', 'install-apply', 'naru-doctor', 'opencode-help', 'opencode-debug-paths', 'opencode-debug-config', 'core-config', 'mcp-contract', 'opencode-agent-list', 'opencode-startup', 'cleanup']),
-    'v2-beta-exploratory': Object.freeze(['target-platform', 'opencode-version', 'opencode-help', 'cleanup']),
     'native-v2': Object.freeze(['target-platform', 'opencode-version', 'install-preview', 'install-apply', 'models-preview', 'models-apply', 'native-worker-pool', 'naru-doctor', 'native-package', 'native-agents', 'native-registration', 'native-host-startup', 'native-config-source', 'native-host-agents', 'native-host-plugin', 'native-host-skills', 'native-host-command', 'cleanup']),
 });
-export type CompatibilityQualification = 'stable' | 'exploratory' | 'native-v2';
+export type CompatibilityQualification = 'stable' | 'native-v2';
 export type ObservedVersionStatus = 'unrecognized' | 'recorded' | 'supported' | 'candidate' | 'unsupported' | 'targeted' | 'non-target';
 
 export interface ParsedSemver {
@@ -75,14 +74,14 @@ export interface CompatibilityEvidence {
     providerFree: true;
     profile: CompatibilityProfile;
     qualification: CompatibilityQualification;
-    releaseQualification: 'not-established' | 'ineligible-exploratory';
+    releaseQualification: 'not-established';
     candidateIdentity: 'unverified';
     versionEvidence: {
-        classification: 'historical-tested' | 'current-target' | 'candidate-probe-required' | 'exploratory-exact' | 'rejected';
+        classification: 'historical-tested' | 'current-target' | 'candidate-probe-required' | 'rejected';
         localProbe: 'passed' | 'failed';
-        releaseMatrix: 'not-established' | 'ineligible-exploratory';
+        releaseMatrix: 'not-established';
     };
-    status: 'passed-local-smoke' | 'passed-exploratory-smoke' | 'failed-local-smoke' | 'failed-exploratory-smoke';
+    status: 'passed-local-smoke' | 'failed-local-smoke';
     platform: PlatformEvaluation | undefined;
     versions: CompatibilityVersionEvaluations;
     checks: CompatibilityCheck[];
@@ -139,10 +138,6 @@ export const COMPATIBILITY_POLICY = deepFreeze({
             testedBuilds: ['1.18.4', '1.18.28'],
             recognizedBuilds: ['1.18.4', '1.18.28'],
             acceptance: 'stable-at-or-above-floor-with-probe',
-        },
-        'v2-beta-exploratory': {
-            qualification: 'exploratory',
-            recognizedBuilds: ['2.0.15'],
         },
         'native-v2': {
             qualification: 'native-v2',
@@ -427,9 +422,7 @@ export function createCompatibilityEvidence({ profile, platform, versions, check
         && REQUIRED_COMPATIBILITY_CHECKS[profile].every(id => boundedChecks.some(check => check.id === id && check.status === 'passed'))
         && boundedChecks.every(check => check.status !== 'failed')
         && dashboardEvidence.status !== 'failed';
-    const passed = successful
-        ? selectedProfile.qualification === 'exploratory' ? 'passed-exploratory-smoke' : 'passed-local-smoke'
-        : selectedProfile.qualification === 'exploratory' ? 'failed-exploratory-smoke' : 'failed-local-smoke';
+    const passed = successful ? 'passed-local-smoke' : 'failed-local-smoke';
     const result: CompatibilityEvidence = {
         schemaVersion: COMPATIBILITY_SCHEMA_VERSION,
         kind: 'naru-compatibility-evidence',
@@ -437,17 +430,15 @@ export function createCompatibilityEvidence({ profile, platform, versions, check
         providerFree: true,
         profile,
         qualification: selectedProfile.qualification,
-        releaseQualification: selectedProfile.qualification === 'exploratory' ? 'ineligible-exploratory' : 'not-established',
+        releaseQualification: 'not-established',
         candidateIdentity: 'unverified',
         versionEvidence: {
-            classification: profile === 'v2-beta-exploratory'
-                ? evaluatedVersions.opencode.status === 'supported' ? 'exploratory-exact' : 'rejected'
-                : profile === 'native-v2' ? evaluatedVersions.opencode.status === 'supported' ? 'current-target' : 'rejected'
+            classification: profile === 'native-v2' ? evaluatedVersions.opencode.status === 'supported' ? 'current-target' : 'rejected'
                 : evaluatedVersions.opencode.status === 'candidate' ? 'candidate-probe-required'
                     : evaluatedVersions.opencode.exactCurrent ? 'current-target'
                         : evaluatedVersions.opencode.status === 'supported' ? 'historical-tested' : 'rejected',
             localProbe: successful ? 'passed' : 'failed',
-            releaseMatrix: selectedProfile.qualification === 'exploratory' ? 'ineligible-exploratory' : 'not-established',
+            releaseMatrix: 'not-established',
         },
         status: passed,
         platform,
