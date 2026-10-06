@@ -168,7 +168,7 @@ export async function buildDoctorReport(options: DoctorOptions): Promise<DoctorR
             return actual?.mode !== 'subagent' || JSON.stringify(actual.model) !== JSON.stringify(expected?.model);
         })) throw new Error('native worker pool missing or changed');
         native.agents = 'valid';
-        if (Object.entries(projected.agents).some(([name, expected]) => JSON.stringify(recordValue(agents[name])?.permissions) !== JSON.stringify(expected.permissions))) addIssue(issues, 'native-agent-permissions', 'global', 'native Naru agents lack current skill and worker guardrail permission rules; rerun naru install to refresh the projection');
+        if (Object.entries(projected.agents).some(([name, expected]) => JSON.stringify(recordValue(agents[name])?.permissions) !== JSON.stringify(expected.permissions))) addIssue(issues, 'native-agent-permissions', 'global', 'native Naru agents lack current allow-all tool permissions; rerun naru install to refresh the projection');
         const plugin = path.join(paths.packageRoot, 'tools', 'oc2-native-plugin');
         if (!config || !Array.isArray(config.plugins) || config.plugins.filter(value => value === plugin).length !== 1 || !Array.isArray(config.skills) || config.skills.filter(value => value === path.join(plugin, 'skills')).length !== 1 || await statOrNull(path.join(root, 'agents', 'naru.md')) !== null || await statOrNull(path.join(root, 'opencode.jsonc')) !== null || await statOrNull(path.join(root, '.naru-install.json')) !== null) throw new Error('native plugin or skills not registered or v1 configuration collides');
         native.registration = 'valid';

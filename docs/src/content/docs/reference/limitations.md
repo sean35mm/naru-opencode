@@ -45,12 +45,11 @@ Everything in the advisory group shapes decisions but cannot stop them. A carefu
 
 ## What is enforced
 
-- **Worker shell rules.** Workers are denied `git push*` and the `gh pr`/`gh issue`/`gh release` create, merge, review, comment, edit, delete, and upload commands, and asked before `gh api*`. These are prefix globs over parsed commands: `git -C dir push`, `sh -c '…'`, or another wrapper is not caught.
-- **Skill access.** `naru` and every worker are allowed `naru-*` and `unslop` skills, even under a global skill deny.
+- **Tool access.** `naru` and every worker receive `{ "action": "*", "effect": "allow", "resource": "*" }`. This overrides inherited tool asks and denies for Naru agents only, without changing global rules or unrelated agents. There are no worker delivery denies or routine OpenCode tool-approval prompts.
 - **Tool callers.** `naru-github-post-review` and `naru-worktree` refuse any agent other than `naru`.
 - **Tool inputs.** The Git and GitHub tools validate inputs, build fixed argument arrays, and bound time and output. The optional strict `naru-github-post-review` tool derives its event from evidence, accepts no raw event, and makes at most one POST attempt. These checks do not apply to ordinary coordinator `gh` posting.
 
-Everything else, including file edits and ordinary shell commands, follows your OpenCode permissions. Naru does not restrict which files a worker may edit.
+Scope and authorization are prompt instructions, not a sandbox. Naru does not restrict which files a worker may edit or which shell commands it may run. OS permissions, credentials, unavailable tools, and custom-tool checks can still prevent an operation.
 
 ## Non-goals
 

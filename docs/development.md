@@ -5,7 +5,7 @@ description: Repository layout, native architecture, invariants, tests, and rele
 
 # Naru development guide
 
-Naru's design rule: hard mechanical walls at irreversible edges, freedom inside them. The walls are OpenCode permission rules Naru writes into its agents and checks inside its own tools, not prose.
+Naru and its workers have full tool permissions by default. Task scope and authorization are prompt instructions; the custom tools still enforce their own caller and input checks.
 
 ## Repository layout
 
@@ -28,8 +28,8 @@ Naru's design rule: hard mechanical walls at irreversible edges, freedom inside 
 
 `naru install` copies the compiled `tools/` tree and `commands/naru.md` into `<config>/.naru-native/package`, records a hash of every file in `manifest.json`, and transactionally updates `opencode.json`, `profile.json`, and `ownership.json`:
 
-- `agents.naru`: primary coordinator, no model, skill allow rules (`tools/naru-lib/oc2-native-projection.mts`).
-- `agents.naru-worker-*`: one subagent per configured reference, pinned to that model and variant, with the skill allow rules plus the delivery shell denies and `gh api*` ask.
+- `agents.naru`: primary coordinator, no model, allow-all tool permissions (`tools/naru-lib/oc2-native-projection.mts`).
+- `agents.naru-worker-*`: one subagent per configured reference, pinned to that model and variant, with the same allow-all tool permissions.
 - `plugins`: the package's `tools/oc2-native-plugin`, which registers the four tools and the `/naru` command.
 - `skills`: the package's `tools/oc2-native-plugin/skills`.
 
@@ -60,9 +60,9 @@ Sources are `.ts` and `.mts`. `npm run build` type-checks and emits `.js`/`.mjs`
 ## Invariants
 
 - The coordinator has no pinned model; each worker has exactly one model and optional variant.
-- Worker rules keep the delivery denies (`git push*`, `gh pr`/`gh issue`/`gh release` mutations) and the `gh api*` ask. Both `naru` and workers keep the `naru-*` and `unslop` skill allows.
+- Both `naru` and workers receive `{ "action": "*", "effect": "allow", "resource": "*" }`; no Naru ask or deny rules are installed. Global rules and unrelated agents remain unchanged.
 - `naru-github-post-review` and `naru-worktree` refuse any caller other than `naru`.
-- Review posting requires schema v5 for new mutations, derives the event from manifest-bound final evidence, makes one POST attempt, and never retries an ambiguous outcome. v2/v3/v4 remain recognition-only.
+- The optional strict review-posting tool requires schema v5 for new mutations, derives the event from manifest-bound final evidence, makes one POST attempt, and never retries an ambiguous outcome. v2/v3/v4 remain recognition-only. Ordinary coordinator `gh` posting follows the review skill instead.
 - Install applies by default; `--dry-run` (alias `--preview`) writes nothing. It never deletes user or v1 data.
 - The doctor stays read-only and provider-free.
 
@@ -91,7 +91,7 @@ All three use disposable HOME directories and no provider credentials. CI runs b
 ## Extending Naru
 
 1. Add a tool as `tools/naru-<name>.ts` with validation in `tools/naru-lib/`, a bounded enumerated operation surface, and an entry in the plugin's `TOOL_INVENTORY`.
-2. Add a skill under `tools/oc2-native-plugin/skills/naru-<name>/SKILL.md`; the `naru-*` allow already covers it.
+2. Add a skill under `tools/oc2-native-plugin/skills/naru-<name>/SKILL.md`; the allow-all rule already covers it.
 3. Change agent prompts or permission rules only in `oc2-native-projection.mts`, and update the doctor's projection check and the docs in the same change.
 
 Reserved contracts: the `naru` and `naru-worker-*` agent names, the tool IDs, the review dedupe marker, and the `.naru-native` file schemas. Change them only with a migration and a targeted test.

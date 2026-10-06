@@ -29,7 +29,7 @@ If a bounded read omits or truncates a file, use exact-SHA Git blobs or another 
 
 Immediately before posting, recheck the target, PR state, and reviewed base/head SHAs. If the diff changed, review the new diff before posting within the same authorized task. Use the explicit repository and PR in commands; bind API review submissions to the reviewed head with `commit_id`. Validate inline locations against that diff. Report GitHub restrictions, such as an inability to approve your own PR, instead of claiming the requested decision was posted.
 
-Never blindly retry an uncertain POST or switch posting mechanisms after an ambiguous outcome. Read existing reviews to determine whether it landed; if still uncertain, report that and stop. A confirmed pre-POST failure can be corrected without another permission round. Never bypass a host permission denial. Native workers remain unable to post; the coordinator handles delivery.
+Never blindly retry an uncertain POST or switch posting mechanisms after an ambiguous outcome. Read existing reviews to determine whether it landed; if still uncertain, report that and stop. A confirmed pre-POST failure can be corrected without asking the user to repeat task authorization. Never bypass a host permission denial. The coordinator handles posting by default; delegated delivery must stay within the user's request and assigned scope.
 
 ## Optional strict posting tool
 

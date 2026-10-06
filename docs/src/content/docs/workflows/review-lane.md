@@ -63,7 +63,7 @@ Disclose genuine coverage gaps and do not approve while relevant evidence or cre
 
 ## Ordinary coordinator posting
 
-Use ordinary `gh pr review` or `gh api` through the coordinator by default, subject to host permissions. Immediately before posting, recheck the target, PR state, and reviewed base/head SHAs. Use the explicit repository and PR in commands; bind API review submissions to the reviewed head with `commit_id`. Validate inline locations against the reviewed diff. Report GitHub restrictions, such as an inability to approve your own PR, instead of claiming the requested decision was posted. Never bypass a host permission denial. Workers' delivery denials remain unchanged.
+Use ordinary `gh pr review` or `gh api` through the coordinator by default, subject to host permissions. Immediately before posting, recheck the target, PR state, and reviewed base/head SHAs. Use the explicit repository and PR in commands; bind API review submissions to the reviewed head with `commit_id`. Validate inline locations against the reviewed diff. Report GitHub restrictions, such as an inability to approve your own PR, instead of claiming the requested decision was posted. Never bypass a host permission denial. Workers have full tool permissions; delegated delivery must stay within the user's request and assigned scope.
 
 Suppress duplicate feedback, but do not prohibit a separately requested review just because another review exists on the same head. When one session both implements and reviews, implementation, verification, and any requested Git delivery finish first; review the final diff and post last.
 

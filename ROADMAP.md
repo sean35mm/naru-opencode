@@ -92,11 +92,11 @@ re-run, including the cases where Naru lost.
 ## Residual risks
 
 1. **Prompt policy is not enforcement.** Checkpoints, scope discipline, and evidence
-   requirements are instructions to a model. Only the per-agent permission rules, the
-   posting tool's `naru`-only boundary and derivation of `COMMENT`, `APPROVE`, or
-   `REQUEST_CHANGES` from asserted current-message policy plus final evidence gates, and
-   worktree path containment are mechanical. The worker shell denies are prefix globs and
-   can be evaded by wrapper commands.
+   requirements are instructions to a model. Naru agents have allow-all tool permissions.
+   The optional strict posting tool's `naru`-only boundary and derivation of `COMMENT`,
+   `APPROVE`, or `REQUEST_CHANGES` from asserted current-message policy plus final evidence
+   gates, and worktree path containment, remain mechanical. Ordinary shell commands have
+   no Naru delivery gate.
 2. **Naru is not a sandbox.** It does not contain repository code, package scripts, or
    shell commands.
 3. **One maintainer.** Response times and support scope are bounded by that.

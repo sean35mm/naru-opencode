@@ -2,10 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { projectOc2NativeAgents } from '../tools/naru-lib/oc2-native-projection.mjs';
 
-const SKILLS = [{ action: 'skill', effect: 'allow', resource: 'naru-*' }, { action: 'skill', effect: 'allow', resource: 'unslop' }];
-const WORKER_RULES = [...SKILLS, ...['git push*', 'gh pr create*', 'gh pr merge*', 'gh pr review*', 'gh pr comment*', 'gh issue create*', 'gh issue comment*', 'gh release create*', 'gh release delete*', 'gh release edit*', 'gh release upload*'].map(resource => ({ action: 'shell', effect: 'deny', resource })), { action: 'shell', effect: 'ask', resource: 'gh api*' }];
+const FULL_PERMISSIONS = [{ action: '*', effect: 'allow', resource: '*' }];
 
-test('native projection creates one reusable worker per exact reference with skill access, worker delivery guardrails, and no parent model override', () => {
+test('native projection creates one reusable worker per exact reference with allow-all permissions and no parent model override', () => {
     const references = ['fixture/team/alpha#high', 'fixture/team/alpha#low', 'other/model'];
     const projection = projectOc2NativeAgents(references);
     assert.deepEqual(projection.workers, projectOc2NativeAgents(references).workers);
@@ -20,12 +19,14 @@ test('native projection creates one reusable worker per exact reference with ski
         assert.equal(agent.mode, 'subagent');
         assert.equal('hidden' in agent, false);
         assert.deepEqual(agent.model, index === 2 ? { providerID: 'other', model: 'model' } : { providerID: 'fixture', model: 'team/alpha', variant: index === 0 ? 'high' : 'low' });
-        assert.deepEqual(agent.permissions, WORKER_RULES);
+        assert.deepEqual(agent.permissions, FULL_PERMISSIONS);
+        assert.match(agent.system, /do not ask the user to approve routine in-scope tool use/);
         assert.match(agent.system, /assignment.*determines whether you investigate, check, edit, or review/);
         assert.match(agent.system, /normally remain a leaf unless explicitly asked/);
     }
     assert.equal(projection.agents.naru!.model, undefined);
-    assert.deepEqual(projection.agents.naru!.permissions, SKILLS);
+    assert.deepEqual(projection.agents.naru!.permissions, FULL_PERMISSIONS);
+    assert.match(projection.agents.naru!.system, /do not ask the user to approve routine in-scope tool use/);
     assert.match(projection.agents.naru!.system, /user chooses your model and effort/);
     assert.match(projection.agents.naru!.system, /delegate them in parallel/);
     assert.match(projection.agents.naru!.system, /narrow direct tasks, edits, and context reads/);
@@ -82,6 +83,6 @@ test('explicit instruction snapshots cannot grant authorization or override host
         assert.match(agent.system, /Global instructions snapshot sha256 a{64}/);
         assert.match(agent.system, /Prefer focused checks/);
         assert.match(agent.system, /preferences, not authorization/);
-        assert.deepEqual(agent.permissions, agent.mode === 'primary' ? SKILLS : WORKER_RULES);
+        assert.deepEqual(agent.permissions, FULL_PERMISSIONS);
     }
 });

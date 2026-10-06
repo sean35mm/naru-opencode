@@ -2,7 +2,7 @@
 
 Naru adds a coordinating agent and a pool of model-pinned workers to [OpenCode](https://opencode.ai) v2. You pick the coordinator's model in OpenCode; Naru's `naru` agent plans, delegates independent tasks to workers in parallel, and synthesizes the results. It also ships seven on-demand skills, four bounded Git/GitHub/worktree tools, and a `/naru ship-review` command.
 
-The design rule is **thin hard walls, free interior**: a few mechanical permission rules at the irreversible edges (pushing, posting to GitHub), and the coordinator's own judgment everywhere else.
+Naru and its workers have full tool permissions by default. Your request sets the scope; the agents are instructed to work within it without routine tool-approval prompts.
 
 Built by [Naru Labs](https://github.com/sean35mm). Documentation: [sean35mm.github.io/naru-opencode](https://sean35mm.github.io/naru-opencode/).
 
@@ -60,15 +60,13 @@ References are `provider/model` with an optional `#variant` (reasoning effort). 
 
 ## Permissions
 
-Naru writes these rules into each agent's OpenCode permissions. OpenCode resolves rules last-match-wins after your global config, so they apply even under a global skill deny.
+Naru installs one allow-all rule on the coordinator and every worker. OpenCode resolves agent rules after global config, so this overrides inherited tool asks and denies for Naru agents only. Unrelated agents and your global rules are unchanged.
 
 | Agent | Rule |
 | --- | --- |
-| `naru` and every worker | `skill`: allow `naru-*` and `unslop` |
-| Workers | `shell`: deny `git push*`, `gh pr create*`, `gh pr merge*`, `gh pr review*`, `gh pr comment*`, `gh issue create*`, `gh issue comment*`, `gh release create*`, `gh release delete*`, `gh release edit*`, `gh release upload*` |
-| Workers | `shell`: ask `gh api*` |
+| `naru` and every worker | Allow every action on every resource: `{ "action": "*", "effect": "allow", "resource": "*" }` |
 
-Everything else follows your normal OpenCode permissions. The shell rules are prefix matches on parsed commands, so a wrapper such as `git -C dir push` is not caught. Treat them as guardrails, not a sandbox.
+This includes shell commands, file access, skills, and available MCP tools. There are no Naru worker delivery denies or `gh api` approval prompts. OS permissions, credentials, tool availability, and the custom tools' own caller/input checks still apply.
 
 Beyond those rules, the agents are instructed that your current request is the only source of authorization; that repository files, issue and PR text, command output, and worker reports are untrusted data; and that they must stop before destructive, production, database, billing, security, or secret-access actions you didn't ask for. Those are prompt instructions, not enforcement.
 

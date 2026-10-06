@@ -3729,7 +3729,7 @@ test('review policy defaults to ordinary posting while preserving authorization 
   }
 
   assert.match(ordinarySkill, /do not approve while relevant evidence or credible blockers remain unresolved/i);
-  assert.match(ordinarySkill, /native workers remain unable to post/i);
+  assert.match(ordinarySkill, /delegated delivery must stay within the user's request and assigned scope/i);
   assert.match(ordinarySkill, /same head[\s\S]{0,80}separately requested review/i);
   assert.match(ordinarySkill, /user separately requests that action/i);
   assert.match(ordinarySkill, /review request does not authorize merging/i);

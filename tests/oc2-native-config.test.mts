@@ -45,8 +45,9 @@ test('native profile imports only validated global models and preserves config, 
         assert.deepEqual(config.agents.custom, original.agents.custom); assert.notDeepEqual(config.agents.naru, LEGACY_STANDALONE_NARU_AGENT);
         assert.equal(Object.keys(config.agents).filter(name => name.startsWith('naru-worker-')).length, 1);
         for (const agent of Object.values(config.agents) as Array<{ system?: string }>) if (agent.system?.includes('native Naru') || agent.system?.includes('primary native OpenCode')) assert.match(agent.system, /Explicit native preferences/);
-        assert.deepEqual(config.agents.naru.permissions, [{ action: 'skill', effect: 'allow', resource: 'naru-*' }, { action: 'skill', effect: 'allow', resource: 'unslop' }]);
-        for (const [name, agent] of Object.entries(config.agents) as Array<[string, { permissions: Array<{ action: string; effect: string; resource: string }> }]>) if (name.startsWith('naru-worker-')) assert.deepEqual(agent.permissions.filter(rule => rule.resource === 'git push*' || rule.resource === 'gh api*').map(rule => rule.effect), ['deny', 'ask']);
+        for (const [name, agent] of Object.entries(config.agents) as Array<[string, { permissions: Array<{ action: string; effect: string; resource: string }> }]>) {
+            if (name === 'naru' || name.startsWith('naru-worker-')) assert.deepEqual(agent.permissions, [{ action: '*', effect: 'allow', resource: '*' }]);
+        }
         assert.deepEqual(await readFile(join(root, 'state.json')), stateBefore); assert.deepEqual(await readFile(paths.database), databaseBefore);
         assert.equal(await readFile(join(root, 'worktrees', 'old', 'keep'), 'utf8'), 'history');
 
@@ -56,6 +57,32 @@ test('native profile imports only validated global models and preserves config, 
         const refreshed = JSON.parse(await readFile(paths.configFile, 'utf8'));
         assert.deepEqual(refreshed.mcp.servers.novel, { type: 'local', command: ['/future/tool'] });
         assert.equal(Object.keys(refreshed.agents).some(name => name.includes('team-model-high')), false);
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('native profile refreshes owned ask and deny rules to allow-all without changing unrelated permissions', async () => {
+    const { root, home } = await fixture(), paths = oc2NativePaths(root);
+    try {
+        await updateOc2NativeProfile(root, undefined, { home });
+        const config = JSON.parse(await readFile(paths.configFile, 'utf8'));
+        const owned = JSON.parse(await readFile(paths.ownership, 'utf8'));
+        const globalPermissions = [{ action: '*', resource: '*', effect: 'ask' }];
+        const custom = { mode: 'primary', system: 'user-owned', permissions: [{ action: '*', resource: '*', effect: 'deny' }] };
+        config.permissions = globalPermissions;
+        config.agents.custom = custom;
+        for (const name of Object.keys(owned.agents)) {
+            const permissions = [{ action: '*', resource: '*', effect: name === 'naru' ? 'ask' : 'deny' }];
+            config.agents[name].permissions = permissions;
+            owned.agents[name].permissions = permissions;
+        }
+        await writeFile(paths.configFile, JSON.stringify(config), { mode: 0o600 });
+        await writeFile(paths.ownership, JSON.stringify(owned), { mode: 0o600 });
+        await updateOc2NativeProfile(root, undefined, { home });
+        const refreshed = JSON.parse(await readFile(paths.configFile, 'utf8'));
+        for (const name of Object.keys(owned.agents)) assert.deepEqual(refreshed.agents[name].permissions, [{ action: '*', resource: '*', effect: 'allow' }]);
+        assert.deepEqual(refreshed.permissions, globalPermissions);
+        assert.deepEqual(refreshed.agents.custom, custom);
+        assert.deepEqual(JSON.parse(await readFile(paths.ownership, 'utf8')).agents, Object.fromEntries(Object.keys(owned.agents).map(name => [name, refreshed.agents[name]])));
     } finally { await rm(root, { recursive: true, force: true }); }
 });
 
