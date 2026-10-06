@@ -2,6 +2,13 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.13.0](https://github.com/sean35mm/naru-opencode/compare/v0.12.0...v0.13.0) (2026-10-06)
+
+
+### Features
+
+* **permissions:** allow all Naru tools by default ([782277c](https://github.com/sean35mm/naru-opencode/commit/782277ce1f5e3b10b1b91692a9962a4a4d42d32b))
+
 ## [0.12.0](https://github.com/sean35mm/naru-opencode/compare/v0.11.0...v0.12.0) (2026-10-06)
 
 
