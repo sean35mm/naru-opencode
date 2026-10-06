@@ -48,7 +48,7 @@ Everything in the advisory group shapes decisions but cannot stop them. A carefu
 - **Worker shell rules.** Workers are denied `git push*` and the `gh pr`/`gh issue`/`gh release` create, merge, review, comment, edit, delete, and upload commands, and asked before `gh api*`. These are prefix globs over parsed commands: `git -C dir push`, `sh -c '…'`, or another wrapper is not caught.
 - **Skill access.** `naru` and every worker are allowed `naru-*` and `unslop` skills, even under a global skill deny.
 - **Tool callers.** `naru-github-post-review` and `naru-worktree` refuse any agent other than `naru`.
-- **Tool inputs.** The Git and GitHub tools validate inputs, build fixed argument arrays, and bound time and output. Review posting derives its event from evidence, accepts no raw event, and makes at most one POST attempt.
+- **Tool inputs.** The Git and GitHub tools validate inputs, build fixed argument arrays, and bound time and output. The optional strict `naru-github-post-review` tool derives its event from evidence, accepts no raw event, and makes at most one POST attempt. These checks do not apply to ordinary coordinator `gh` posting.
 
 Everything else, including file edits and ordinary shell commands, follows your OpenCode permissions. Naru does not restrict which files a worker may edit.
 
@@ -66,7 +66,7 @@ Everything else, including file edits and ordinary shell commands, follows your 
 
 **Isolated worktrees.** `naru-worktree` validates only its own isolation and integration lifecycle. It requires a clean repository; otherwise work stays in the shared workspace. It does not protect against unrelated changes to your workspace.
 
-**Review posting.** A dedupe marker prevents an obvious repeat for the same head. Cross-process deduplication would need durable coordination, so an ambiguous POST outcome is reported, never retried. Naru cannot merge.
+**Review posting.** Ordinary coordinator `gh` posting follows your OpenCode permissions and the review skill's instructions, not the strict tool's mechanical gates. Target/head checks, duplicate-feedback reconciliation, and honest coverage reporting are advisory in that workflow. The optional strict tool additionally uses a dedupe marker and rejects distinct reviews on the same head. Neither workflow provides durable cross-process coordination. An uncertain POST must be checked through read-only inspection, not blindly retried. Review posting does not authorize merging.
 
 **Doctor.** `naru doctor` checks the package, agents, and registration on disk. It does not load the plugin or start a session.
 

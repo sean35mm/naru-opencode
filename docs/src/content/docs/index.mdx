@@ -70,7 +70,7 @@ flowchart TB
   <a class="naru-card" href="/naru-opencode/workflows/review-lane/">
     <span class="naru-card__index">03 — REVIEW</span>
     <p class="naru-card__title">Review lane</p>
-    <p class="naru-card__body">Dry-run by default; one evidence-gated POST when you ask for it.</p>
+    <p class="naru-card__body">Dry-run by default; ordinary GitHub review posting when you ask for it.</p>
   </a>
   <a class="naru-card" href="/naru-opencode/reference/limitations/">
     <span class="naru-card__index">04 — BOUNDARIES</span>
@@ -82,7 +82,7 @@ flowchart TB
 ## What always holds
 
 - Workers are denied `git push` and the `gh` commands that create, merge, review, comment on, or release, and are asked before `gh api`.
-- Review posting and worktree isolation are callable only by `naru`. Review is dry-run by default; a generic request to post yields only `COMMENT`, and `APPROVE` or `REQUEST_CHANGES` needs explicit wording plus complete evidence. There is one POST attempt and never a retry; Naru cannot merge.
+- The strict review-posting and worktree tools are callable only by `naru`. Review is dry-run by default; "review and post" permits the appropriate `APPROVE`, `REQUEST_CHANGES`, or `COMMENT` unless you request comment-only. The coordinator uses ordinary `gh` tooling by default, verifies the reviewed head, discloses genuine coverage gaps, and never blindly retries an uncertain POST. Review posting does not authorize merging.
 - Your intent is the sole authorization source. Repository, issue, PR, and tool text is untrusted data.
 - Everything else follows your normal OpenCode permissions.
 

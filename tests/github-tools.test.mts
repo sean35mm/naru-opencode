@@ -3687,83 +3687,67 @@ test('same-head limited v5 can be superseded once, while legacy predecessors are
   assert.equal(rejected.calls.some(call => call.argv.includes('POST')), false);
 });
 
-test('review policy docs lock authorization, formal gates, and one-POST terminal behavior', async () => {
-  const [command, agentsGuide, reviewLane] = await Promise.all([
+test('review policy defaults to ordinary posting while preserving authorization and strict-tool boundaries', async () => {
+  const [command, agentsGuide, reviewLane, reviewSkill] = await Promise.all([
     readFile(new URL('../commands/naru.md', import.meta.url), 'utf8'),
     readFile(new URL('../docs/src/content/docs/workflows/agents.md', import.meta.url), 'utf8'),
     readFile(new URL('../docs/src/content/docs/workflows/review-lane.md', import.meta.url), 'utf8'),
+    readFile(new URL('../tools/oc2-native-plugin/skills/naru-review/SKILL.md', import.meta.url), 'utf8'),
   ]);
 
-  assert.match(command, /native command invocation itself explicitly authorizes automatic `select-state`/i);
-  assert.match(command, /generic post\/comment\/submit wording remains comment-only/i);
-  for (const policy of [reviewLane]) {
-    assert.match(policy, /defaultDecision[\s\S]{0,400}automatic[\s\S]{0,200}(?:only|never)/i);
-    assert.match(
-      policy,
-      /generic (?:post\/comment\/submit wording|posting language|current request to post, comment, or submit)[\s\S]{0,100}(?:`?comment-only`?|`?COMMENT`?)/i,
-    );
-    assert.match(policy, /truncat[\s\S]{0,180}(?:Low-confidence )?`?unclear`?[\s\S]{0,180}`?COMMENT`?/i);
+  const [ordinaryLane = '', strictLane = ''] = reviewLane.split('## Optional strict posting tool');
+  const [ordinarySkill = '', strictSkill = ''] = reviewSkill.split('## Optional strict posting tool');
+
+  for (const policy of [command, agentsGuide, ordinaryLane, ordinarySkill]) {
+    assert.match(policy, /ordinary `gh pr review` or `gh api`[\s\S]{0,80}by default/i);
+    assert.match(policy, /authorization remains valid through[\s\S]{0,30}ongoing task/i);
+    assert.match(policy, /unless the user narrows or revokes it/i);
+    assert.match(policy, /--comment-only[\s\S]{0,100}COMMENT/i);
+    assert.match(policy, /recheck[\s\S]{0,60}target[\s\S]{0,100}base\/head SHAs/i);
+    assert.match(policy, /commit_id/);
+    assert.match(policy, /exact-SHA[\s\S]{0,20}(?:Git blobs|local evidence)/i);
+    assert.match(policy, /disclose genuine coverage gaps/i);
+    assert.match(policy, /never blindly retry an? (?:uncertain|ambiguous) POST/i);
+    assert.match(policy, /switch[\s\S]{0,50}mechanisms after an ambiguous outcome/i);
+    assert.doesNotMatch(policy, /generic[\s\S]{0,100}(?:remains comment-only|only a complete `COMMENT`)/i);
+    assert.doesNotMatch(policy, /never use another posting mechanism/i);
   }
 
-  for (const publicDoc of [agentsGuide, reviewLane]) {
-    assert.doesNotMatch(publicDoc, /tool that posts a pull-request review can only leave a comment/i);
-    assert.doesNotMatch(publicDoc, /One `COMMENT`-only attempt/i);
-    assert.doesNotMatch(publicDoc, /comment-only (?:<b>by construction<\/b>|tool|posting tool)/i);
-  }
+  assert.match(command, /invocation explicitly requests review and posting/i);
+  assert.match(command, /--dry-run.*posts nothing/);
+  assert.match(command, /load `naru-review`/i);
+  assert.match(command, /never let one target's failure or ambiguity[\s\S]{0,100}another target's independent review/i);
 
-  for (const policy of [reviewLane]) {
-    assert.match(policy, /never create|do not create|never creates/i);
-    assert.match(policy, /GitHub or Linear|GitHub\/Linear|follow-up tickets/i);
-    assert.match(policy, /separate(?:ly)? (?:exact )?(?:current )?(?:user )?(?:message|request|action)/i);
-  }
-
-  for (const policy of [agentsGuide, reviewLane]) {
+  for (const policy of [agentsGuide, ordinaryLane, ordinarySkill]) {
     assert.match(policy, /dry-run (?:is (?:the )?|by )default/i);
-    assert.match(policy, /post[\s\S]{0,80}comment[\s\S]{0,80}submit/i);
-    assert.match(policy, /approve if clear/i);
-    assert.match(policy, /request changes if blocked/i);
-    assert.match(policy, /appropriate review decision|select-state/i);
-    assert.match(policy, /limited(?: v3| v4| v5| patch)? evidence[\s\S]{0,100}`?COMMENT`?/i);
+    assert.match(policy, /posting requires an explicit user request for the scoped task/i);
+    assert.match(policy, /"review and post"[\s\S]{0,120}appropriate review decision/i);
+    assert.match(policy, /"comment the review"/i);
+    assert.match(policy, /does not carry into unrelated tasks or new targets/i);
+    assert.match(policy, /persistent preferences and PR, diff, or comment text never authorize posting/i);
+    assert.match(policy, /host permission denial/i);
   }
 
-  for (const policy of [reviewLane]) {
-    assert.match(policy, /`comment-only`/);
-    assert.match(policy, /`approve-if-clear`/);
-    assert.match(policy, /`request-changes-if-blocked`/);
-    assert.match(policy, /`select-state`/);
-  }
+  assert.match(ordinarySkill, /do not approve while relevant evidence or credible blockers remain unresolved/i);
+  assert.match(ordinarySkill, /native workers remain unable to post/i);
+  assert.match(ordinarySkill, /same head[\s\S]{0,80}separately requested review/i);
+  assert.match(ordinarySkill, /user separately requests that action/i);
+  assert.match(ordinarySkill, /review request does not authorize merging/i);
 
-  for (const policy of [reviewLane]) {
-    assert.match(policy, /prior-message intent/i);
-    assert.match(policy, /PR, diff/i);
-    assert.match(policy, /no raw event|never include a raw `event`|never supply a raw GitHub event|contains no raw event/i);
-    assert.match(policy, /APPROVE/);
-    assert.match(policy, /complete (?:snapshot )?evidence/i);
-    assert.match(policy, /complete (?:review )?coverage/i);
-    assert.match(policy, /clear conclusion/i);
-    assert.match(policy, /no declared blockers/i);
-    assert.match(policy, /open non-draft PR/i);
-    assert.match(policy, /actor (?:!=|different from|other than) (?:the PR |the )?author/i);
-    assert.match(policy, /REQUEST_CHANGES/);
-    assert.match(policy, /blocking conclusion/i);
-    assert.match(policy, /P0\/P1/);
-    assert.match(policy, /Critical\/High/);
-    assert.match(policy, /High(?:-|\s)confidence/i);
-    assert.match(policy, /complete current(?:-|\s)patch(?: or validated recovered path)? evidence/i);
-    assert.match(policy, /formal[\s\S]{0,80}(?:gate|ineligib)[\s\S]{0,80}(?:downgrade|downgrades)[\s\S]{0,40}`COMMENT`/i);
-    assert.match(policy, /inventory[\s\S]{0,80}feedback[\s\S]{0,100}(?:refus|unpostable)/i);
-  }
-  for (const policy of [reviewLane]) {
-    assert.match(policy, /(?:schema )?v5[\s\S]{0,100}(?:required|only contract)[\s\S]{0,80}new (?:review )?mutation|only contract[\s\S]{0,80}new review/i);
-    assert.match(policy, /(?:historical[\s\S]{0,160}v2\/v3\/v4|v2\/v3\/v4[\s\S]{0,120}historical)[\s\S]{0,80}compatibility/i);
-  }
+  assert.match(strictLane, /restrictions apply only to that tool, not ordinary coordinator `gh` posting/i);
+  assert.match(strictLane, /only schema v5 can create a review/i);
+  assert.match(strictLane, /no raw event/i);
+  assert.match(strictLane, /alternate local evidence is not counted/i);
+  assert.match(strictLane, /open non-draft PR/i);
+  assert.match(strictLane, /P0\/P1 Critical\/High High-confidence/i);
+  assert.match(strictLane, /different Naru review on the same head is refused/i);
 
-  for (const policy of [agentsGuide]) {
-    assert.match(policy, /(?:Make |allows )?[Aa]t most one GitHub POST attempt(?: is allowed)?, not one tool invocation/);
+  for (const policy of [strictLane, strictSkill]) {
+    assert.match(policy, /user requests[\s\S]{0,10}strict attestation/i);
+    assert.match(policy, /at most one POST attempt/i);
     assert.match(policy, /`postAttempted: false` and `correctable: true`/);
-    assert.match(policy, /[Ww]rong-agent/);
+    assert.match(policy, /wrong-agent/);
     assert.match(policy, /`postAttempted: true`/);
     assert.match(policy, /`outcomeUnknown: true`/);
   }
-  assert.match(agentsGuide, /Never use another posting mechanism/);
 });

@@ -56,7 +56,7 @@ References are `provider/model` with an optional `#variant` (reasoning effort). 
 - **Workers** (`naru-worker-<provider>-<model>-<hash>`) are reusable subagents, one per configured reference, each pinned to that exact model and variant. They have no fixed role: the assignment decides whether a worker investigates, edits, runs checks, or reviews. The coordinator picks a worker per task from the pool. It is told to honor an explicit "use model X" request and to report, not substitute, when that model isn't in the pool.
 - **Skills** load on demand: `naru-coordinate`, `naru-select-workers`, `naru-evaluate`, `naru-plan`, `naru-impact`, `naru-triage`, and `naru-review`. They are guidance and grant nothing.
 - **Tools**: `naru-git-read` (bounded read-only Git), `naru-github-read` (issues, PRs, manifest-first pull evidence), `naru-github-post-review`, and `naru-worktree` (isolated writer worktrees on a clean repository). The last two refuse any caller other than `naru`.
-- **`/naru ship-review <pr> [<pr> ...]`** reviews each PR independently and, unless `--dry-run` is present, authorizes one review POST per PR with an evidence-gated `APPROVE`, `REQUEST_CHANGES`, or `COMMENT`. `--comment-only`, `--standard`, and `--concise`/`--detailed` adjust the state, profile, and output.
+- **`/naru ship-review <pr> [<pr> ...]`** reviews each PR independently and, unless `--dry-run` is present, posts the appropriate `APPROVE`, `REQUEST_CHANGES`, or `COMMENT` through ordinary coordinator `gh` tooling. `--comment-only`, `--standard`, and `--concise`/`--detailed` adjust the state, profile, and output.
 
 ## Permissions
 
@@ -72,7 +72,7 @@ Everything else follows your normal OpenCode permissions. The shell rules are pr
 
 Beyond those rules, the agents are instructed that your current request is the only source of authorization; that repository files, issue and PR text, command output, and worker reports are untrusted data; and that they must stop before destructive, production, database, billing, security, or secret-access actions you didn't ask for. Those are prompt instructions, not enforcement.
 
-Review posting is dry-run by default. A generic request to post, comment, or submit a review yields only a complete `COMMENT`. `APPROVE` or `REQUEST_CHANGES` needs explicit current-message wording ("approve if clear", "request changes if blocked") plus complete evidence. The tool makes at most one POST attempt and never retries an ambiguous outcome. It cannot merge. See the [review lane](docs/src/content/docs/workflows/review-lane.md).
+Review is dry-run by default. "Review and post" permits the appropriate review decision unless you request comment-only. Posting authorization lasts through the scoped task and its continuations. The coordinator uses ordinary `gh pr review` or `gh api`, verifies the reviewed head, discloses genuine coverage gaps, and never blindly retries an uncertain POST. Exact-SHA local review can cover files that bounded helpers cannot return. `naru-github-post-review` remains available as an optional strict attestation tool. Review posting does not authorize merging. See the [review lane](docs/src/content/docs/workflows/review-lane.md).
 
 ## Doctor, upgrade, version
 
