@@ -2,6 +2,14 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.13.1](https://github.com/sean35mm/naru-opencode/compare/v0.13.0...v0.13.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **native:** tune prompts from 14-day session audit ([24ae9f4](https://github.com/sean35mm/naru-opencode/commit/24ae9f4a382cc63589837e08a0044899210858b8))
+* **native:** tune prompts from 14-day session audit ([19a9576](https://github.com/sean35mm/naru-opencode/commit/19a95764a0b1b6e040ea53e57c6f09659cb922a8))
+
 ## [0.13.0](https://github.com/sean35mm/naru-opencode/compare/v0.12.0...v0.13.0) (2026-10-06)
 
 
