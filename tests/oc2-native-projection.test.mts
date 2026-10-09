@@ -39,6 +39,8 @@ test('native projection creates one reusable worker per exact reference with all
     assert.match(projection.agents.naru!.system, /native child session ID/);
     assert.match(projection.agents.naru!.system, /state what remains pending/);
     assert.match(projection.agents.naru!.system, /never bypass a host permission denial/i);
+    const [long] = projectOc2NativeAgents(['opencode-go/deepseek-v4.1-flash#high']).workers;
+    assert.match(long!.name, /^naru-worker-opencode-go-deepseek-v4-1-flash-high-[0-9a-f]{10}$/);
 });
 
 test('coordinator includes evidence-based selection and bounded exploration without loading a skill', () => {
