@@ -211,7 +211,7 @@ test('native preflight rejects v1 collisions, JSONC ambiguity, user agent collis
         await mkdir(bin); await mkdir(root); process.env.PATH = `${bin}:${oldPath}`;
         const host = join(bin, 'opencode'); await writeFile(host, '#!/bin/sh\nprintf "1.18.28\\n"\n'); await chmod(host, 0o700);
         await assert.rejects(installNative(root, source, true), /requires OpenCode 2.0.15/);
-        for (const version of ['2.1.0', '2.0.16-beta.1', 'opencode v2.0.15 extra']) {
+        for (const version of ['2.0.14', '2.0.16-beta.1', 'opencode v2.0.15 extra']) {
             await writeFile(host, `#!/bin/sh\nprintf "${version}\\n"\n`);
             await assert.rejects(installNative(root, source, false), /requires OpenCode 2.0.15/);
         }

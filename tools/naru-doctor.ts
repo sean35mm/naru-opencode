@@ -127,7 +127,7 @@ export async function buildDoctorReport(options: DoctorOptions): Promise<DoctorR
         opencode: { status: accepted ? 'probe-required' : host.error && 'code' in host.error && host.error.code === 'ENOENT' ? 'not-found' : 'unsupported', version: evaluation.observed, profile: 'native-v2', recognizedBuilds: ['2.0.15'], versionPolicy: exact ? 'current-target' : accepted ? 'candidate' : 'unsupported' },
         runtime: { name: Reflect.get(globalThis, 'Bun') ? 'bun' : 'node', version: process.versions.node },
     };
-    if (!accepted) addIssue(issues, 'opencode-compatibility', 'host', 'native install requires observed OpenCode 2.0.15 or a newer 2.0.x patch release; no runtime qualification was inferred');
+    if (!accepted) addIssue(issues, 'opencode-compatibility', 'host', 'native install requires observed OpenCode 2.0.15 or a newer stable release; no runtime qualification was inferred');
     if (await statOrNull(path.join(root, 'agents', 'naru.md')) !== null) addIssue(issues, 'native-agent-collision', 'global', 'filesystem agents/naru.md is ambiguous with the native naru definition; manual cutover required');
     try {
         const inspected = await inspectNativeInstall(root);
@@ -183,7 +183,7 @@ export async function buildDoctorReport(options: DoctorOptions): Promise<DoctorR
     return { schemaVersion: REPORT_SCHEMA_VERSION, diagnostic: 'naru-doctor', providerFree: true, readOnly: true, status: issues.length ? 'warning' : 'healthy', compatibility, native, issues };
 }
 function renderPlain(report: DoctorReport): string {
-    return `Naru native doctor: ${report.status}\nOpenCode: ${report.compatibility.opencode.version ?? 'unknown'} (2.0.15 tested; 2.0.x patch accepted)\nNative package: ${report.native.package}; agents: ${report.native.agents}; registration: ${report.native.registration}; workers: ${report.native.workers}\nRuntime evidence: not run; platform, live invocation and account entitlement are not qualified\n${report.issues.map(issue => `${issue.code}: ${issue.detail}\n`).join('')}`;
+    return `Naru native doctor: ${report.status}\nOpenCode: ${report.compatibility.opencode.version ?? 'unknown'} (2.0.15 tested; newer stable releases accepted)\nNative package: ${report.native.package}; agents: ${report.native.agents}; registration: ${report.native.registration}; workers: ${report.native.workers}\nRuntime evidence: not run; platform, live invocation and account entitlement are not qualified\n${report.issues.map(issue => `${issue.code}: ${issue.detail}\n`).join('')}`;
 }
 async function main() {
     let options;

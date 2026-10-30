@@ -1,9 +1,9 @@
 ---
 title: Installation
-description: Install Naru into an OpenCode 2.0.x configuration directory, choose workers, check health, upgrade, and remove it.
+description: Install Naru into an OpenCode 2.x configuration directory, choose workers, check health, upgrade, and remove it.
 ---
 
-Naru needs OpenCode **>= 2.0.15, < 2.1** on `PATH` (2.0.15 is the tested build) and Node 24. Install OpenCode separately; Naru does not manage its binary. Pull-request workflows also need an authenticated `gh`.
+Naru needs OpenCode **>= 2.0.15** on `PATH` (2.0.15 is the tested build) and Node 24. Install OpenCode separately; Naru does not manage its binary. Pull-request workflows also need an authenticated `gh`.
 
 ## Quick install
 

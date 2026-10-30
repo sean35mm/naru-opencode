@@ -10,7 +10,7 @@ curl -fsSL https://raw.githubusercontent.com/sean35mm/naru-opencode/main/bootstr
 naru install
 ```
 
-The bootstrap installs only the `naru` command. `naru install` registers Naru in `~/.config/opencode` and prints what it changed (`--dry-run` shows the plan without writing). You need OpenCode 2.0.15 or a later 2.0.x patch release on `PATH`, and Node 24.
+The bootstrap installs only the `naru` command. `naru install` registers Naru in `~/.config/opencode` and prints what it changed (`--dry-run` shows the plan without writing). You need OpenCode 2.0.15 or a later stable release on `PATH`, and Node 24.
 
 ## 2. Pick workers
 
