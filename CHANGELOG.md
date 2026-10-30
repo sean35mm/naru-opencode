@@ -2,6 +2,14 @@
 
 All notable user-visible changes are recorded here. The canonical semantic product version is the contents of [`VERSION`](VERSION).
 
+## [0.13.2](https://github.com/sean35mm/naru-opencode/compare/v0.13.1...v0.13.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* **compat:** accept OpenCode 2.0.15 and every newer stable release ([282b5ba](https://github.com/sean35mm/naru-opencode/commit/282b5ba8d6a52790932fc6ec3a245329767a5e06))
+* **compat:** accept OpenCode 2.0.15 and every newer stable release ([70dd438](https://github.com/sean35mm/naru-opencode/commit/70dd4388002ca4bd0cabf381b10f195193109581))
+
 ## [0.13.1](https://github.com/sean35mm/naru-opencode/compare/v0.13.0...v0.13.1) (2026-10-09)
 
 
