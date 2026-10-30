@@ -29,7 +29,7 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 test('compatibility policy fixes approved targets without inventing Git or gh floors', () => {
   assert.deepEqual(Object.keys(COMPATIBILITY_POLICY.profiles), ['native-v2']);
   assert.deepEqual(COMPATIBILITY_POLICY.profiles['native-v2'].recognizedBuilds, ['2.0.15']);
-  assert.deepEqual(COMPATIBILITY_POLICY.profiles['native-v2'].candidateRange, { floor: '2.0.15', below: '2.1.0' });
+  assert.deepEqual(COMPATIBILITY_POLICY.profiles['native-v2'].candidateRange, { floor: '2.0.15', below: null });
   assert.deepEqual(COMPATIBILITY_POLICY.targets.platforms.map(target => target.id), ['macos-arm64', 'ubuntu-x64']);
   assert.equal(COMPATIBILITY_POLICY.targets.runtimes.node.major, 24);
   assert.equal(COMPATIBILITY_POLICY.targets.runtimes.bun.exact, '1.3.9');
@@ -38,7 +38,7 @@ test('compatibility policy fixes approved targets without inventing Git or gh fl
   assert.equal(COMPATIBILITY_POLICY.features.core.providerCalls, false);
 });
 
-test('semantic versions accept the tested 2.0.15 host and flag other 2.0.x patches as candidates', () => {
+test('semantic versions accept the tested 2.0.15 host and flag newer stable releases as candidates', () => {
   assert.equal(compareSemver('2.0.15', '2.0.15'), 0);
   assert.equal(compareSemver('2.0.16', '2.0.15'), 1);
   assert.equal(compareSemver('2.0.15-rc.1', '2.0.15'), -1);
@@ -67,7 +67,10 @@ test('semantic versions accept the tested 2.0.15 host and flag other 2.0.x patch
   assert.equal(evaluateObservedVersion('opencode', '2.0.15').status, 'supported');
   assert.equal(evaluateObservedVersion('opencode', '2.0.16').status, 'candidate');
   assert.equal(evaluateObservedVersion('opencode', '2.0.14').status, 'unsupported');
-  assert.equal(evaluateObservedVersion('opencode', '2.1.0').status, 'unsupported');
+  assert.equal(evaluateObservedVersion('opencode', '2.1.0').status, 'candidate');
+  assert.equal(evaluateObservedVersion('opencode', '2.2.3').status, 'candidate');
+  assert.equal(evaluateObservedVersion('opencode', '3.0.0').status, 'candidate');
+  assert.equal(evaluateObservedVersion('opencode', '2.2.3-beta.1').status, 'unsupported');
   assert.equal(evaluateObservedVersion('opencode', '2.0.16-beta.1').status, 'unsupported');
   assert.equal(evaluateObservedVersion('opencode', 'not-a-version').status, 'unrecognized');
   assert.equal(sanitizeObservedVersion('opencode v2.0.15\n'), '2.0.15');

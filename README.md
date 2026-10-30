@@ -8,7 +8,7 @@ Built by [Naru Labs](https://github.com/sean35mm). Documentation: [sean35mm.gith
 
 ## Requirements
 
-- OpenCode **>= 2.0.15, < 2.1** on `PATH` (2.0.15 is the tested build; other 2.0.x patch releases are accepted as candidates). Naru does not install or manage OpenCode.
+- OpenCode **>= 2.0.15** on `PATH` (2.0.15 is the tested build; newer stable releases are accepted as candidates). Naru does not install or manage OpenCode.
 - Node 24.
 - `git` for the Git-backed tools, and an authenticated `gh` for GitHub reads and review posting.
 - macOS arm64 or Ubuntu x64. Native Windows and WSL are not supported.

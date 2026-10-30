@@ -5,7 +5,7 @@ description: Supported OpenCode, Node, and platform targets, and what the compat
 
 | Surface | Policy |
 | --- | --- |
-| OpenCode | 2.0.15 is the tested build. Install and doctor also accept later 2.0.x patch releases (`>= 2.0.15, < 2.1`) as candidates; prereleases and other versions are refused. |
+| OpenCode | 2.0.15 is the tested build. Install and doctor also accept later stable releases (`>= 2.0.15`) as candidates; prereleases and other versions are refused. |
 | Node | 24 |
 | Platforms | macOS arm64 and Ubuntu x64 |
 | Git-backed tools | `git` on `PATH`; no version floor |

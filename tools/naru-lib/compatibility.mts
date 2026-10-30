@@ -107,8 +107,8 @@ export const COMPATIBILITY_POLICY = deepFreeze({
         'native-v2': {
             qualification: 'native-v2',
             recognizedBuilds: ['2.0.15'],
-            // Install and doctor accept stable patch releases in [floor, below) as candidates; smoke qualification stays exact.
-            candidateRange: { floor: '2.0.15', below: '2.1.0' },
+            // Install and doctor accept stable releases at or above floor (below null = no ceiling) as candidates; smoke qualification stays exact.
+            candidateRange: { floor: '2.0.15', below: null },
         },
     },
     targets: {
@@ -229,7 +229,7 @@ export function evaluateOpenCodeVersion(profile: unknown, output: unknown): Obse
     const parsed = observed === null ? null : parseSemver(observed);
     const range = selected.candidateRange;
     const status: ObservedVersionStatus = observed !== null && selected.recognizedBuilds.some(build => build === observed) ? 'supported' : observed === null ? 'unrecognized'
-        : parsed && parsed.prerelease.length === 0 && compareSemver(parsed, range.floor) >= 0 && compareSemver(parsed, range.below) < 0 ? 'candidate' : 'unsupported';
+        : parsed && parsed.prerelease.length === 0 && compareSemver(parsed, range.floor) >= 0 && (range.below === null || compareSemver(parsed, range.below) < 0) ? 'candidate' : 'unsupported';
     return {
         component: 'opencode',
         observed,
